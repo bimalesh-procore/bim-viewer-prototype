@@ -70,3 +70,4 @@ Based on the dependencies above, the following build order is recommended:
 3. **Viewpoint + Searchset integration** — after both systems are stable
 4. **Permissions framework** — can be developed in parallel, applied to all features once ready
 5. **UI improvements** (Header UI, Draggable Windows) — can run independently
+

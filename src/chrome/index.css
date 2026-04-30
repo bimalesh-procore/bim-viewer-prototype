@@ -338,6 +338,13 @@ body,
   background: #e5e7eb;
 }
 
+/* Invisible hit area expanding the bar's hover target so the popover
+   doesn't disappear when the cursor crosses the 4px-thin track. Must be
+   pointer-events: none — without it, this 12px strip sits at z:40 over the
+   header (z:30) and eats clicks on the bottom 4px of the model dropdown
+   trigger (and the top of its open menu when sliced by the bar). The
+   parent .mv-top-loading-bar still receives mouseenter/leave from the
+   visible track and the popover itself, which is enough for hover intent. */
 .mv-top-loading-bar::after {
   content: '';
   position: absolute;
@@ -345,6 +352,7 @@ body,
   left: 0;
   width: 100%;
   height: 12px;
+  pointer-events: none;
 }
 
 .mv-top-loading-bar-fill {

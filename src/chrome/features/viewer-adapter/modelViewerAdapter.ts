@@ -167,6 +167,9 @@ export function createModelViewerAdapter(
     totalObjects: 0,
     streamComplete: false,
     hasError: false,
+    phase: 'init',
+    bytesLoaded: 0,
+    bytesTotal: 0,
   };
   const streamingListeners = new Set<(state: ObjectStreamingState) => void>();
   let sectioningActive = false;
@@ -186,6 +189,35 @@ export function createModelViewerAdapter(
     }
   };
 
+  const onLoadStart = () => {
+    // The bar should appear the instant a load is initiated. This flips the
+    // "streamingSupported" gate immediately so ChromeApp's bar visibility
+    // condition is satisfied without waiting for the fetch to finish.
+    streamingState.streamingSupported = true;
+    streamingState.streamComplete = false;
+    streamingState.hasError = false;
+    streamingState.parserProgress = 0;
+    streamingState.totalObjects = 0;
+    streamingState.phase = 'init';
+    streamingState.bytesLoaded = 0;
+    streamingState.bytesTotal = 0;
+    emitStreamingState();
+  };
+
+  const onLoadProgress = (data: unknown) => {
+    const payload = data as { phase?: string; received?: number; total?: number };
+    if (payload?.phase === 'download') {
+      streamingState.phase = 'download';
+      if (typeof payload.received === 'number') streamingState.bytesLoaded = payload.received;
+      if (typeof payload.total === 'number') streamingState.bytesTotal = payload.total;
+    } else if (payload?.phase === 'parse') {
+      streamingState.phase = 'parse';
+    } else if (payload?.phase === 'reveal') {
+      streamingState.phase = 'reveal';
+    }
+    emitStreamingState();
+  };
+
   const onStreamCapability = (data: unknown) => {
     const payload = data as { streamingSupported?: boolean };
     streamingState.streamingSupported = Boolean(payload?.streamingSupported);
@@ -202,21 +234,31 @@ export function createModelViewerAdapter(
     if (typeof payload?.totalObjects === 'number') {
       streamingState.totalObjects = payload.totalObjects;
     }
+    // Any object-load-progress means we're in (or already past) the reveal
+    // phase. Keep phase stuck on 'reveal' here so a late-arriving progress
+    // event after model-stream-complete doesn't bump us back from 'complete'.
+    if (streamingState.phase !== 'complete' && streamingState.phase !== 'error') {
+      streamingState.phase = 'reveal';
+    }
     emitStreamingState();
   };
 
   const onModelStreamComplete = () => {
     streamingState.parserProgress = 1;
     streamingState.streamComplete = true;
+    streamingState.phase = 'complete';
     emitStreamingState();
   };
 
   const onObjectLoadError = () => {
     streamingState.hasError = true;
     streamingState.streamComplete = true;
+    streamingState.phase = 'error';
     emitStreamingState();
   };
 
+  viewer.on('load-start', onLoadStart);
+  viewer.on('load-progress', onLoadProgress);
   viewer.on('stream-capability', onStreamCapability);
   viewer.on('object-load-progress', onObjectLoadProgress);
   viewer.on('model-stream-complete', onModelStreamComplete);

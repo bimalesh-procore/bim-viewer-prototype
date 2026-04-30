@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type RefObject } from 'react';
-import { Header } from '../header/Header';
+import { Header, type ModelEntry } from '../header/Header';
 import { LeftToolbar } from '../left-toolbar/LeftToolbar';
 import { RightToolbar } from '../right-toolbar/RightToolbar';
 import { MiniMap } from '../minimap/MiniMap';
@@ -7,7 +7,6 @@ import { NavigationWheel } from '../navigation-wheel/NavigationWheel';
 import { ViewerCanvas } from '../viewer-canvas/ViewerCanvas';
 import { GlobalSearchOverlay } from '../global-search/GlobalSearchOverlay';
 import { ModeIdentifierOverlay } from '../mode-identifier/ModeIdentifierOverlay';
-
 import { DockManager } from '../dock-manager/DockManager';
 import { useDockStore } from '../dock-manager/useDockStore';
 
@@ -17,9 +16,26 @@ interface ChromeLayoutProps {
   onUploadClick?: () => void;
   /** null = hidden; 0-100 = visible with that fill % */
   streamingProgress?: number | null;
+  /** Popover headline (e.g. "Downloading model"). */
+  streamingLabel?: string;
+  /** Popover detail line (e.g. "80 MB / 150 MB"). */
+  streamingDetail?: string;
+  models?: readonly ModelEntry[];
+  activeModelId?: string | null;
+  onSelectModel?: (model: ModelEntry) => void;
 }
 
-export function ChromeLayout({ viewerContainerRef, showOverlays = true, onUploadClick, streamingProgress }: ChromeLayoutProps) {
+export function ChromeLayout({
+  viewerContainerRef,
+  showOverlays = true,
+  onUploadClick,
+  streamingProgress,
+  streamingLabel = 'Loading model',
+  streamingDetail = '',
+  models,
+  activeModelId,
+  onSelectModel,
+}: ChromeLayoutProps) {
   const store = useDockStore();
   const [toolbarHovered, setToolbarHovered] = useState(false);
 
@@ -56,7 +72,12 @@ export function ChromeLayout({ viewerContainerRef, showOverlays = true, onUpload
   return (
     <div className="flex flex-col h-screen w-screen bg-white">
       <div className="relative flex-shrink-0 z-30">
-        <Header onUploadClick={onUploadClick} />
+        <Header
+          onUploadClick={onUploadClick}
+          models={models}
+          activeModelId={activeModelId}
+          onSelectModel={onSelectModel}
+        />
         <GlobalSearchOverlay />
       </div>
 
@@ -78,8 +99,10 @@ export function ChromeLayout({ viewerContainerRef, showOverlays = true, onUpload
             onMouseLeave={onPopoverLeave}
           >
             <div className="mv-top-loading-popover-text">
-              <span className="mv-top-loading-popover-label">Loading model objects</span>
-              <span className="mv-top-loading-popover-percent">{streamingProgress}% Complete</span>
+              <span className="mv-top-loading-popover-label">{streamingLabel}</span>
+              <span className="mv-top-loading-popover-percent">
+                {streamingDetail || `${streamingProgress}% Complete`}
+              </span>
             </div>
             <button
               type="button"

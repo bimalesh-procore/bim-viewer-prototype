@@ -15,12 +15,31 @@ export type ViewOrientation =
   | 'right'
   | 'isometric';
 
+// Phases of a real model load. The bar's fill is weighted across these:
+//   init     0–10%   – viewer/three.js/wasm warmup, before any bytes move
+//   download 10–55%  – real bytes from fetch (Content-Length + chunk reader)
+//   parse    55%     – web-ifc parses the buffer; no usable progress source,
+//                      so the fill rests at 55% until reveal begins
+//   reveal   80–100% – progressivelyRevealModel emits real per-batch progress
+//   complete 100%    – bar fades out shortly after
+export type LoadPhase =
+  | 'init'
+  | 'download'
+  | 'parse'
+  | 'reveal'
+  | 'complete'
+  | 'error';
+
 export interface ObjectStreamingState {
   streamingSupported: boolean;
   parserProgress: number;
   totalObjects: number;
   streamComplete: boolean;
   hasError: boolean;
+  // Real-progress fields (added when the bar was rebuilt to be honest).
+  phase: LoadPhase;
+  bytesLoaded: number;
+  bytesTotal: number;
 }
 
 export interface GlobalSearchObjectEntry {

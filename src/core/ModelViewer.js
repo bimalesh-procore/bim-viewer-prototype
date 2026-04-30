@@ -166,6 +166,13 @@ export class ModelViewer {
       this.emit('load-error', data);
     });
 
+    // Forward the phased load-progress events the loader emits during
+    // download/parse/reveal so the streaming adapter can drive a real
+    // progress bar.
+    this.ifcLoader.on('load-progress', (data) => {
+      this.emit('load-progress', data);
+    });
+
     this.ifcLoader.on('stream-capability', (data) => {
       if (data?.streamingSupported) {
         this.hideLoading();

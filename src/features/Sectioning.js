@@ -118,6 +118,12 @@ export class Sectioning {
     // Rendered in a separate THREE.Scene to bypass global clipping planes
     this._activePlaneContour = null;
     this._activePlaneContourPlaneId = null;
+    // rAF id for coalescing contour rebuilds during drag — prevents stacking
+    // O(triangles) work on every pointer move when the OS fires faster than vsync.
+    this._activeContourRafId = 0;
+    // Mesh-list cache populated at plane-drag start so _computePlaneIntersection
+    // can skip a full scene.traverse on every frame while dragging.
+    this._dragMeshCache = null;
 
     // Mode-scoped action history for undo/redo/reset
     this._actionHistory = [];  // stack of { undo(), redo() }
@@ -133,6 +139,10 @@ export class Sectioning {
     this.GIZMO_SCALE_MIN = 0.3;            // minimum gizmo scale
     this.GIZMO_SCALE_MAX = 5.0;            // maximum gizmo scale
 
+    // Tilt gizmo is currently disabled — the asset and code stay in place so
+    // it can be re-enabled later, but we skip the GLTF fetch and never attach
+    // it to a section plane. Set to true to bring it back.
+    this._tiltGizmoEnabled = false;
     this._tiltGizmoTemplate = null;        // loaded GLTF scene (cloned per use)
     this._tiltGizmo = null;                // active THREE.Group in the scene
     this._tiltRingX = null;                // Ring_X mesh ref (forward/back tilt)
@@ -145,7 +155,7 @@ export class Sectioning {
     this._tiltCumulativeY = 0;             // accumulated tilt around local Y
     this._tiltBaseQuat = null;             // quaternion at drag start (before this drag)
     this._tiltHoveredRing = null;          // currently hovered ring mesh
-    this._loadTiltGizmo();
+    if (this._tiltGizmoEnabled) this._loadTiltGizmo();
 
     // Screen-space scissors icon overlay for section-cut hover
     this.scissorsOverlay = document.createElement('div');
@@ -499,6 +509,9 @@ export class Sectioning {
     this.dragPlaneId = planeId;
     this.dragStartPoint.copy(startPoint);
     this._dragCumulativeDistance = 0;
+    // Snapshot the eligible mesh list once — the scene shouldn't change shape
+    // mid-drag, and re-traversing it every pointer move is wasteful on big models.
+    this._dragMeshCache = this._collectSectionTargetMeshes();
 
     if (this._tiltGizmo) this._tiltGizmo.visible = false;
 
@@ -507,6 +520,17 @@ export class Sectioning {
     this.dragPlane.setFromNormalAndCoplanarPoint(cameraDir, this.dragStartPoint);
     this.emit('drag-start', { planeId });
     return true;
+  }
+
+  // Coalesce contour rebuilds to one per animation frame. Pointer moves can
+  // fire faster than 60Hz and each rebuild is O(triangles_near_plane); without
+  // this, slow rebuilds queue up and the plane visibly lags the cursor.
+  _scheduleActivePlaneContourUpdate() {
+    if (this._activeContourRafId) return;
+    this._activeContourRafId = requestAnimationFrame(() => {
+      this._activeContourRafId = 0;
+      this._buildActivePlaneContour();
+    });
   }
 
   /**
@@ -1026,6 +1050,7 @@ export class Sectioning {
 
   _attachTiltGizmo(planeId) {
     this._detachTiltGizmo();
+    if (!this._tiltGizmoEnabled) return;
     if (!this._tiltGizmoTemplate) return;
 
     const planeData = this.clipPlanes.get(planeId);
@@ -1704,7 +1729,9 @@ export class Sectioning {
     });
   }
 
-  _computePlaneIntersection(clipPlane) {
+  // Same filter used by _computePlaneIntersection's old inline traverse: only
+  // visible model meshes, skipping all section/cut overlays and gizmos.
+  _collectSectionTargetMeshes() {
     const meshes = [];
     this.scene.traverse(obj => {
       if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper &&
@@ -1714,27 +1741,67 @@ export class Sectioning {
         meshes.push(obj);
       }
     });
+    return meshes;
+  }
+
+  _computePlaneIntersection(clipPlane) {
+    // Reuse the mesh list cached at drag start when available — saves a full
+    // scene.traverse on every drag-frame for big models.
+    const meshes = this._dragMeshCache ?? this._collectSectionTargetMeshes();
 
     const edges = [];
     const planeNormal = clipPlane.normal;
     const planeConstant = clipPlane.constant;
 
+    // Scratch AABB reused for every plane-vs-mesh-bbox reject. Without this,
+    // 150 MB IFCs spend most of their time iterating triangles that the plane
+    // doesn't actually cross.
+    const worldBox = this._scratchWorldBox ?? (this._scratchWorldBox = new THREE.Box3());
+    const boxCenter = this._scratchBoxCenter ?? (this._scratchBoxCenter = new THREE.Vector3());
+    const boxHalf = this._scratchBoxHalf ?? (this._scratchBoxHalf = new THREE.Vector3());
+    const instMatScratch = this._scratchInstMat ?? (this._scratchInstMat = new THREE.Matrix4());
+    const fullMatScratch = this._scratchFullMat ?? (this._scratchFullMat = new THREE.Matrix4());
+
+    const planeIntersectsBox = (box) => {
+      // Classic plane-vs-AABB separating-axis test:
+      //   project box half-extents onto |plane.normal|,
+      //   compare to signed distance from plane to box center.
+      box.getCenter(boxCenter);
+      box.getSize(boxHalf).multiplyScalar(0.5);
+      const r =
+        Math.abs(planeNormal.x) * boxHalf.x +
+        Math.abs(planeNormal.y) * boxHalf.y +
+        Math.abs(planeNormal.z) * boxHalf.z;
+      const s = planeNormal.dot(boxCenter) + planeConstant;
+      return Math.abs(s) <= r;
+    };
+
     for (const mesh of meshes) {
       const geo = mesh.geometry;
       const posAttr = geo.attributes.position;
       if (!posAttr) continue;
+      if (!geo.boundingBox) geo.computeBoundingBox();
       const index = geo.index;
       const faceCount = index ? index.count / 3 : posAttr.count / 3;
 
       // For InstancedMesh, process each instance
       const instanceCount = mesh.isInstancedMesh ? mesh.count : 1;
 
+      // Non-instanced fast path: world-AABB reject before touching triangles.
+      if (!mesh.isInstancedMesh && geo.boundingBox) {
+        worldBox.copy(geo.boundingBox).applyMatrix4(mesh.matrixWorld);
+        if (!planeIntersectsBox(worldBox)) continue;
+      }
+
       for (let inst = 0; inst < instanceCount; inst++) {
         let fullMatrix;
         if (mesh.isInstancedMesh) {
-          const instMat = new THREE.Matrix4();
-          mesh.getMatrixAt(inst, instMat);
-          fullMatrix = new THREE.Matrix4().multiplyMatrices(mesh.matrixWorld, instMat);
+          mesh.getMatrixAt(inst, instMatScratch);
+          fullMatrix = fullMatScratch.multiplyMatrices(mesh.matrixWorld, instMatScratch);
+          if (geo.boundingBox) {
+            worldBox.copy(geo.boundingBox).applyMatrix4(fullMatrix);
+            if (!planeIntersectsBox(worldBox)) continue;
+          }
         } else {
           fullMatrix = mesh.matrixWorld;
         }
@@ -2947,7 +3014,7 @@ export class Sectioning {
           this.planeHoverMarker.position.copy(markerPos);
         }
       }
-      this._buildActivePlaneContour();
+      this._scheduleActivePlaneContourUpdate();
       this._updateTiltGizmoPosition(this.dragPlaneId);
       this._setCursor('none');
       return;
@@ -3183,6 +3250,17 @@ export class Sectioning {
       this.isDragging = false;
       this.dragPlaneId = null;
       this._dragCumulativeDistance = 0;
+      // Drop the cached mesh list and run a final synchronous, accurate build
+      // so the contour reflects the exact resting position even if a queued
+      // rAF rebuild was still pending mid-drag.
+      this._dragMeshCache = null;
+      if (this._activeContourRafId) {
+        cancelAnimationFrame(this._activeContourRafId);
+        this._activeContourRafId = 0;
+      }
+      if (draggedPlaneId && this.activeSectionPlaneId === draggedPlaneId) {
+        this._buildActivePlaneContour();
+      }
       this.clearPlaneHoverMarker();
       this._setCursor('');
       this.emit('drag-end');

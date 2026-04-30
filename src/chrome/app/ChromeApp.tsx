@@ -5,11 +5,29 @@ import { ViewerAdapterProvider } from '../features/viewer-adapter/ViewerAdapterC
 import { createModelViewerAdapter } from '../features/viewer-adapter/modelViewerAdapter';
 import { mockViewerAdapter } from '../features/viewer-adapter/mockViewerAdapter';
 import type { ViewerAdapter, ObjectStreamingState } from '../features/viewer-adapter/types';
+import type { ModelEntry } from '../features/header/Header';
 // This is the sole engine import — isolated to this entry file.
 // @ts-expect-error -- ModelViewer is vanilla JS with no type declarations
 import { ModelViewer } from '../../index.js';
 
-const DEFAULT_MODEL_URL = '/models/Condos.ifc';
+// Registered sample models that show up in the header's "Project Model" dropdown.
+// Files live in `public/models/`; spaces in filenames are URL-encoded.
+const MODELS: readonly ModelEntry[] = [
+  { id: 'condos',      label: 'Condos',      url: '/models/Condos.ifc' },
+  { id: 'data-center', label: 'Data Center', url: '/models/Data%20Center.ifc' },
+  { id: 'vortex',      label: 'Vortex Architectural', url: '/models/Vortex_Architectural.ifc' },
+] as const;
+
+const DEFAULT_MODEL = MODELS[0];
+
+// Read which sample model the dropdown asked for via `?model=<id>` in the URL.
+// We use a URL param + page reload to switch models so the FragmentsManager,
+// object tree, properties, and selection state all start from a clean slate.
+function getInitialModel(): ModelEntry {
+  if (typeof window === 'undefined') return DEFAULT_MODEL;
+  const requestedId = new URLSearchParams(window.location.search).get('model');
+  return MODELS.find((m) => m.id === requestedId) ?? DEFAULT_MODEL;
+}
 
 function setInitialLoadingCamera(viewer: InstanceType<typeof ModelViewer>) {
   // Keep a stable wide framing before any geometry appears.
@@ -106,13 +124,18 @@ function WelcomeOverlay({
           <p className="text-xs uppercase tracking-wider text-gray-400 mb-3">
             Or try a sample model
           </p>
-          <button
-            type="button"
-            onClick={() => onLoadUrl('/models/Condos.ifc')}
-            className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-md transition-colors"
-          >
-            Condos Building
-          </button>
+          <div className="flex flex-wrap justify-center gap-2">
+            {MODELS.map((model) => (
+              <button
+                key={model.id}
+                type="button"
+                onClick={() => onLoadUrl(model.url)}
+                className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-md transition-colors"
+              >
+                {model.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <input
@@ -137,12 +160,17 @@ export function ChromeApp() {
   const [modelLoaded, setModelLoaded] = useState(false);
   const [loadRequested, setLoadRequested] = useState(false);
   const [showUploadPage, setShowUploadPage] = useState(false);
+  const initialModelRef = useRef<ModelEntry>(getInitialModel());
+  const [activeModelId, setActiveModelId] = useState<string | null>(initialModelRef.current.id);
   const [streamingState, setStreamingState] = useState<ObjectStreamingState>({
     streamingSupported: false,
     parserProgress: 0,
     totalObjects: 0,
     streamComplete: false,
     hasError: false,
+    phase: 'init',
+    bytesLoaded: 0,
+    bytesTotal: 0,
   });
 
   useEffect(() => {
@@ -184,8 +212,8 @@ export function ChromeApp() {
       setLoadRequested(true);
       setModelLoaded(true);
       setInitialLoadingCamera(viewer);
-      const name = DEFAULT_MODEL_URL.split('/').pop();
-      viewer.loadModel(DEFAULT_MODEL_URL, name).catch((err: unknown) => {
+      const initial = initialModelRef.current;
+      viewer.loadModel(initial.url, initial.label).catch((err: unknown) => {
         console.error('Failed to auto-load default model:', err);
         setModelLoaded(false);
       });
@@ -222,6 +250,7 @@ export function ChromeApp() {
     if (!viewer) return;
     setLoadRequested(true);
     setModelLoaded(true);
+    setActiveModelId(null); // user-uploaded file is not in the registry
     setInitialLoadingCamera(viewer);
     try {
       await viewer.loadModelFromFile(file, file.name);
@@ -230,6 +259,23 @@ export function ChromeApp() {
       setModelLoaded(false);
     }
   }, []);
+
+  const handleSelectModel = useCallback(
+    (model: ModelEntry) => {
+      if (model.id === activeModelId) return;
+
+      // Switch via URL param + full reload. This is intentional: in-place
+      // unloading hits a bug in @thatopen/components where dispose() iterates
+      // mesh.material as if it were always an array, and it also disposes the
+      // global FragmentsManager rather than just the selected model — both of
+      // which break the next load. A reload gives us a guaranteed clean slate
+      // (object tree, properties, selection, fragments) for the new model.
+      const url = new URL(window.location.href);
+      url.searchParams.set('model', model.id);
+      window.location.href = url.toString();
+    },
+    [activeModelId],
+  );
 
   useEffect(() => {
     if (!adapter.subscribeObjectStreamingState || !adapter.getObjectStreamingState) {
@@ -249,15 +295,77 @@ export function ChromeApp() {
     !streamingState.streamComplete &&
     !streamingState.hasError &&
     (streamingState.streamingSupported || streamingState.parserProgress > 0);
-  const parserProgressPercent = Math.max(0, Math.min(100, Math.round(streamingState.parserProgress * 100)));
-  const parsedObjects =
-    streamingState.totalObjects > 0
-      ? Math.round(streamingState.parserProgress * streamingState.totalObjects)
-      : 0;
-  const objectsProgressLabel =
-    streamingState.totalObjects > 0
-      ? `${parsedObjects} / ${streamingState.totalObjects} objects`
-      : `${parserProgressPercent}% parsed`;
+
+  // Phase-weighted progress percentage. Bar fill flows smoothly through phases
+  // — there's no special parse animation, so the bar simply rests at 55%
+  // during parse and resumes filling once reveal begins.
+  //   init     0–10%   step (single milestone — no continuous % to report)
+  //   download 10–55%  bytesLoaded / bytesTotal
+  //   parse    55%     resting fill while web-ifc parses (no progress source)
+  //   reveal   80–100% real per-batch progress from progressivelyRevealModel
+  //   complete 100%
+  const phasePercent = (() => {
+    switch (streamingState.phase) {
+      case 'init':
+        return 5;
+      case 'download': {
+        const ratio = streamingState.bytesTotal > 0
+          ? Math.min(1, streamingState.bytesLoaded / streamingState.bytesTotal)
+          : 0;
+        return 10 + ratio * 45;
+      }
+      case 'parse':
+        return 55;
+      case 'reveal':
+        return 80 + Math.max(0, Math.min(1, streamingState.parserProgress)) * 20;
+      case 'complete':
+        return 100;
+      case 'error':
+        return 100;
+      default:
+        return 0;
+    }
+  })();
+  const phaseProgressPercent = Math.round(phasePercent);
+
+  const formatBytes = (n: number) => {
+    if (!Number.isFinite(n) || n <= 0) return '';
+    if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+    return `${n} B`;
+  };
+  let phaseLabel = 'Loading';
+  let phaseDetail = '';
+  switch (streamingState.phase) {
+    case 'init':
+      phaseLabel = 'Initializing viewer';
+      phaseDetail = '';
+      break;
+    case 'download':
+      phaseLabel = 'Downloading model';
+      phaseDetail = streamingState.bytesTotal > 0
+        ? `${formatBytes(streamingState.bytesLoaded)} / ${formatBytes(streamingState.bytesTotal)}`
+        : formatBytes(streamingState.bytesLoaded);
+      break;
+    case 'parse':
+      phaseLabel = 'Parsing geometry';
+      phaseDetail = 'This can take a minute on large models';
+      break;
+    case 'reveal':
+      phaseLabel = 'Loading objects';
+      phaseDetail = streamingState.totalObjects > 0
+        ? `${Math.round(streamingState.parserProgress * streamingState.totalObjects)} / ${streamingState.totalObjects} objects`
+        : `${phaseProgressPercent}%`;
+      break;
+    case 'complete':
+      phaseLabel = 'Done';
+      phaseDetail = '';
+      break;
+    case 'error':
+      phaseLabel = 'Failed to load';
+      phaseDetail = '';
+      break;
+  }
 
   return (
     <ViewerAdapterProvider adapter={adapter}>
@@ -265,7 +373,12 @@ export function ChromeApp() {
         viewerContainerRef={viewerContainerRef}
         showOverlays={loadRequested && !showUploadPage}
         onUploadClick={() => setShowUploadPage(true)}
-        streamingProgress={showStreamingIndicator ? parserProgressPercent : null}
+        streamingProgress={showStreamingIndicator ? phaseProgressPercent : null}
+        streamingLabel={phaseLabel}
+        streamingDetail={phaseDetail}
+        models={MODELS}
+        activeModelId={activeModelId}
+        onSelectModel={handleSelectModel}
       />
       {showUploadPage && (
         <WelcomeOverlay

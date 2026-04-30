@@ -15,6 +15,11 @@ export class IFCLoader {
     this.modelIdCounter = 0;
     this.eventListeners = new Map();
 
+    // The progressive reveal animation spreads model finalize work over ~5s
+    // for a polished load-in. The reveal phase also doubles as the only real
+    // progress source for the loading bar's last segment, so it's enabled.
+    this._progressiveRevealEnabled = true;
+
     // Store the init promise so loadModel can await it
     this._initPromise = this.init();
   }
@@ -76,14 +81,17 @@ export class IFCLoader {
     try {
       this.emit('load-start', { modelId, url, name });
 
-      // Fetch the IFC file
+      // Streamed fetch so the loading bar can show real download progress.
+      // We read the body in chunks and emit a `load-progress` event each
+      // chunk with bytes-received vs Content-Length total.
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Failed to fetch IFC file: ${response.statusText}`);
       }
 
-      const data = await response.arrayBuffer();
-      const buffer = new Uint8Array(data);
+      const totalHeader = response.headers.get('Content-Length');
+      const total = totalHeader ? parseInt(totalHeader, 10) : 0;
+      const buffer = await this._readBodyWithProgress(response, modelId, total);
 
       return this.loadModelFromBuffer(buffer, {
         modelId,
@@ -95,6 +103,61 @@ export class IFCLoader {
       this.emit('load-error', { modelId, error: error.message });
       throw error;
     }
+  }
+
+  // Read a Response body in chunks, emitting download-phase progress events
+  // along the way. Falls back to arrayBuffer() if the body isn't streamable.
+  async _readBodyWithProgress(response, modelId, total) {
+    if (!response.body || typeof response.body.getReader !== 'function') {
+      const fallback = await response.arrayBuffer();
+      const buf = new Uint8Array(fallback);
+      this.emit('load-progress', {
+        modelId,
+        phase: 'download',
+        received: buf.length,
+        total: total || buf.length,
+      });
+      return buf;
+    }
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let received = 0;
+
+    // Throttle progress emits a bit so we don't spam the React state on every
+    // chunk for fast localhost downloads.
+    let lastEmittedAt = 0;
+    const emitProgress = (force = false) => {
+      const now = performance.now();
+      if (!force && now - lastEmittedAt < 33) return;
+      lastEmittedAt = now;
+      this.emit('load-progress', {
+        modelId,
+        phase: 'download',
+        received,
+        total: total || received,
+      });
+    };
+
+    // Initial 0% emit so the bar can flip to download phase immediately.
+    emitProgress(true);
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      emitProgress();
+    }
+    emitProgress(true);
+
+    const buf = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      buf.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return buf;
   }
 
   async loadModelFromFile(file, name) {
@@ -127,6 +190,11 @@ export class IFCLoader {
     try {
       this.emit('stream-capability', { modelId, streamingSupported: true });
 
+      // Mark the start of the parse phase. web-ifc gives us no progress
+      // signal mid-parse, so the bar's fill rests at 55% from here until
+      // the reveal phase begins below.
+      this.emit('load-progress', { modelId, phase: 'parse' });
+
       // Load real IFC fragments, then reveal actual geometry progressively.
       const model = await this.ifcLoader.load(buffer);
       this.sceneManager.add(model);
@@ -140,7 +208,10 @@ export class IFCLoader {
         visible: true
       });
 
-      const ready = await this.progressivelyRevealModel(modelId, model, 5000);
+      // Reveal phase emits its own per-batch progress (object-load-progress).
+      this.emit('load-progress', { modelId, phase: 'reveal' });
+      const revealDurationMs = this._progressiveRevealEnabled ? 5000 : 0;
+      const ready = await this.progressivelyRevealModel(modelId, model, revealDurationMs);
       this.emit('object-load-complete', {
         modelId,
         loadedObjects: ready.revealed,

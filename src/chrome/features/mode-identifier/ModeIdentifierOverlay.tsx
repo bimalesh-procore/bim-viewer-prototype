@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import caretDownIcon from '../../assets/icons/mode-identifier/caret-down.svg';
 import sectionCutVideo from '../../assets/Video/section cut demo.mov';
+import sectionPlaneVideo from '../../assets/Video/section plane video.mov';
 
 type ModeIdentifierMode = 'default' | 'markup' | 'measure' | 'create' | 'sectioning';
 
@@ -12,6 +13,7 @@ interface ModeIdentifierDetail {
 
 const videoBySubTool: Partial<Record<string, string>> = {
   'section-cut': sectionCutVideo,
+  'section-plane': sectionPlaneVideo,
 };
 
 export function ModeIdentifierOverlay() {
@@ -23,6 +25,7 @@ export function ModeIdentifierOverlay() {
   const [isExpanded, setIsExpanded] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const seenLabels = useRef<Set<string>>(new Set());
 
   const modeDescriptionByMode: Record<ModeIdentifierMode, string> = {
     default: '',
@@ -32,12 +35,33 @@ export function ModeIdentifierOverlay() {
     sectioning: 'Sectioning mode lets you cut through the model to inspect interior geometry.',
   };
 
+  const labelDescriptionOverrides: Record<string, { description: string; shortcuts: { key: string; label: string }[] }> = {
+    'Sectioning: Cut': {
+      description: 'Click any surface to slice through the model at that point. Drag the green plane to adjust the cut depth.',
+      shortcuts: [
+        { key: 'R', label: 'Rotate cut 45°' },
+        { key: 'Delete', label: 'Delete plane' },
+        { key: 'Enter', label: 'Save plane' },
+      ],
+    },
+    'Sectioning: Plane': {
+      description: 'Click any surface to place a clipping plane along it. Drag the green plane to push it through the model.',
+      shortcuts: [
+        { key: 'F', label: 'Flip plane' },
+        { key: 'Delete', label: 'Delete plane' },
+        { key: 'Enter', label: 'Save plane' },
+      ],
+    },
+  };
+
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<ModeIdentifierDetail>).detail;
       if (!detail) return;
       setModeState(detail);
-      setIsExpanded(false);
+      const firstVisit = !seenLabels.current.has(detail.label);
+      seenLabels.current.add(detail.label);
+      setIsExpanded(firstVisit);
       setLightboxOpen(false);
     };
     window.addEventListener('mv:mode-identifier', handler);
@@ -97,9 +121,24 @@ export function ModeIdentifierOverlay() {
 
           {isExpanded && (
             <div className="pb-1 pt-1 flex items-start gap-3" style={{ paddingLeft: '36px', paddingRight: '4px' }}>
-              <p className="text-[12px] leading-4 text-[#c5c9cd] flex-1">
-                {modeDescriptionByMode[modeState.mode]}
-              </p>
+              <div className="flex-1 flex flex-col gap-3">
+                <p className="text-[12px] leading-4 text-[#c5c9cd]">
+                  {labelDescriptionOverrides[modeState.label]?.description
+                    ?? modeDescriptionByMode[modeState.mode]}
+                </p>
+                {labelDescriptionOverrides[modeState.label]?.shortcuts && (
+                  <div className="grid gap-x-2 gap-y-[3px]" style={{ gridTemplateColumns: 'max-content max-content' }}>
+                    {labelDescriptionOverrides[modeState.label].shortcuts.map(({ key, label }) => (
+                      <>
+                        <span key={`${key}-label`} className="text-[11px] text-[#8b9196] leading-4">{label}</span>
+                        <span key={`${key}-chip`} className="text-[10px] font-mono font-semibold bg-[#2e3336] text-[#c5c9cd] px-[6px] py-[1px] rounded-[4px] border border-[#3b4044] leading-4 text-center">
+                          {key}
+                        </span>
+                      </>
+                    ))}
+                  </div>
+                )}
+              </div>
               {videoSrc && (
                 <button
                   type="button"

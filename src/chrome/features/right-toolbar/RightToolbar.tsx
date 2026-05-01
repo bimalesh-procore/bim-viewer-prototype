@@ -15,6 +15,8 @@ import sectioningIcon from '../../assets/icons/right-toolbar/sectioning.svg';
 import sectionBoxIcon from '../../assets/icons/right-toolbar/section-box.svg';
 import sectionPlaneIcon from '../../assets/icons/right-toolbar/section-plane.svg';
 import sectionCutIcon from '../../assets/icons/right-toolbar/section-cut.svg';
+import sectionFlipIcon from '../../assets/icons/right-toolbar/section-flip.svg';
+import sectionDeleteIcon from '../../assets/icons/right-toolbar/section-delete.svg';
 import resetIcon from '../../assets/icons/right-toolbar/reset.svg';
 import undoIcon from '../../assets/icons/right-toolbar/undo.svg';
 import redoIcon from '../../assets/icons/right-toolbar/redo.svg';
@@ -51,6 +53,9 @@ export function RightToolbar() {
   });
   const [activeMeasureTool, setActiveMeasureTool] = useState<'dimensions' | 'point-to-point' | 'laser' | 'manhole' | 'coordinates' | null>(null);
   const [activeSectionTool, setActiveSectionTool] = useState<'section-box' | 'section-plane' | 'section-cut' | null>(null);
+  const [hasActiveSectionPlane, setHasActiveSectionPlane] = useState(
+    () => adapter.hasActiveSectionPlane?.() ?? false,
+  );
   const [activeMarkupTool, setActiveMarkupTool] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [markupColor, setMarkupColor] = useState('#FF0000');
@@ -119,10 +124,18 @@ export function RightToolbar() {
   }, [adapter]);
 
   useEffect(() => {
-    const unsubscribe = adapter.subscribeRequestEditPlane?.(() => {
+    const unsubscribe = adapter.subscribeActiveSectionPlane?.(setHasActiveSectionPlane);
+    if (!unsubscribe) {
+      setHasActiveSectionPlane(adapter.hasActiveSectionPlane?.() ?? false);
+    }
+    return () => unsubscribe?.();
+  }, [adapter]);
+
+  useEffect(() => {
+    const unsubscribe = adapter.subscribeRequestEditPlane?.((tool) => {
       exitMarkupIfActive();
       setActiveMode('sectioning');
-      setActiveSectionTool('section-plane');
+      setActiveSectionTool(tool);
       setOpenFlyout(null);
     });
     return () => unsubscribe?.();
@@ -684,11 +697,35 @@ export function RightToolbar() {
 
           {/* Mode-specific tools — only this group changes per mode */}
           {activeMode === 'sectioning' ? (
-            <RightToolbarGroup>
-              <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-box'} onClick={() => { setActiveSectionTool('section-box'); adapter.setActiveSectioningTool?.('section-box'); }} />
-              <RightToolbarButton src={sectionPlaneIcon} label="Section plane" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-plane'} onClick={() => { setActiveSectionTool('section-plane'); adapter.setActiveSectioningTool?.('section-plane'); }} />
-              <RightToolbarButton src={sectionCutIcon} label="Section cut" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-cut'} onClick={() => { setActiveSectionTool('section-cut'); adapter.setActiveSectioningTool?.('section-cut'); }} />
-            </RightToolbarGroup>
+            <>
+              <RightToolbarGroup>
+                <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-box'} onClick={() => { setActiveSectionTool('section-box'); adapter.setActiveSectioningTool?.('section-box'); }} />
+                <RightToolbarButton src={sectionPlaneIcon} label="Section plane" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-plane'} onClick={() => { setActiveSectionTool('section-plane'); adapter.setActiveSectioningTool?.('section-plane'); }} />
+                <RightToolbarButton src={sectionCutIcon} label="Section cut" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-cut'} onClick={() => { setActiveSectionTool('section-cut'); adapter.setActiveSectioningTool?.('section-cut'); }} />
+              </RightToolbarGroup>
+              {/* Plane actions — separate group, only for plane-based tools.
+                  Disabled until a plane is in edit state. */}
+              {(activeSectionTool === 'section-plane' || activeSectionTool === 'section-cut') && (
+                <RightToolbarGroup>
+                  <RightToolbarButton
+                    src={sectionFlipIcon}
+                    label="Flip plane"
+                    shortcut="F"
+                    showTooltip={showTooltips}
+                    disabled={!hasActiveSectionPlane}
+                    onClick={() => adapter.flipActiveSectionPlane?.()}
+                  />
+                  <RightToolbarButton
+                    src={sectionDeleteIcon}
+                    label="Delete plane"
+                    shortcut="Del"
+                    showTooltip={showTooltips}
+                    disabled={!hasActiveSectionPlane}
+                    onClick={() => adapter.deleteActiveSectionPlane?.()}
+                  />
+                </RightToolbarGroup>
+              )}
+            </>
           ) : activeMode === 'measure' ? (
             <RightToolbarGroup>
               <RightToolbarButton src={measureDistanceIcon} label="Dimensions" shortcut="R" showTooltip={showTooltips} isActive={activeMeasureTool === 'dimensions'} onClick={() => setActiveMeasureTool('dimensions')} />
@@ -712,7 +749,7 @@ export function RightToolbar() {
           )}
 
           <RightToolbarGroup>
-            {activeMode !== 'measure' && (
+            {activeMode !== 'measure' && activeMode !== 'sectioning' && (
               <div className="relative">
                 <button
                   type="button"

@@ -9,6 +9,12 @@ export interface ToolbarButtonProps {
   shortcut?: string;
   showTooltip?: boolean;
   isActive?: boolean;
+  /**
+   * When true the button is non-interactive and renders at reduced opacity.
+   * Used for context-sensitive actions (e.g. Flip / Delete plane) that
+   * only make sense when something is selected.
+   */
+  disabled?: boolean;
   /** Renders the flyout-indicator triangle in the bottom-left corner. */
   hasFlyout?: boolean;
   /**
@@ -27,6 +33,7 @@ export function ToolbarButton({
   shortcut,
   showTooltip = false,
   isActive = false,
+  disabled = false,
   hasFlyout = false,
   tooltipSide = 'right',
   onClick,
@@ -35,11 +42,15 @@ export function ToolbarButton({
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-label={label}
+      aria-disabled={disabled || undefined}
       className={`mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors ${
-        isActive
-          ? 'bg-[#D2E0F9] hover:bg-[#BCD1F5]'
-          : 'hover:bg-[#E3E6E8] active:bg-gray-200'
+        disabled
+          ? 'opacity-40 cursor-not-allowed'
+          : isActive
+            ? 'bg-[#D2E0F9] hover:bg-[#BCD1F5]'
+            : 'hover:bg-[#E3E6E8] active:bg-gray-200'
       }`}
     >
       <img
@@ -48,7 +59,7 @@ export function ToolbarButton({
         width={24}
         height={24}
         className="block w-6 h-6"
-        style={isActive ? { filter: ACTIVE_ICON_FILTER } : undefined}
+        style={isActive && !disabled ? { filter: ACTIVE_ICON_FILTER } : undefined}
       />
       {showTooltip && (
         <div

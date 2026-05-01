@@ -135,7 +135,15 @@ export interface ViewerAdapter {
     listener: () => void,
   ): () => void;
   subscribeRequestEditPlane?(
-    listener: () => void,
+    listener: (tool: 'section-plane' | 'section-cut') => void,
+  ): () => void;
+  // Active edit-state plane controls — used by the right toolbar's
+  // Flip / Delete buttons. Returns true if a plane was acted on.
+  flipActiveSectionPlane?(): boolean;
+  deleteActiveSectionPlane?(): boolean;
+  hasActiveSectionPlane?(): boolean;
+  subscribeActiveSectionPlane?(
+    listener: (present: boolean) => void,
   ): () => void;
   toggleIsolationMode?(): void;
   toggleSearchSetsPanel?(): void;

@@ -65,6 +65,9 @@ interface ModelViewerInstance {
     activateSectionBox(): void;
     clearSectionBox(): void;
     clearAll(): void;
+    flipActivePlane(): boolean;
+    deleteActivePlane(): boolean;
+    activeSectionPlaneId: string | null;
     undo(): void;
     redo(): void;
     resetMode(): void;
@@ -278,16 +281,38 @@ export function createModelViewerAdapter(
     }
   });
 
-  const requestEditPlaneListeners = new Set<() => void>();
-  viewer.sectioning.on('request-edit-plane', () => {
+  const requestEditPlaneListeners = new Set<(tool: 'section-plane' | 'section-cut') => void>();
+  viewer.sectioning.on('request-edit-plane', (payload?: { tool?: 'section-plane' | 'section-cut' }) => {
     if (!sectioningActive) {
       sectioningActive = true;
       emitSectioningState();
     }
-    activeSectionTool = 'section-plane';
+    // Preserve the user's active tool when already in a sectioning tool —
+    // clicking a wedge icon under section-cut shouldn't kick them back to
+    // section-plane. Default to section-plane only when entering sectioning
+    // from outside (e.g. clicking the icon while no tool was active).
+    const nextTool = payload?.tool === 'section-cut' || payload?.tool === 'section-plane'
+      ? payload.tool
+      : 'section-plane';
+    activeSectionTool = nextTool;
     viewer.selection.setHoverEnabled?.(false);
     for (const listener of requestEditPlaneListeners) {
-      listener();
+      listener(nextTool);
+    }
+  });
+
+  // Track whether there's a plane in edit state (selected). The right
+  // toolbar's Flip / Delete buttons enable based on this.
+  let activeSectionPlanePresent = Boolean(viewer.sectioning.activeSectionPlaneId);
+  const activePlaneListeners = new Set<(present: boolean) => void>();
+  const emitActivePlane = () => {
+    for (const listener of activePlaneListeners) listener(activeSectionPlanePresent);
+  };
+  viewer.sectioning.on('active-plane-change', (payload?: { planeId?: string | null }) => {
+    const next = Boolean(payload?.planeId);
+    if (next !== activeSectionPlanePresent) {
+      activeSectionPlanePresent = next;
+      emitActivePlane();
     }
   });
 
@@ -452,6 +477,22 @@ export function createModelViewerAdapter(
     clearSectioningPlanes() {
       viewer.sectioning.clearAll();
     },
+    flipActiveSectionPlane() {
+      return viewer.sectioning.flipActivePlane();
+    },
+    deleteActiveSectionPlane() {
+      return viewer.sectioning.deleteActivePlane();
+    },
+    hasActiveSectionPlane() {
+      return activeSectionPlanePresent;
+    },
+    subscribeActiveSectionPlane(listener: (present: boolean) => void) {
+      activePlaneListeners.add(listener);
+      listener(activeSectionPlanePresent);
+      return () => {
+        activePlaneListeners.delete(listener);
+      };
+    },
     isSectioningActive() {
       return sectioningActive;
     },
@@ -481,7 +522,7 @@ export function createModelViewerAdapter(
         requestEditCutListeners.delete(listener);
       };
     },
-    subscribeRequestEditPlane(listener: () => void) {
+    subscribeRequestEditPlane(listener: (tool: 'section-plane' | 'section-cut') => void) {
       requestEditPlaneListeners.add(listener);
       return () => {
         requestEditPlaneListeners.delete(listener);
@@ -732,9 +773,9 @@ export function createModelViewerAdapter(
       emitActionHistory();
     },
     commitActiveCut() {
-      if (viewer.sectioning.cutState) {
-        viewer.sectioning.commitCutAuthoring();
-      }
+      // No-op since the rotation-authoring system was removed: section-cut
+      // clicks now commit a plane immediately on mousedown, so there is
+      // never an in-progress cut to commit.
     },
 
     // ── Views ─────────────────────────────────────────────────────────

@@ -67,18 +67,15 @@ export class Sectioning {
     this.hoverHighlight = null;
     this.previewGroup = null;
 
-    // Section-cut authoring state
-    this.cutState = null;       // { anchorPoint, surfaceNormal, tangent, bitangent, angle }
-    this.cutGizmoGroup = null;
-    this.cutPreviewClip = null; // live THREE.Plane applied to renderer during authoring
-    this.cutDragging = false;
-    this.cutHoverMarker = null;
-    this.planeHoverMarker = null;
-    this._hoveringCutEditIcon = false;
-    this._cutClickPending = null; // section-cut only: { hit, normal, screenX, screenY, wasAnchored }
-    this._cutClickThreshold = 5; // pixels of movement before treating as camera drag
-    this._cutSurfaceHighlight = null;   // overlay mesh for hovered surface
-    this._cutHighlightCacheKey = null;  // "meshUuid:instanceId:faceIndex" to skip redundant rebuilds
+    // Section-cut placement-cursor + section-plane edit-state markers.
+    // The rotation-authoring and persistent-contour systems were removed —
+    // every committed plane (regardless of which tool placed it) is owned by
+    // the shared Section Plane post-commit machinery (_planeOverlays,
+    // _setSectionPlaneDefault, _editSectionPlane, drag-to-translate).
+    this.cutHoverMarker = null;          // crosshair/scissor cursor for section-cut placement
+    this.planeHoverMarker = null;        // drag-arrow cursor for hovering committed planes
+    this._cutSurfaceHighlight = null;    // overlay mesh for hovered surface
+    this._cutHighlightCacheKey = null;   // "meshUuid:instanceId:faceIndex" to skip redundant rebuilds
     this._cutHoverMaterial = new THREE.MeshBasicMaterial({
       color: 0x00ff33,
       transparent: true,
@@ -104,11 +101,14 @@ export class Sectioning {
     this._arrowSpriteTexture = null;
     this._loadArrowSpriteTexture();
 
-    // Persistent cut contour visuals (outline + icon), visible in and out of sectioning mode
-    this._cutContours = new Map(); // planeId → { group, planeNormal, anchorPoint, surfaceNormal, angle, tangent, bitangent }
-    this._cutContoursGroup = new THREE.Group();
-    this._cutContoursGroup.name = 'CutContours';
-    this.scene.add(this._cutContoursGroup);
+    // Section-cut placement preview line.
+    // Shows a green line on the hovered surface indicating where the cut
+    // will slice. The user can press 'r' to rotate the cut by 45° around
+    // the surface normal. The angle persists across hover frames within
+    // a single section-cut session.
+    this._cutRotationAngle = 0;          // radians; toggled by 'r' key
+    this._cutPreviewLine = null;         // THREE.Line in helpersGroup
+    this._lastCutHover = null;           // { point, normal } cached so 'r' can re-apply without a mousemove
 
     // Section-plane default-state overlays (ring-with-arrows icon per set plane)
     this._planeOverlays = new Map(); // planeId → { el, worldPos }
@@ -184,7 +184,16 @@ export class Sectioning {
       this.clearHoverHighlight();
       this._setCursor('');
     }
-    if (tool !== 'section-plane') {
+    // Reset the section-cut rotation angle when leaving section-cut, so a
+    // fresh entry into the tool always starts at the unrotated default.
+    if (prevTool === 'section-cut' && tool !== 'section-cut') {
+      this._cutRotationAngle = 0;
+    }
+    // Both section-plane and section-cut share the same post-commit edit
+    // state. When leaving either tool, drop the active plane back to its
+    // default (icon-only) visual.
+    const isSectioningTool = tool === 'section-plane' || tool === 'section-cut';
+    if (!isSectioningTool) {
       if (this.activeSectionPlaneId) {
         this._setSectionPlaneDefault(this.activeSectionPlaneId);
       }
@@ -196,16 +205,12 @@ export class Sectioning {
       if (data.el) data.el.style.display = 'flex';
     }
 
-    // Cancel in-progress surface-cut authoring when switching away.
-    const prevWasSurfaceCutTool = prevTool === 'section-cut' || prevTool === 'section-plane';
-    const nextIsSurfaceCutTool = tool === 'section-cut' || tool === 'section-plane';
-    if (prevWasSurfaceCutTool && !nextIsSurfaceCutTool) {
-      this.cancelCutAuthoring();
+    // Attach/detach keyboard listener for section-plane/section-cut shortcuts.
+    const prevWasSectioning = prevTool === 'section-cut' || prevTool === 'section-plane';
+    if (prevWasSectioning && !isSectioningTool) {
       document.removeEventListener('keydown', this.boundOnKeyDown);
     }
-
-    // Attach keyboard listener for section-cut/section-plane authoring.
-    if (nextIsSurfaceCutTool && !prevWasSurfaceCutTool) {
+    if (isSectioningTool && !prevWasSectioning) {
       document.addEventListener('keydown', this.boundOnKeyDown);
     }
 
@@ -291,18 +296,9 @@ export class Sectioning {
     this._overlayAnimId = null;
     const tick = () => {
       this._overlayAnimId = requestAnimationFrame(tick);
-      if (this._cutContours.size > 0) {
-        this._updateCutEditOverlayPositions();
-      }
       if (this._planeOverlays.size > 0) {
         this._updatePlaneOverlayPositions();
       }
-      // Keep LineMaterial resolution in sync with viewport
-      this._cutContoursGroup.traverse(obj => {
-        if (obj.material?.isLineMaterial) {
-          obj.material.resolution.set(this.domElement.clientWidth, this.domElement.clientHeight);
-        }
-      });
       if (this._activePlaneContour) {
         this._activePlaneContour.traverse(obj => {
           if (obj.material?.isLineMaterial) {
@@ -342,19 +338,12 @@ export class Sectioning {
   }
 
   undo() {
-    // If there's an in-progress cut authoring (anchor placed, preview showing),
-    // cancel it first before touching the committed action history.
-    if (this.cutState) {
-      this.cancelCutAuthoring();
-      this.syncRendererClipPlanes();
-      return;
-    }
     if (this._actionHistory.length === 0) return;
     const action = this._actionHistory.pop();
     this._skipRecord = true;
     try { action.undo(); } finally { this._skipRecord = false; }
     this._redoStack.push(action);
-    this.syncRendererClipPlanes();
+    this.updateRendererClipPlanes();
   }
 
   redo() {
@@ -366,7 +355,6 @@ export class Sectioning {
   }
 
   resetMode() {
-    if (this.cutState) this.cancelCutAuthoring();
     this.clearCutHoverMarker();
     this.clearPlaneHoverMarker();
     this._removeCutSurfaceHighlight();
@@ -378,7 +366,7 @@ export class Sectioning {
       }
     } finally { this._skipRecord = false; }
     this._redoStack = [];
-    this.syncRendererClipPlanes();
+    this.updateRendererClipPlanes();
   }
 
   clearHistory() {
@@ -448,13 +436,11 @@ export class Sectioning {
     const savedNormal = normal.clone();
     const savedPoint = point.clone();
     const savedOpts = { ...opts };
-    const savedCutAuthoring = opts.cutAuthoring ? { ...opts.cutAuthoring } : null;
     this._pushAction({
       type: 'add-plane',
       undo: () => { this.removeClipPlane(id); },
       redo: () => {
         this._restoreClipPlane(id, savedNormal, savedPoint, savedOpts);
-        if (savedCutAuthoring) this._buildCutContour(id, savedCutAuthoring);
       },
     });
 
@@ -462,8 +448,34 @@ export class Sectioning {
   }
 
   _setActiveSectionPlane(planeId) {
-    this.activeSectionPlaneId = planeId || null;
+    const next = planeId || null;
+    const changed = this.activeSectionPlaneId !== next;
+    this.activeSectionPlaneId = next;
     this._refreshSectionPlaneActiveVisuals();
+    if (changed) {
+      this.emit('active-plane-change', { planeId: this.activeSectionPlaneId });
+    }
+  }
+
+  /**
+   * Flip the currently selected (edit-state) plane. Returns true if a
+   * plane was flipped, false if there is no active plane.
+   */
+  flipActivePlane() {
+    if (!this.activeSectionPlaneId) return false;
+    this.flipPlane(this.activeSectionPlaneId);
+    return true;
+  }
+
+  /**
+   * Remove the currently selected (edit-state) plane. Returns true if a
+   * plane was deleted, false if there is no active plane.
+   */
+  deleteActivePlane() {
+    if (!this.activeSectionPlaneId) return false;
+    const planeId = this.activeSectionPlaneId;
+    this.removeClipPlane(planeId);
+    return true;
   }
 
   _refreshSectionPlaneActiveVisuals() {
@@ -512,6 +524,17 @@ export class Sectioning {
     // Snapshot the eligible mesh list once — the scene shouldn't change shape
     // mid-drag, and re-traversing it every pointer move is wasteful on big models.
     this._dragMeshCache = this._collectSectionTargetMeshes();
+    // Clear the cross-section contour for the duration of the drag. Rebuilding
+    // it every frame is the dominant cost on transverse cuts (a horizontal
+    // section through a multi-story IFC intersects thousands of triangles), so
+    // we hide it during drag and rebuild once on mouseup. The renderer's
+    // clipping planes still update every frame, so the live cut on the model
+    // is always correct — only the green outline is deferred.
+    if (this._activeContourRafId) {
+      cancelAnimationFrame(this._activeContourRafId);
+      this._activeContourRafId = 0;
+    }
+    this._clearActivePlaneContour();
 
     if (this._tiltGizmo) this._tiltGizmo.visible = false;
 
@@ -558,22 +581,24 @@ export class Sectioning {
       this.disposeHelper(planeData.helper);
     }
 
-    // Remove associated cut contour visuals
-    this._removeCutContour(planeId);
-
-    // Remove associated plane overlay
+    // Remove associated plane overlay (icon-only state)
     this._removePlaneOverlay(planeId);
 
     // Remove from map
     this.clipPlanes.delete(planeId);
+    let activePlaneCleared = false;
     if (this.activeSectionPlaneId === planeId) {
       this.activeSectionPlaneId = null;
+      activePlaneCleared = true;
     }
 
     // Update renderer
     this.updateRendererClipPlanes();
 
     this.emit('plane-remove', { id: planeId });
+    if (activePlaneCleared) {
+      this.emit('active-plane-change', { planeId: null });
+    }
 
     return true;
   }
@@ -582,11 +607,15 @@ export class Sectioning {
    * Clear all clipping planes
    */
   clearClipPlanes() {
+    const hadActive = this.activeSectionPlaneId !== null;
     const ids = Array.from(this.clipPlanes.keys());
     ids.forEach(id => this.removeClipPlane(id));
     this.activeSectionPlaneId = null;
     this.sectionBoxPlaneIds = [];
     this.emit('planes-clear');
+    if (hadActive) {
+      this.emit('active-plane-change', { planeId: null });
+    }
   }
 
   activateSectionBox() {
@@ -907,15 +936,10 @@ export class Sectioning {
     const camDist = this.camera.position.distanceTo(point);
     const radius = camDist * 0.02;
 
-    // Compute surface-aligned tangent/bitangent so the crosshair arms
-    // follow the face edges rather than being arbitrarily rotated.
-    const up = new THREE.Vector3(0, 1, 0);
-    const tangent = new THREE.Vector3();
-    if (Math.abs(normal.dot(up)) > 0.99) {
-      tangent.crossVectors(normal, new THREE.Vector3(1, 0, 0)).normalize();
-    } else {
-      tangent.crossVectors(normal, up).normalize();
-    }
+    // Crosshair arms rotate with the cut line — tangent always lies
+    // along the line, bitangent always points perpendicular to it. The
+    // dimmed half-arm therefore stays anchored to the cut-away side.
+    const tangent = this._computeCutPreviewTangent(normal);
     const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
 
     const group = new THREE.Group();
@@ -943,6 +967,14 @@ export class Sectioning {
       depthWrite: false,
       clippingPlanes: [],
     });
+
+    // Dimmed copies for the half-arm that points into the cut-away
+    // half-space. 40% opacity so the contrast reads clearly without
+    // making the dim arm disappear entirely.
+    const fillMatDim = fillMat.clone();
+    fillMatDim.opacity = 0.4;
+    const strokeMatDim = strokeMat.clone();
+    strokeMatDim.opacity = 0.4;
 
     const origin = point.clone().addScaledVector(normal, radius * 0.15);
 
@@ -975,15 +1007,18 @@ export class Sectioning {
     const gapLen = armLen * 0.14;
     const totalArm = armLen;
 
-    const addDashedArm = (dirVec, quat) => {
+    // posMats: materials for the +sign half of the arm (offset along +dirVec)
+    // negMats: materials for the -sign half (offset along -dirVec)
+    const addDashedArm = (dirVec, quat, posMats, negMats) => {
       let offset = dashLen / 2;
       while (offset + dashLen / 2 <= totalArm + 0.001) {
         for (const sign of [1, -1]) {
+          const mats = sign > 0 ? posMats : negMats;
           const dashOrigin = origin.clone().addScaledVector(dirVec, sign * offset);
 
           // Stroke dash (behind)
           const sGeo = makeRoundedDashGeo(dashLen + outlineExtra, strokeWidth + outlineExtra);
-          const sMesh = new THREE.Mesh(sGeo, strokeMat);
+          const sMesh = new THREE.Mesh(sGeo, mats.stroke);
           sMesh.userData.isPlaneHelper = true;
           sMesh.renderOrder = 999;
           sMesh.position.copy(dashOrigin);
@@ -992,7 +1027,7 @@ export class Sectioning {
 
           // Fill dash (on top)
           const fGeo = makeRoundedDashGeo(dashLen, strokeWidth);
-          const fMesh = new THREE.Mesh(fGeo, fillMat);
+          const fMesh = new THREE.Mesh(fGeo, mats.fill);
           fMesh.userData.isPlaneHelper = true;
           fMesh.renderOrder = 1000;
           fMesh.position.copy(dashOrigin);
@@ -1003,14 +1038,24 @@ export class Sectioning {
       }
     };
 
-    addDashedArm(tangent, arm1Quat);
-    addDashedArm(bitangent, arm2Quat);
+    const fullMats = { stroke: strokeMat, fill: fillMat };
+    const dimMats = { stroke: strokeMatDim, fill: fillMatDim };
+
+    // Tangent arm runs along the green line itself — both halves stay
+    // full opacity. Bitangent arm is perpendicular to the line:
+    // -bitangent = cut-away half-space (dim — represents what gets
+    // removed), +bitangent = kept (full).
+    addDashedArm(tangent, arm1Quat, fullMats, fullMats);
+    addDashedArm(bitangent, arm2Quat, fullMats, dimMats);
 
     this.cutHoverMarker = group;
     this.helpersGroup.add(group);
 
     // Position scissors overlay in screen space above the 3D point
     this._showScissorsOverlay(point);
+
+    // Build / update the green preview line showing where the cut will slice.
+    this._updateCutPreviewLine(point, normal);
   }
 
   _loadArrowSpriteTexture() {
@@ -1289,11 +1334,96 @@ export class Sectioning {
   }
 
   clearCutHoverMarker() {
+    // Always clear the preview line, even if the marker itself is missing —
+    // they share a lifecycle but exist as separate scene objects.
+    this._clearCutPreviewLine();
     if (!this.cutHoverMarker) return;
     this.helpersGroup.remove(this.cutHoverMarker);
     this.disposeHelper(this.cutHoverMarker);
     this.cutHoverMarker = null;
     this._hideScissorsOverlay();
+  }
+
+  /**
+   * Compute the in-surface tangent that defines the direction of the cut
+   * preview line. This is also the direction perpendicular to the cut
+   * plane normal within the hovered surface, so the visible line is the
+   * intersection of the future cut plane with the surface. The 'r' key
+   * rotates this tangent around the surface normal.
+   */
+  _computeCutPreviewTangent(surfaceNormal) {
+    const n = surfaceNormal.clone().normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    const tangent = new THREE.Vector3();
+    if (Math.abs(n.dot(up)) > 0.99) {
+      tangent.crossVectors(n, new THREE.Vector3(1, 0, 0)).normalize();
+    } else {
+      tangent.crossVectors(n, up).normalize();
+    }
+    if (this._cutRotationAngle !== 0) {
+      tangent.applyAxisAngle(n, this._cutRotationAngle);
+    }
+    return tangent;
+  }
+
+  /**
+   * Build / update the green preview line that shows where the section-cut
+   * plane will slice the model. The line lies on the hovered surface,
+   * passes through the hover point, and extends well past the model on
+   * either side so it always reads as "spanning the model".
+   */
+  _updateCutPreviewLine(point, normal) {
+    this._lastCutHover = { point: point.clone(), normal: normal.clone() };
+
+    const tangent = this._computeCutPreviewTangent(normal);
+    const bounds = this.getSceneBounds();
+    const size = bounds.getSize(new THREE.Vector3());
+    const diag = Math.sqrt(size.x * size.x + size.y * size.y + size.z * size.z);
+    // Half-length of the line; total length is ~1.5x the scene diagonal so
+    // the green line clearly extends past every model edge from any pivot.
+    const half = Math.max(diag * 0.75, 1);
+
+    const start = point.clone().addScaledVector(tangent, -half);
+    const end = point.clone().addScaledVector(tangent, half);
+
+    if (!this._cutPreviewLine) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute([start.x, start.y, start.z, end.x, end.y, end.z], 3),
+      );
+      const mat = new THREE.LineBasicMaterial({
+        color: 0x00ff33,
+        transparent: true,
+        opacity: 1.0,
+        depthTest: false,
+        depthWrite: false,
+        clippingPlanes: [],
+      });
+      const line = new THREE.Line(geo, mat);
+      line.userData.isPlaneHelper = true;
+      // Render below the crosshair (renderOrder 999/1000) so the icon
+      // stays visually on top of the line at the hover point.
+      line.renderOrder = 998;
+      this._cutPreviewLine = line;
+      this.helpersGroup.add(line);
+    } else {
+      const positions = this._cutPreviewLine.geometry.attributes.position.array;
+      positions[0] = start.x; positions[1] = start.y; positions[2] = start.z;
+      positions[3] = end.x;   positions[4] = end.y;   positions[5] = end.z;
+      this._cutPreviewLine.geometry.attributes.position.needsUpdate = true;
+      this._cutPreviewLine.geometry.computeBoundingSphere();
+      this._cutPreviewLine.visible = true;
+    }
+  }
+
+  _clearCutPreviewLine() {
+    this._lastCutHover = null;
+    if (!this._cutPreviewLine) return;
+    this.helpersGroup.remove(this._cutPreviewLine);
+    this._cutPreviewLine.geometry.dispose();
+    this._cutPreviewLine.material.dispose();
+    this._cutPreviewLine = null;
   }
 
   clearPlaneHoverMarker() {
@@ -1310,7 +1440,9 @@ export class Sectioning {
     const x = ((projected.x + 1) / 2) * rect.width;
     const y = ((-projected.y + 1) / 2) * rect.height;
     this.scissorsOverlay.style.left = `${x - 12}px`;
-    this.scissorsOverlay.style.top = `${y - 36}px`;
+    // Scissor icon is 24px tall; -52 places its bottom edge ~28px above
+    // the hover point so it never touches the top crosshair arm.
+    this.scissorsOverlay.style.top = `${y - 52}px`;
     this.scissorsOverlay.style.display = 'block';
   }
 
@@ -1318,415 +1450,22 @@ export class Sectioning {
     if (this.scissorsOverlay) this.scissorsOverlay.style.display = 'none';
   }
 
-  placeCutAnchor(point, normal) {
-    this.clearCutHoverMarker();
-    this.clearPlaneHoverMarker();
-    this.clearHoverHighlight();
-    this._removeCutSurfaceHighlight();
-
-    const tangent = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0);
-    if (Math.abs(normal.dot(up)) > 0.99) {
-      tangent.crossVectors(normal, new THREE.Vector3(1, 0, 0)).normalize();
-    } else {
-      tangent.crossVectors(normal, up).normalize();
-    }
-    const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
-
-    this.cutState = {
-      anchorPoint: point.clone(),
-      surfaceNormal: normal.clone().normalize(),
-      tangent: tangent.clone(),
-      bitangent: bitangent.clone(),
-      angle: 0,
-    };
-
-    this.buildCutGizmo();
-    this.updateCutPreview();
-  }
-
-  buildCutGizmo() {
-    if (this.cutGizmoGroup) {
-      this.helpersGroup.remove(this.cutGizmoGroup);
-      this.disposeHelper(this.cutGizmoGroup);
-    }
-
-    const s = this.cutState;
-    const group = new THREE.Group();
-    group.userData.isPlaneHelper = true;
-
-    const bounds = this.getSceneBounds();
-    const bSize = new THREE.Vector3();
-    bounds.getSize(bSize);
-    const sceneDiag = Math.max(bSize.x, bSize.y, bSize.z);
-    const ringRadius = sceneDiag * 0.04;
-    const surfaceOffset = ringRadius * 0.06;
-
-    // Uniform stroke width (≈4px at normal zoom distance)
-    const strokeW = ringRadius * 0.06;
-
-    // Anchor dot — small sphere at the click point
-    const dotGeo = new THREE.SphereGeometry(strokeW * 1.2, 16, 16);
-    const dotMat = new THREE.MeshBasicMaterial({ color: 0x00ff33, depthTest: false, clippingPlanes: [] });
-    const dot = new THREE.Mesh(dotGeo, dotMat);
-    dot.userData.isPlaneHelper = true;
-    dot.renderOrder = 1003;
-    dot.position.copy(s.anchorPoint).addScaledVector(s.surfaceNormal, surfaceOffset);
-    group.add(dot);
-
-    // Stroked ring — uniform stroke width
-    const ringInner = ringRadius - strokeW;
-    const ringGeo = new THREE.RingGeometry(ringInner, ringRadius, 64);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0x00ff33,
-      transparent: true,
-      opacity: 1.0,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      depthTest: false,
-      clippingPlanes: [],
-    });
-    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    ringMesh.userData.isPlaneHelper = true;
-    ringMesh.userData.isCutRing = true;
-    ringMesh.renderOrder = 1000;
-    ringMesh.position.copy(s.anchorPoint).addScaledVector(s.surfaceNormal, surfaceOffset);
-    const ringQuat = new THREE.Quaternion();
-    ringQuat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), s.surfaceNormal);
-    ringMesh.quaternion.copy(ringQuat);
-    group.add(ringMesh);
-
-    // Direction line — same stroke width as ring
-    const dirVec = new THREE.Vector3()
-      .addScaledVector(s.tangent, Math.cos(s.angle))
-      .addScaledVector(s.bitangent, Math.sin(s.angle))
-      .normalize();
-    const lineLen = sceneDiag * 0.5;
-    const lineOrigin = s.anchorPoint.clone().addScaledVector(s.surfaceNormal, surfaceOffset);
-    const lineGeo = new THREE.PlaneGeometry(lineLen * 2, strokeW);
-    const lineMat = new THREE.MeshBasicMaterial({
-      color: 0x00ff33,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 1.0,
-      depthTest: false,
-      depthWrite: false,
-      clippingPlanes: [],
-    });
-    const line = new THREE.Mesh(lineGeo, lineMat);
-    line.userData.isPlaneHelper = true;
-    line.userData.isCutLine = true;
-    line.renderOrder = 1001;
-    line.position.copy(lineOrigin);
-    const lineZ = s.surfaceNormal.clone();
-    const lineX = dirVec.clone();
-    const lineY = new THREE.Vector3().crossVectors(lineZ, lineX).normalize();
-    line.quaternion.setFromRotationMatrix(
-      new THREE.Matrix4().makeBasis(lineX, lineY, lineZ)
-    );
-    group.add(line);
-
-    // Semicircle fill inside the ring on the arrow side.
-    // CircleGeometry(r, segs, 0, PI) draws a half-disc in XY:
-    //   flat edge along X-axis, arc bulges toward +Y.
-    // Orient so X → dirVec (flat edge = direction line), Y → clipDir (bulge toward arrow), Z → surfaceNormal.
-    const planeNormal = new THREE.Vector3().crossVectors(dirVec, s.surfaceNormal).normalize();
-    const clipDir = planeNormal.clone().negate();
-    const semiFillGeo = new THREE.CircleGeometry(ringInner, 32, 0, Math.PI);
-    const semiFillMat = new THREE.MeshBasicMaterial({
-      color: 0x006c16,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.5,
-      depthTest: false,
-      depthWrite: false,
-      clippingPlanes: [],
-    });
-    const semiFill = new THREE.Mesh(semiFillGeo, semiFillMat);
-    semiFill.userData.isPlaneHelper = true;
-    semiFill.userData.isCutSemiFill = true;
-    semiFill.renderOrder = 999;
-    semiFill.position.copy(s.anchorPoint).addScaledVector(s.surfaceNormal, surfaceOffset);
-    const semiX = dirVec.clone().normalize();
-    const semiY = clipDir.clone().normalize();
-    const semiZ = s.surfaceNormal.clone().normalize();
-    semiFill.quaternion.setFromRotationMatrix(
-      new THREE.Matrix4().makeBasis(semiX, semiY, semiZ)
-    );
-    group.add(semiFill);
-
-    // Direction indicator: triangle arrow
-    const arrowSize = ringRadius * 0.8;
-    const indicator = this._buildCutDirectionIndicator(
-      clipDir, s.anchorPoint, arrowSize, s.surfaceNormal, strokeW
-    );
-    group.add(indicator);
-
-    this.cutGizmoGroup = group;
-    this.helpersGroup.add(group);
-  }
-
-  _buildCutDirectionIndicator(direction, origin, size, faceNormal, strokeW) {
-    const group = new THREE.Group();
-    group.userData.isPlaneHelper = true;
-    group.userData.isCutArrow = true;
-
-    const triH = size * 0.7;
-    const triHW = size * 0.5;
-    const tipR = size * 0.12;
-
-    // Triangle with rounded tip, drawn in XY with +Y = forward
-    const triShape = new THREE.Shape();
-    // Start at tip (rounded)
-    triShape.moveTo(0, triH - tipR);
-    triShape.absarc(0, triH - tipR, tipR, 0, Math.PI, false);
-    // Left base
-    triShape.lineTo(-triHW, -triH * 0.15);
-    // Base
-    triShape.lineTo(triHW, -triH * 0.15);
-    // Back to right of tip
-    triShape.lineTo(tipR, triH - tipR);
-
-    // Triangle stroke (larger)
-    const triStrokeShape = new THREE.Shape();
-    const so = strokeW * 0.7;
-    triStrokeShape.moveTo(0, triH - tipR + so);
-    triStrokeShape.absarc(0, triH - tipR, tipR + so, 0, Math.PI, false);
-    triStrokeShape.lineTo(-triHW - so, -triH * 0.15 - so);
-    triStrokeShape.lineTo(triHW + so, -triH * 0.15 - so);
-    triStrokeShape.lineTo(tipR + so, triH - tipR);
-
-    const triStrokeGeo = new THREE.ShapeGeometry(triStrokeShape, 12);
-    const triStrokeMat = new THREE.MeshBasicMaterial({
-      color: 0x00ff33,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 1.0,
-      depthTest: false,
-      depthWrite: false,
-      clippingPlanes: [],
-    });
-    const triStrokeMesh = new THREE.Mesh(triStrokeGeo, triStrokeMat);
-    triStrokeMesh.userData.isPlaneHelper = true;
-    triStrokeMesh.renderOrder = 1002;
-    group.add(triStrokeMesh);
-
-    const triFillGeo = new THREE.ShapeGeometry(triShape, 12);
-    const triFillMat = new THREE.MeshBasicMaterial({
-      color: 0x006c16,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 1.0,
-      depthTest: false,
-      depthWrite: false,
-      clippingPlanes: [],
-    });
-    const triFillMesh = new THREE.Mesh(triFillGeo, triFillMat);
-    triFillMesh.userData.isPlaneHelper = true;
-    triFillMesh.renderOrder = 1003;
-    group.add(triFillMesh);
-
-    // Orient: shapes drawn in XY with +Y = forward direction.
-    // Align +Y → direction, keep flat against faceNormal.
-    const targetY = direction.clone().normalize();
-    const targetZ = faceNormal.clone().normalize();
-    const targetX = new THREE.Vector3().crossVectors(targetY, targetZ).normalize();
-    targetZ.crossVectors(targetX, targetY).normalize();
-
-    group.quaternion.setFromRotationMatrix(
-      new THREE.Matrix4().makeBasis(targetX, targetY, targetZ)
-    );
-    group.position.copy(origin);
-
-    return group;
-  }
-
-  updateCutGizmo() {
-    if (!this.cutState || !this.cutGizmoGroup) return;
-    const s = this.cutState;
-
-    const bounds = this.getSceneBounds();
-    const bSize = new THREE.Vector3();
-    bounds.getSize(bSize);
-    const sceneDiag = Math.max(bSize.x, bSize.y, bSize.z);
-    const ringRadius = sceneDiag * 0.04;
-    const surfaceOffset = ringRadius * 0.06;
-    const lineLen = sceneDiag * 0.5;
-
-    const dirVec = new THREE.Vector3()
-      .addScaledVector(s.tangent, Math.cos(s.angle))
-      .addScaledVector(s.bitangent, Math.sin(s.angle))
-      .normalize();
-
-    const planeNormal = new THREE.Vector3().crossVectors(dirVec, s.surfaceNormal).normalize();
-    const lineOrigin = s.anchorPoint.clone().addScaledVector(s.surfaceNormal, surfaceOffset);
-
-    const clipDir = planeNormal.clone().negate();
-
-    this.cutGizmoGroup.traverse(obj => {
-      if (obj.userData.isCutLine) {
-        obj.position.copy(lineOrigin);
-        const lineZ = s.surfaceNormal.clone();
-        const lineX = dirVec.clone();
-        const lineY = new THREE.Vector3().crossVectors(lineZ, lineX).normalize();
-        obj.quaternion.setFromRotationMatrix(
-          new THREE.Matrix4().makeBasis(lineX, lineY, lineZ)
-        );
-      }
-      if (obj.userData.isCutSemiFill) {
-        const semiX = dirVec.clone().normalize();
-        const semiY = clipDir.clone().normalize();
-        const semiZ = s.surfaceNormal.clone().normalize();
-        obj.quaternion.setFromRotationMatrix(
-          new THREE.Matrix4().makeBasis(semiX, semiY, semiZ)
-        );
-      }
-    });
-
-    // Replace direction indicator
-    const oldArrow = [];
-    this.cutGizmoGroup.traverse(obj => {
-      if (obj.userData.isCutArrow) oldArrow.push(obj);
-    });
-    oldArrow.forEach(a => {
-      this.cutGizmoGroup.remove(a);
-      this.disposeHelper(a);
-    });
-    const strokeW = ringRadius * 0.06;
-    const arrowSize = ringRadius * 0.8;
-    const indicator = this._buildCutDirectionIndicator(
-      clipDir, s.anchorPoint, arrowSize, s.surfaceNormal, strokeW
-    );
-    this.cutGizmoGroup.add(indicator);
-  }
-
-  updateCutPreview() {
-    if (!this.cutState) {
-      this.removeCutPreviewClip();
-      return;
-    }
-    const s = this.cutState;
-    const dirVec = new THREE.Vector3()
-      .addScaledVector(s.tangent, Math.cos(s.angle))
-      .addScaledVector(s.bitangent, Math.sin(s.angle))
-      .normalize();
-
-    const planeNormal = new THREE.Vector3().crossVectors(dirVec, s.surfaceNormal).normalize();
-    const clipNormal = planeNormal.clone().negate();
-    const clipPlane = new THREE.Plane();
-    clipPlane.setFromNormalAndCoplanarPoint(clipNormal, s.anchorPoint);
-
-    this.cutPreviewClip = clipPlane;
-    this.syncRendererClipPlanes();
-  }
-
-  removeCutPreviewClip() {
-    if (!this.cutPreviewClip) return;
-    this.cutPreviewClip = null;
-    this.syncRendererClipPlanes();
-  }
-
-  syncRendererClipPlanes() {
-    const activePlanes = [];
-    this.clipPlanes.forEach(pd => {
-      if (pd.enabled) activePlanes.push(pd.plane);
-    });
-    if (this.cutPreviewClip) {
-      activePlanes.push(this.cutPreviewClip);
-    }
-    this.renderer.clippingPlanes = activePlanes;
-  }
-
-  commitCutAuthoring() {
-    if (!this.cutState) return;
-    const s = this.cutState;
-    const dirVec = new THREE.Vector3()
-      .addScaledVector(s.tangent, Math.cos(s.angle))
-      .addScaledVector(s.bitangent, Math.sin(s.angle))
-      .normalize();
-    const planeNormal = new THREE.Vector3().crossVectors(dirVec, s.surfaceNormal).normalize();
-
-    // Save authoring state for re-editing
-    const cutAuthoring = {
-      anchorPoint: s.anchorPoint.clone(),
-      surfaceNormal: s.surfaceNormal.clone(),
-      tangent: s.tangent.clone(),
-      bitangent: s.bitangent.clone(),
-      angle: s.angle,
-      planeNormal: planeNormal.clone(),
-    };
-
-    this.removeCutPreviewClip();
-    this.clearCutGizmo();
-    this.cutState = null;
-
-    const planeId = this.addClipPlane(planeNormal, s.anchorPoint, { hideHelper: true, cutAuthoring });
-
-    // Build contour outline + edit icon for this cut
-    this._buildCutContour(planeId, cutAuthoring);
-  }
-
-  cancelCutAuthoring() {
-    this.removeCutPreviewClip();
-    this.clearCutGizmo();
-    this.clearCutHoverMarker();
-    this.clearPlaneHoverMarker();
-    this._removeCutSurfaceHighlight();
-    this.cutState = null;
-    this.cutDragging = false;
-  }
-
-  // ── Cut Contour Outline + Edit Icon ─────────────────────────────────
-
-  _buildCutContour(planeId, cutAuthoring) {
-    const planeData = this.clipPlanes.get(planeId);
-    if (!planeData) return;
-
-    const clipPlane = planeData.plane;
-    const edges = this._computePlaneIntersection(clipPlane);
-    if (edges.length === 0) return;
-
-    const group = new THREE.Group();
-    group.name = `CutContour-${planeId}`;
-    group.userData.cutContourPlaneId = planeId;
-
-    const positions = [];
-    const centroid = new THREE.Vector3();
-    let pointCount = 0;
-    for (const [p1, p2] of edges) {
-      positions.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
-      centroid.add(p1).add(p2);
-      pointCount += 2;
-    }
-    if (pointCount > 0) centroid.divideScalar(pointCount);
-
-    // Thick green contour using LineSegments2 (GPU-width lines)
-    const lsGeo = new LineSegmentsGeometry();
-    lsGeo.setPositions(positions);
-    const lsMat = new LineMaterial({
-      color: 0x00ff33,
-      linewidth: 3,
-      depthTest: false,
-      clippingPlanes: [],
-      worldUnits: false,
-    });
-    lsMat.resolution.set(window.innerWidth, window.innerHeight);
-    const lineSegs = new LineSegments2(lsGeo, lsMat);
-    lineSegs.userData.isCutContour = true;
-    lineSegs.renderOrder = 998;
-    group.add(lineSegs);
-
-    this._cutContoursGroup.add(group);
-
-    // HTML overlay icon at the centroid (unclippable)
-    const overlay = this._createCutEditOverlay(planeId, centroid);
-
-    this._cutContours.set(planeId, {
-      group,
-      overlay,
-      centroid: centroid.clone(),
-      ...cutAuthoring,
-    });
+  /**
+   * Compute a section-cut plane normal for a single-click placement.
+   * Mirrors the angle=0 result of the old rotation-authoring math
+   * (placeCutAnchor + commitCutAuthoring): pick a tangent that's
+   * perpendicular to the surface normal and to world-up (or world-X
+   * when the surface is horizontal), then return tangent x surfaceNormal.
+   * Result is a plane whose normal is roughly parallel to world-up — the
+   * cut slices through the surface rather than along it.
+   */
+  _computeSectionCutNormal(surfaceNormal) {
+    // Delegates tangent computation (including 'r'-key rotation) to the
+    // same helper the preview line uses — this guarantees the placed cut
+    // matches what the green preview line shows on screen.
+    const n = surfaceNormal.clone().normalize();
+    const tangent = this._computeCutPreviewTangent(n);
+    return new THREE.Vector3().crossVectors(tangent, n).normalize();
   }
 
   // Same filter used by _computePlaneIntersection's old inline traverse: only
@@ -1853,149 +1592,6 @@ export class Sectioning {
     return edges;
   }
 
-  _createCutEditOverlay(planeId, worldPos) {
-    const el = document.createElement('div');
-    el.innerHTML = `<svg width="24" height="44" viewBox="0 0 24 44" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#clip0_8307_6281)"><g opacity="0.7"><mask id="mask0_8307_6281_c${planeId}" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="-1" y="22" width="25" height="31"><path d="M0 22H23.5V40.5L-1 53L0 22Z" fill="#E0E0E0"/></mask><g mask="url(#mask0_8307_6281_c${planeId})"><mask id="path-2-outside-1_8307_6281_c${planeId}" maskUnits="userSpaceOnUse" x="3.82031" y="0" width="17" height="44" fill="black"><rect fill="white" x="3.82031" y="0" width="17" height="44"/><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z"/></mask><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z" fill="#00851A"/><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z" stroke="#56FF77" stroke-width="2" mask="url(#path-2-outside-1_8307_6281_c${planeId})"/></g></g><path d="M12 17.5C15.124 17.5 17.928 18.051 19.933 18.923C20.936 19.359 21.716 19.866 22.238 20.402C22.758 20.937 23 21.476 23 22C23 22.524 22.758 23.063 22.238 23.598C21.716 24.135 20.936 24.641 19.933 25.077C17.928 25.949 15.124 26.5 12 26.5C8.876 26.5 6.072 25.949 4.067 25.077C3.064 24.641 2.284 24.135 1.762 23.598C1.242 23.063 1 22.524 1 22C1 21.476 1.242 20.937 1.762 20.402C2.284 19.866 3.064 19.359 4.067 18.923C6.072 18.051 8.876 17.5 12 17.5Z" fill="#00851A" fill-opacity="0.3" stroke="#56FF77"/><ellipse cx="12" cy="22" rx="5.5" ry="2" fill="#56FF77"/><mask id="mask1_8307_6281_c${planeId}" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="-2" y="-2" width="26" height="24"><path d="M-2 -1.5L23.5 -1L23 22H-0.5L-2 -1.5Z" fill="#E0E0E0"/></mask><g mask="url(#mask1_8307_6281_c${planeId})"><mask id="path-7-outside-2_8307_6281_c${planeId}" maskUnits="userSpaceOnUse" x="3.82031" y="0" width="17" height="44" fill="black"><rect fill="white" x="3.82031" y="0" width="17" height="44"/><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z"/></mask><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z" fill="#194D1E"/><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z" stroke="#56FF77" stroke-width="2" mask="url(#path-7-outside-2_8307_6281_c${planeId})"/></g></g></g><defs><clipPath id="clip0_8307_6281"><rect width="24" height="44" fill="white"/></clipPath></defs></svg>`;
-    const iconSize = 44;
-    const padding = 4;
-    const circleSize = iconSize + padding * 2;
-    Object.assign(el.style, {
-      position: 'absolute',
-      pointerEvents: 'auto',
-      cursor: 'pointer',
-      zIndex: '1000',
-      filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.4))',
-      transform: 'translate(-50%, -50%)',
-      display: 'none',
-      width: `${circleSize}px`,
-      height: `${circleSize}px`,
-      borderRadius: '50%',
-      justifyContent: 'center',
-      alignItems: 'center',
-      background: 'rgba(255, 255, 255, 0.3)',
-      transition: 'background 0.15s ease',
-    });
-    el.style.setProperty('display', 'none');
-    el.dataset.cutContourPlaneId = planeId;
-
-    el.addEventListener('mouseenter', () => {
-      this._hoveringCutEditIcon = true;
-      this.clearCutHoverMarker();
-      this._removeCutSurfaceHighlight();
-      this.clearHoverHighlight();
-      this._setCursor('');
-      el.style.background = 'rgba(0, 198, 40, 0.7)';
-    });
-    el.addEventListener('mouseleave', () => {
-      this._hoveringCutEditIcon = false;
-      el.style.background = 'rgba(255, 255, 255, 0.3)';
-    });
-    el.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      this.editCutFromContour(planeId);
-    });
-
-    const overlayParent = this.domElement.parentElement || this.domElement;
-    overlayParent.appendChild(el);
-
-    return { el, worldPos: worldPos.clone() };
-  }
-
-  _updateCutEditOverlayPositions() {
-    const rect = this.domElement.getBoundingClientRect();
-    const halfW = rect.width / 2;
-    const halfH = rect.height / 2;
-    const tempV = new THREE.Vector3();
-    const tempN = new THREE.Vector3();
-
-    for (const [planeId, data] of this._cutContours) {
-      if (!data.overlay) continue;
-      tempV.copy(data.overlay.worldPos);
-      tempV.project(this.camera);
-      const x = (tempV.x * halfW) + halfW;
-      const y = -(tempV.y * halfH) + halfH;
-      const behind = tempV.z > 1;
-      data.overlay.el.style.display = behind ? 'none' : 'flex';
-      data.overlay.el.style.left = `${x}px`;
-      data.overlay.el.style.top = `${y}px`;
-
-      const planeData = this.clipPlanes.get(planeId);
-      if (planeData) {
-        tempN.copy(data.overlay.worldPos).add(planeData.normal);
-        tempN.project(this.camera);
-        const nx = (tempN.x * halfW) + halfW;
-        const ny = -(tempN.y * halfH) + halfH;
-        const angle = Math.atan2(nx - x, -(ny - y)) * (180 / Math.PI);
-        data.overlay.el.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
-      }
-    }
-  }
-
-  _removeCutContour(planeId) {
-    const data = this._cutContours.get(planeId);
-    if (!data) return;
-    this._cutContoursGroup.remove(data.group);
-    data.group.traverse(obj => {
-      if (obj.geometry) obj.geometry.dispose();
-      if (obj.material) {
-        if (obj.material.map) obj.material.map.dispose();
-        obj.material.dispose();
-      }
-    });
-    if (data.overlay?.el?.parentElement) {
-      data.overlay.el.parentElement.removeChild(data.overlay.el);
-    }
-    this._cutContours.delete(planeId);
-  }
-
-  _clearAllCutContours() {
-    for (const [planeId] of this._cutContours) {
-      this._removeCutContour(planeId);
-    }
-  }
-
-  editCutFromContour(planeId) {
-    const contourData = this._cutContours.get(planeId);
-    if (!contourData) return;
-
-    // Suppress the undo recording for the plane removal during re-edit
-    this._skipRecord = true;
-
-    // Remove the current clip plane (we'll re-create it on commit)
-    this.removeClipPlane(planeId);
-
-    this._skipRecord = false;
-
-    // Set up the authoring state from saved data
-    this.cutState = {
-      anchorPoint: contourData.anchorPoint.clone(),
-      surfaceNormal: contourData.surfaceNormal.clone(),
-      tangent: contourData.tangent.clone(),
-      bitangent: contourData.bitangent.clone(),
-      angle: contourData.angle,
-    };
-
-    // Ensure section-cut tool is active and helpers visible
-    if (this.activeTool !== 'section-cut') {
-      this.setActiveTool('section-cut');
-    }
-
-    // Build the gizmo and live preview
-    this.buildCutGizmo();
-    this.updateCutPreview();
-
-    // Signal chrome layer to enter sectioning mode / section-cut
-    this.emit('request-edit-cut', { planeId });
-  }
-
-  clearCutGizmo() {
-    if (!this.cutGizmoGroup) return;
-    this.helpersGroup.remove(this.cutGizmoGroup);
-    this.disposeHelper(this.cutGizmoGroup);
-    this.cutGizmoGroup = null;
-  }
-
   // ── Section-Plane Edit / Default State ────────────────────────────
 
   _createPlaneEditOverlay(planeId, worldPos) {
@@ -2053,9 +1649,11 @@ export class Sectioning {
 
     this._detachTiltGizmo();
 
+    let activePlaneCleared = false;
     if (this.activeSectionPlaneId === planeId) {
       this.activeSectionPlaneId = null;
       this._clearActivePlaneContour();
+      activePlaneCleared = true;
     }
 
     if (planeData.helper) {
@@ -2070,6 +1668,9 @@ export class Sectioning {
     this._planeOverlays.set(planeId, overlay);
 
     this._refreshSectionPlaneActiveVisuals();
+    if (activePlaneCleared) {
+      this.emit('active-plane-change', { planeId: null });
+    }
   }
 
   _editSectionPlane(planeId) {
@@ -2086,22 +1687,30 @@ export class Sectioning {
       planeData.helper.visible = true;
     }
 
+    const prevActive = this.activeSectionPlaneId;
     this.activeSectionPlaneId = planeId;
     this._refreshSectionPlaneActiveVisuals();
     this._buildActivePlaneContour();
     this._attachTiltGizmo(planeId);
+    if (prevActive !== planeId) {
+      this.emit('active-plane-change', { planeId });
+    }
   }
 
   editPlaneFromOverlay(planeId) {
     const planeData = this.clipPlanes.get(planeId);
     if (!planeData) return;
 
-    if (this.activeTool !== 'section-plane') {
+    // Preserve the user's active tool. Both section-plane and section-cut
+    // share the same edit state, so clicking the wedge icon should stay
+    // in whichever sectioning tool the user is in. Only force a default
+    // tool (section-plane) when the user is outside any sectioning tool.
+    if (this.activeTool !== 'section-plane' && this.activeTool !== 'section-cut') {
       this.setActiveTool('section-plane');
     }
 
     this._editSectionPlane(planeId);
-    this.emit('request-edit-plane', { planeId });
+    this.emit('request-edit-plane', { planeId, tool: this.activeTool });
   }
 
   _removePlaneOverlay(planeId) {
@@ -2516,32 +2125,52 @@ export class Sectioning {
   // ── End Section-Plane Edit / Default State ────────────────────────
 
   onKeyDown(event) {
-    if (this.activeTool === 'section-cut' && event.key === 'Enter') {
-      if (this.cutState) {
-        this.commitCutAuthoring();
-        event.preventDefault();
-      }
-    } else if (this.activeTool === 'section-cut' && event.key === 'Escape') {
-      this.cancelCutAuthoring();
-      event.preventDefault();
-    } else if (this.activeTool === 'section-plane' && event.key === 'Enter') {
+    const isSectioningTool = this.activeTool === 'section-plane' || this.activeTool === 'section-cut';
+    if (!isSectioningTool) return;
+
+    // Enter commits the active edit-state plane back to its default state
+    // (icon-only). Works the same for both tools — the post-commit state
+    // is shared.
+    if (event.key === 'Enter') {
       if (this.activeSectionPlaneId) {
         this._setSectionPlaneDefault(this.activeSectionPlaneId);
         event.preventDefault();
       }
-    } else if (this.activeTool === 'section-plane' && (event.key === 'f' || event.key === 'F')) {
-      if (this.activeSectionPlaneId) {
+    } else if (event.key === 'f' || event.key === 'F') {
+      // Flip is only meaningful for section-plane (where the plane lies
+      // along the surface) — for section-cut planes the inward/outward
+      // orientation is implicit in the placement geometry.
+      if (this.activeTool === 'section-plane' && this.activeSectionPlaneId) {
         this.flipPlane(this.activeSectionPlaneId);
+        event.preventDefault();
+      }
+    } else if (event.key === 'r' || event.key === 'R') {
+      // Rotate the section-cut preview line (and the eventual placed cut)
+      // 45° around the hovered surface normal. Only meaningful while the
+      // section-cut tool is active and we have a placement preview to
+      // refresh — i.e. we're hovering on a surface.
+      if (this.activeTool === 'section-cut') {
+        this._cutRotationAngle += Math.PI / 4;
+        if (this._lastCutHover) {
+          // Rebuild the whole hover marker (crosshair + line) so the
+          // rotation snaps through both visuals on the same frame —
+          // setCutHoverMarker calls _updateCutPreviewLine internally.
+          this.setCutHoverMarker(this._lastCutHover.point, this._lastCutHover.normal);
+        }
+        event.preventDefault();
+      }
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+      // Delete (or Backspace on Mac) removes the currently-selected
+      // edit-state plane. Mirrors the trash icon in the right toolbar.
+      if (this.activeSectionPlaneId) {
+        this.deleteActivePlane();
         event.preventDefault();
       }
     }
   }
 
-  // ── End Section-Cut Authoring ────────────────────────────────────
-
   clearAll() {
     this._detachTiltGizmo();
-    this.cancelCutAuthoring();
     this.clearSectionBox();
     this.clearClipPlanes();
     this.clearHoverHighlight();
@@ -2550,7 +2179,7 @@ export class Sectioning {
     this.clearPlaneHoverMarker();
     this._clearAllPlaneOverlays();
     this._clearActivePlaneContour();
-    this.syncRendererClipPlanes();
+    this.updateRendererClipPlanes();
   }
 
   /**
@@ -2656,10 +2285,6 @@ export class Sectioning {
       }
     });
 
-    if (this.cutPreviewClip) {
-      activePlanes.push(this.cutPreviewClip);
-    }
-
     this.renderer.clippingPlanes = activePlanes;
   }
 
@@ -2670,12 +2295,14 @@ export class Sectioning {
     if (event.button !== 0) return;
     if (!this.activeTool) return;
 
-    if (this.activeTool === 'section-plane') {
+    const isSectioningTool = this.activeTool === 'section-plane' || this.activeTool === 'section-cut';
+
+    if (isSectioningTool) {
       this.updateMouse(event);
       this.raycaster.setFromCamera(this.mouse, this.camera);
 
-      // ── Tilt gizmo: intercept drag before any other section-plane logic ──
-      if (this._tiltGizmo && this.activeSectionPlaneId) {
+      // ── Tilt gizmo: intercept drag before any other logic (section-plane only) ──
+      if (this.activeTool === 'section-plane' && this._tiltGizmo && this.activeSectionPlaneId) {
         const ringMeshes = [
           ...(this._tiltRingXMeshes || []),
           ...(this._tiltRingYMeshes || []),
@@ -2722,7 +2349,7 @@ export class Sectioning {
       // Raycast visible model geometry
       const modelMeshes = [];
       this.scene.traverse(obj => {
-        if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isCutContour && !obj.userData.isTiltGizmo) {
+        if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isTiltGizmo) {
           modelMeshes.push(obj);
         }
       });
@@ -2739,7 +2366,10 @@ export class Sectioning {
       bounds.getSize(bSize);
       const threshold = Math.max(bSize.x, bSize.y, bSize.z) * 0.02;
 
-      // If there's an active edit-state plane and click is near it → drag
+      // If there's an active edit-state plane and click is near it → drag.
+      // This works the same under both tools — once a plane is in edit
+      // state, hovering its cut shows the drag arrow and clicking starts
+      // a translation drag along the plane normal.
       if (this.activeSectionPlaneId) {
         const activePd = this.clipPlanes.get(this.activeSectionPlaneId);
         if (activePd) {
@@ -2763,7 +2393,9 @@ export class Sectioning {
         }
       }
 
-      // Check if click is near ANY existing default-state plane — re-edit it
+      // Check if click is near ANY existing default-state plane — re-edit it.
+      // This is also tool-agnostic: any committed plane can be re-entered
+      // for editing from either tool.
       for (const [existingId, pd] of this.clipPlanes) {
         const mathPlane = new THREE.Plane();
         mathPlane.setFromNormalAndCoplanarPoint(pd.normal, pd.point);
@@ -2775,82 +2407,44 @@ export class Sectioning {
         }
       }
 
-      // Click is on model and not near any existing plane → create new plane
-      const inwardNormal = this._resolveInwardSectionPlaneNormal(hit.point, hitNormal);
-      const outwardNormal = inwardNormal.clone().negate();
-      const placementPoint = this._getSectionPlanePlacementPoint(hit.point, inwardNormal);
-      const planeId = this.addClipPlane(outwardNormal, placementPoint);
-      this._setActiveSectionPlane(planeId);
-      this._buildActivePlaneContour();
-      this._beginPlaneDrag(planeId, hit.point.clone());
-      this.setPlaneHoverMarker(hit.point, hitNormal);
-      this._setCursor('none');
+      // Click is on model and not near any existing plane → create new plane.
+      // The placement *gesture* is what differs between the two tools:
+      //   section-plane: plane lies along the surface (normal = surface normal)
+      //   section-cut:   plane slices through the surface (normal ⟂ surface)
+      if (this.activeTool === 'section-plane') {
+        const inwardNormal = this._resolveInwardSectionPlaneNormal(hit.point, hitNormal);
+        const outwardNormal = inwardNormal.clone().negate();
+        const placementPoint = this._getSectionPlanePlacementPoint(hit.point, inwardNormal);
+        const planeId = this.addClipPlane(outwardNormal, placementPoint);
+        this._setActiveSectionPlane(planeId);
+        // No contour build here — _beginPlaneDrag will be cleared anyway, and
+        // mouseup rebuilds it. If the user clicks without dragging, mouseup
+        // still goes through the drag-end branch and builds the contour.
+        this._beginPlaneDrag(planeId, hit.point.clone());
+        this.setPlaneHoverMarker(hit.point, hitNormal);
+        this._setCursor('none');
+      } else {
+        // section-cut: place a plane whose normal is perpendicular to the
+        // surface normal at the click point, so the cut slices into the
+        // model. Mirrors the angle=0 result of the old rotation gizmo.
+        // The new plane goes straight into edit state (helper visible,
+        // contour drawn) — identical to section-plane's post-placement
+        // flow. The next placement will drop this plane to default.
+        const cutNormal = this._computeSectionCutNormal(hitNormal);
+        const planeId = this.addClipPlane(cutNormal, hit.point);
+        this._setActiveSectionPlane(planeId);
+        this._buildActivePlaneContour();
+        this.clearCutHoverMarker();
+        this._removeCutSurfaceHighlight();
+        this.setPlaneHoverMarker(hit.point, cutNormal);
+        this._setCursor('none');
+      }
       event.stopPropagation();
       event.preventDefault();
       return;
     }
 
-    // ── Section-Cut: defer placement until mouseUp to allow camera drag ──
-    if (this.activeTool === 'section-cut') {
-      this.updateMouse(event);
-      this.raycaster.setFromCamera(this.mouse, this.camera);
-
-      const modelMeshes = [];
-      this.scene.traverse(obj => {
-        if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isCutContour && !obj.userData.isTiltGizmo) {
-          modelMeshes.push(obj);
-        }
-      });
-      const rawHits = this.raycaster.intersectObjects(modelMeshes, false);
-      const modelHits = this._filterClippedHits(rawHits);
-
-      if (this.cutState) {
-        const bounds = this.getSceneBounds();
-        const _bSize = new THREE.Vector3();
-        bounds.getSize(_bSize);
-        const gizmoRadius = Math.max(_bSize.x, _bSize.y, _bSize.z) * 0.04 * 1.5;
-
-        const facePlane = new THREE.Plane();
-        facePlane.setFromNormalAndCoplanarPoint(this.cutState.surfaceNormal, this.cutState.anchorPoint);
-        const projected = new THREE.Vector3();
-        const hitFacePlane = this.raycaster.ray.intersectPlane(facePlane, projected);
-
-        const nearGizmo = hitFacePlane &&
-          projected.distanceTo(this.cutState.anchorPoint) < gizmoRadius;
-
-        if (nearGizmo) {
-          // Gizmo drag — immediate (no deferral needed, rotation is drag-based)
-          this.cutDragging = true;
-          this.emit('drag-start', {});
-          event.stopPropagation();
-          event.preventDefault();
-          return;
-        }
-
-        if (modelHits.length > 0) {
-          const normal = this.getWorldNormalFromHit(modelHits[0]);
-          if (normal) {
-            this._cutClickPending = {
-              hit: modelHits[0], normal, wasAnchored: true,
-              screenX: event.clientX, screenY: event.clientY,
-            };
-            return;
-          }
-        }
-      } else if (modelHits.length > 0) {
-        const normal = this.getWorldNormalFromHit(modelHits[0]);
-        if (normal) {
-          this._cutClickPending = {
-            hit: modelHits[0], normal, wasAnchored: false,
-            screenX: event.clientX, screenY: event.clientY,
-          };
-          return;
-        }
-      }
-      return;
-    }
-
-    // ── Default: existing plane-helper drag logic ──
+    // ── Default: existing plane-helper drag logic for section-box etc. ──
     const helpers = [];
     this.helpersGroup.traverse(obj => {
       if (obj.isMesh && obj.userData.isPlaneHelper) {
@@ -2880,15 +2474,6 @@ export class Sectioning {
   onMouseMove(event) {
     this.updateMouse(event);
     this.raycaster.setFromCamera(this.mouse, this.camera);
-
-    // Cancel pending section-cut click if mouse moved too far (user is navigating)
-    if (this._cutClickPending) {
-      const dx = event.clientX - this._cutClickPending.screenX;
-      const dy = event.clientY - this._cutClickPending.screenY;
-      if (Math.sqrt(dx * dx + dy * dy) > this._cutClickThreshold) {
-        this._cutClickPending = null;
-      }
-    }
 
     // ── Tilt gizmo drag ──
     if (this._tiltDragging && this.activeSectionPlaneId) {
@@ -2946,7 +2531,7 @@ export class Sectioning {
     }
 
     // ── Tilt gizmo hover detection ──
-    if (this._tiltGizmo && this.activeSectionPlaneId && !this.isDragging && !this.cutDragging) {
+    if (this._tiltGizmo && this.activeSectionPlaneId && !this.isDragging) {
       const ringMeshes = [
         ...(this._tiltRingXMeshes || []),
         ...(this._tiltRingYMeshes || []),
@@ -2968,27 +2553,6 @@ export class Sectioning {
       } else if (this._tiltHoveredRing) {
         this._unhighlightTiltRing();
       }
-    }
-
-    // ── Section-Cut/Section-Plane rotation drag ──
-    if (this.cutDragging && this.cutState) {
-      const facePlane = new THREE.Plane();
-      facePlane.setFromNormalAndCoplanarPoint(this.cutState.surfaceNormal, this.cutState.anchorPoint);
-      const projected = new THREE.Vector3();
-      if (this.raycaster.ray.intersectPlane(facePlane, projected)) {
-        const toMouse = projected.clone().sub(this.cutState.anchorPoint);
-        if (toMouse.lengthSq() > 0.000001) {
-          toMouse.normalize();
-          this.cutState.angle = Math.atan2(
-            toMouse.dot(this.cutState.bitangent),
-            toMouse.dot(this.cutState.tangent),
-          );
-          this.updateCutGizmo();
-          this.updateCutPreview();
-        }
-      }
-      this._setCursor('grabbing');
-      return;
     }
 
     // ── Existing plane-helper drag ──
@@ -3014,7 +2578,7 @@ export class Sectioning {
           this.planeHoverMarker.position.copy(markerPos);
         }
       }
-      this._scheduleActivePlaneContourUpdate();
+      // Contour rebuild is deferred until mouseup — see _beginPlaneDrag.
       this._updateTiltGizmoPosition(this.dragPlaneId);
       this._setCursor('none');
       return;
@@ -3032,8 +2596,8 @@ export class Sectioning {
     if (this.activeTool === 'section-cut' || this.activeTool === 'section-plane') {
       const isSectionPlane = this.activeTool === 'section-plane';
 
-      // Hovering over a committed edit icon — hide placement cursor
-      if (this._hoveringCutEditIcon || this._hoveringPlaneEditIcon) {
+      // Hovering over a committed wedge edit icon — hide placement cursor
+      if (this._hoveringPlaneEditIcon) {
         this.clearCutHoverMarker();
         this.clearPlaneHoverMarker();
         this._removeCutSurfaceHighlight();
@@ -3042,30 +2606,34 @@ export class Sectioning {
         return;
       }
 
-      // Edit-state plane: show drag cursor only near the active plane's cut area
-      if (isSectionPlane && this.activeSectionPlaneId) {
+      const bounds = this.getSceneBounds();
+      const _bSize = new THREE.Vector3();
+      bounds.getSize(_bSize);
+      const nearPlaneThreshold = Math.max(_bSize.x, _bSize.y, _bSize.z) * 0.02;
+
+      const modelMeshes = [];
+      this.scene.traverse(obj => {
+        if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isTiltGizmo) {
+          modelMeshes.push(obj);
+        }
+      });
+      const rawHits = this.raycaster.intersectObjects(modelMeshes, false);
+      const modelHits = this._filterClippedHits(rawHits);
+
+      // ── Edit-state plane: show drag cursor near the active plane's cut ──
+      // This branch is now tool-agnostic. A plane in edit state behaves
+      // identically under section-plane and section-cut: hovering its
+      // cut shows the drag arrow, hovering anywhere else shows the
+      // tool's placement cursor.
+      if (this.activeSectionPlaneId) {
         const activePd = this.clipPlanes.get(this.activeSectionPlaneId);
         if (activePd) {
-          const editMeshes = [];
-          this.scene.traverse(obj => {
-            if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isCutContour && !obj.userData.isTiltGizmo) {
-              editMeshes.push(obj);
-            }
-          });
-          const editRawHits = this.raycaster.intersectObjects(editMeshes, false);
-          const editHits = this._filterClippedHits(editRawHits);
-
-          if (editHits.length > 0) {
-            const editBounds = this.getSceneBounds();
-            const _ebs = new THREE.Vector3();
-            editBounds.getSize(_ebs);
-            const editThreshold = Math.max(_ebs.x, _ebs.y, _ebs.z) * 0.02;
-
+          if (modelHits.length > 0) {
             const mathPlane = new THREE.Plane();
             mathPlane.setFromNormalAndCoplanarPoint(activePd.normal, activePd.point);
-            const distToPlane = Math.abs(mathPlane.distanceToPoint(editHits[0].point));
+            const distToPlane = Math.abs(mathPlane.distanceToPoint(modelHits[0].point));
 
-            if (distToPlane < editThreshold) {
+            if (distToPlane < nearPlaneThreshold) {
               // Near the active plane's cut — show drag cursor locked to plane angle
               const planeHit = new THREE.Vector3();
               if (this.raycaster.ray.intersectPlane(mathPlane, planeHit)) {
@@ -3077,13 +2645,20 @@ export class Sectioning {
                 return;
               }
             } else {
-              // Over model but NOT near active plane — show normal create-plane cursor + highlight
-              const surfNormal = this.getWorldNormalFromHit(editHits[0]);
+              // Over model but NOT near active plane — show the placement
+              // cursor / surface highlight for whichever tool is active.
+              const surfNormal = this.getWorldNormalFromHit(modelHits[0]);
               if (surfNormal) {
-                this.clearCutHoverMarker();
                 this.clearHoverHighlight();
-                this._applyCutSurfaceHighlight(editHits[0], this._planeHoverMaterial);
-                this.setPlaneHoverMarker(editHits[0].point, surfNormal);
+                if (isSectionPlane) {
+                  this.clearCutHoverMarker();
+                  this._applyCutSurfaceHighlight(modelHits[0], this._planeHoverMaterial);
+                  this.setPlaneHoverMarker(modelHits[0].point, surfNormal);
+                } else {
+                  this.clearPlaneHoverMarker();
+                  this._applyCutSurfaceHighlight(modelHits[0], this._cutHoverMaterial);
+                  this.setCutHoverMarker(modelHits[0].point, surfNormal);
+                }
                 this._setCursor('none');
                 return;
               }
@@ -3100,38 +2675,32 @@ export class Sectioning {
         }
       }
 
-      // If anchored, check whether mouse is near the gizmo first
-      if (this.cutState) {
-        const bounds = this.getSceneBounds();
-        const _bSize = new THREE.Vector3();
-        bounds.getSize(_bSize);
-        const gizmoRadius = Math.max(_bSize.x, _bSize.y, _bSize.z) * 0.04 * 1.5;
-
-        const facePlane = new THREE.Plane();
-        facePlane.setFromNormalAndCoplanarPoint(this.cutState.surfaceNormal, this.cutState.anchorPoint);
-        const projected = new THREE.Vector3();
-        const hitFacePlane = this.raycaster.ray.intersectPlane(facePlane, projected);
-
-        if (hitFacePlane && projected.distanceTo(this.cutState.anchorPoint) < gizmoRadius) {
-          this.clearCutHoverMarker();
-          this.clearPlaneHoverMarker();
-          this._removeCutSurfaceHighlight();
-          this.clearHoverHighlight();
-          this._setCursor('grab');
-          return;
-        }
-      }
-
-      // Show crosshair + scissors on model surfaces (skip clipped geometry)
-      const modelMeshes = [];
-      this.scene.traverse(obj => {
-        if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isCutContour && !obj.userData.isTiltGizmo) {
-          modelMeshes.push(obj);
-        }
-      });
-      const rawHits = this.raycaster.intersectObjects(modelMeshes, false);
-      const modelHits = this._filterClippedHits(rawHits);
+      // ── No plane in edit state. ──
+      // First, if the cursor is near any committed default-state plane,
+      // surface the drag arrow (mousedown will enter edit + drag in one
+      // step). This unifies "click near a cut to start moving it" across
+      // both tools.
       if (modelHits.length > 0) {
+        const hitPoint = modelHits[0].point;
+        for (const [, pd] of this.clipPlanes) {
+          const mathPlane = new THREE.Plane();
+          mathPlane.setFromNormalAndCoplanarPoint(pd.normal, pd.point);
+          if (Math.abs(mathPlane.distanceToPoint(hitPoint)) < nearPlaneThreshold) {
+            const planeHit = new THREE.Vector3();
+            if (this.raycaster.ray.intersectPlane(mathPlane, planeHit)) {
+              this.clearCutHoverMarker();
+              this._removeCutSurfaceHighlight();
+              this.clearHoverHighlight();
+              this.setPlaneHoverMarker(planeHit, pd.normal);
+              this._setCursor('none');
+              return;
+            }
+          }
+        }
+
+        // Otherwise, show the tool's placement cursor (drag arrow for
+        // section-plane, crosshair/scissors for section-cut) on the
+        // hovered surface.
         const normal = this.getWorldNormalFromHit(modelHits[0]);
         if (normal) {
           this.clearHoverHighlight();
@@ -3150,17 +2719,13 @@ export class Sectioning {
           return;
         }
       }
+
       // Not over a model surface
       this.clearCutHoverMarker();
       this.clearPlaneHoverMarker();
       this._removeCutSurfaceHighlight();
-      if (this.cutState) {
-        this.clearHoverHighlight();
-        this._setCursor('grab');
-      } else {
-        this.clearHoverHighlight();
-        this._setCursor('');
-      }
+      this.clearHoverHighlight();
+      this._setCursor('');
       return;
     }
 
@@ -3173,18 +2738,6 @@ export class Sectioning {
    * Handle mouse up
    */
   onMouseUp(event) {
-    // Execute deferred section-cut click if mouse didn't move (wasn't a camera drag)
-    if (this._cutClickPending) {
-      const pending = this._cutClickPending;
-      this._cutClickPending = null;
-      if (pending.wasAnchored) {
-        this.commitCutAuthoring();
-        this.placeCutAnchor(pending.hit.point, pending.normal);
-      } else {
-        this.placeCutAnchor(pending.hit.point, pending.normal);
-      }
-      return;
-    }
     // ── Tilt gizmo drag end ──
     if (this._tiltDragging) {
       this._tiltDragging = false;
@@ -3228,12 +2781,6 @@ export class Sectioning {
       if (this.activeSectionPlaneId) {
         this._updateTiltGizmoPosition(this.activeSectionPlaneId);
       }
-      this.emit('drag-end');
-      return;
-    }
-    if (this.cutDragging) {
-      this.cutDragging = false;
-      this._setCursor('grab');
       this.emit('drag-end');
       return;
     }
@@ -3378,7 +2925,6 @@ export class Sectioning {
     }
 
     this.clearAll();
-    this._clearAllCutContours();
     this._clearAllPlaneOverlays();
 
     if (this.scissorsOverlay && this.scissorsOverlay.parentElement) {
@@ -3386,7 +2932,6 @@ export class Sectioning {
     }
 
     this.scene.remove(this.helpersGroup);
-    this.scene.remove(this._cutContoursGroup);
 
     this.renderer.clippingPlanes = [];
 

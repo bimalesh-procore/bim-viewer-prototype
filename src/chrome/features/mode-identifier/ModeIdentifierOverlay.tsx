@@ -1,19 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import caretDownIcon from '../../assets/icons/mode-identifier/caret-down.svg';
+import sectionCutVideo from '../../assets/Video/section cut demo.mov';
 
 type ModeIdentifierMode = 'default' | 'markup' | 'measure' | 'create' | 'sectioning';
 
 interface ModeIdentifierDetail {
   mode: ModeIdentifierMode;
   label: string;
+  subTool?: string | null;
 }
+
+const videoBySubTool: Partial<Record<string, string>> = {
+  'section-cut': sectionCutVideo,
+};
 
 export function ModeIdentifierOverlay() {
   const [modeState, setModeState] = useState<ModeIdentifierDetail>({
     mode: 'default',
     label: '',
+    subTool: null,
   });
   const [isExpanded, setIsExpanded] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const modeDescriptionByMode: Record<ModeIdentifierMode, string> = {
     default: '',
@@ -29,47 +38,126 @@ export function ModeIdentifierOverlay() {
       if (!detail) return;
       setModeState(detail);
       setIsExpanded(false);
+      setLightboxOpen(false);
     };
-
     window.addEventListener('mv:mode-identifier', handler);
     return () => window.removeEventListener('mv:mode-identifier', handler);
   }, []);
 
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxOpen]);
+
+  useEffect(() => {
+    if (lightboxOpen) {
+      videoRef.current?.play();
+    } else {
+      const v = videoRef.current;
+      if (v) { v.pause(); v.currentTime = 0; }
+    }
+  }, [lightboxOpen]);
+
   if (modeState.mode === 'default') return null;
 
+  const videoSrc = modeState.subTool ? videoBySubTool[modeState.subTool] : undefined;
+
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[240] pointer-events-auto">
-      <div
-        className={`p-1 rounded-[8px] border border-[#3b4044] bg-[#171a1c] text-white shadow-[0px_4px_20px_rgba(0,0,0,0.35)] ${
-          isExpanded ? 'min-w-[320px]' : 'h-8'
-        }`}
-      >
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            aria-label="Mode identifier toggle"
-            aria-expanded={isExpanded}
-            onClick={() => setIsExpanded((prev) => !prev)}
-            className="w-6 h-6 rounded-[6px] bg-[#3E3E3E] hover:bg-[#4A4A4A] transition-colors flex items-center justify-center shrink-0"
+    <>
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[240] pointer-events-auto">
+        <div
+          className={`p-1 rounded-[8px] border border-[#3b4044] bg-[#171a1c] text-white shadow-[0px_4px_20px_rgba(0,0,0,0.35)]${
+            isExpanded ? ' w-[350px]' : ''
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Mode identifier toggle"
+              aria-expanded={isExpanded}
+              onClick={() => setIsExpanded((prev) => !prev)}
+              className="w-6 h-6 rounded-[6px] bg-[#3E3E3E] hover:bg-[#4A4A4A] transition-colors flex items-center justify-center shrink-0"
+            >
+              <img
+                src={caretDownIcon}
+                alt=""
+                width={16}
+                height={16}
+                className={`block transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+              />
+            </button>
+            <div className="text-[12px] leading-4 font-semibold whitespace-nowrap">
+              {modeState.label}
+            </div>
+          </div>
+
+          {isExpanded && (
+            <div className="pb-1 pt-1 flex items-start gap-3" style={{ paddingLeft: '36px', paddingRight: '4px' }}>
+              <p className="text-[12px] leading-4 text-[#c5c9cd] flex-1">
+                {modeDescriptionByMode[modeState.mode]}
+              </p>
+              {videoSrc && (
+                <button
+                  type="button"
+                  aria-label="Play demo video"
+                  onClick={() => setLightboxOpen(true)}
+                  className="relative shrink-0 w-[80px] h-[52px] rounded-[6px] overflow-hidden border border-[#3b4044] hover:border-[#6b7280] transition-colors group"
+                >
+                  <video
+                    src={videoSrc}
+                    className="w-full h-full object-cover"
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
+                  {/* Play icon overlay */}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-black/50 transition-colors">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                      <circle cx="10" cy="10" r="10" fill="rgba(0,0,0,0.5)" />
+                      <polygon points="8,6 15,10 8,14" fill="white" />
+                    </svg>
+                  </div>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Video lightbox */}
+      {lightboxOpen && videoSrc && (
+        <div
+          className="fixed inset-0 z-[500] flex items-center justify-center pointer-events-auto"
+          style={{ background: 'rgba(0,0,0,0.5)' }}
+          onClick={() => setLightboxOpen(false)}
+        >
+          <div
+            className="relative"
+            style={{ height: '800px' }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <img
-              src={caretDownIcon}
-              alt=""
-              width={16}
-              height={16}
-              className={`block transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+            <video
+              ref={videoRef}
+              src={videoSrc}
+              controls
+              playsInline
+              style={{ height: '800px', width: 'auto', borderRadius: '8px', display: 'block' }}
             />
-          </button>
-          <div className="text-[12px] leading-4 font-semibold whitespace-nowrap">
-            {modeState.label}
+            <button
+              type="button"
+              aria-label="Close video"
+              onClick={() => setLightboxOpen(false)}
+              className="absolute -top-3 -right-3 w-7 h-7 rounded-full bg-[#3E3E3E] hover:bg-[#555] text-white flex items-center justify-center text-sm transition-colors"
+            >
+              ✕
+            </button>
           </div>
         </div>
-        {isExpanded && (
-          <div className="px-1 pb-1 pt-1 text-[12px] leading-4 text-[#c5c9cd] max-w-[360px]">
-            {modeDescriptionByMode[modeState.mode]}
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </>
   );
 }

@@ -56,6 +56,12 @@ export class Sectioning {
     this.boundOnMouseDown = this.onMouseDown.bind(this);
     this.boundOnMouseMove = this.onMouseMove.bind(this);
     this.boundOnMouseUp = this.onMouseUp.bind(this);
+    this.boundOnContextMenu = this.onContextMenu.bind(this);
+
+    // True while the React plane context menu (Flip/Delete) is open over a
+    // plane. When set, the plane hover marker is suppressed so the user gets
+    // a normal cursor over the menu itself.
+    this._planeContextMenuOpen = false;
 
     // Cached scene bounds for plane sizing
     this.sceneBounds = null;
@@ -101,6 +107,12 @@ export class Sectioning {
     this._arrowSpriteTexture = null;
     this._loadArrowSpriteTexture();
 
+    // Plane hover marker scale state — driven by setPlaneHoverMarker's scale
+    // opt and lerped each tick toward the target so the cursor smoothly grows
+    // from placement-preview size (1x) to adjust-existing-plane size (4x).
+    this._planeHoverScale = 1;
+    this._planeHoverScaleTarget = 1;
+
     // Section-cut placement preview line.
     // Shows a green line on the hovered surface indicating where the cut
     // will slice. The user can press 'r' to rotate the cut by 45° around
@@ -115,7 +127,12 @@ export class Sectioning {
     this._hoveringPlaneEditIcon = false;
 
     // Live contour outline + fill for the active edit-state section plane
-    // Rendered in a separate THREE.Scene to bypass global clipping planes
+    // Rendered in a separate THREE.Scene to bypass global clipping planes.
+    // The contour scene is still built when the flag is off so the front-face
+    // hit test for the drag-arrow hover still has a fill mesh to raycast
+    // against — only the visible draw call is skipped. Set to true to bring
+    // the green stroke + fill back.
+    this._planeContourVisible = false;
     this._activePlaneContour = null;
     this._activePlaneContourPlaneId = null;
     // rAF id for coalescing contour rebuilds during drag — prevents stacking
@@ -244,6 +261,15 @@ export class Sectioning {
     }
     if (isSectioningTool && !prevWasSectioning) {
       document.addEventListener('keydown', this.boundOnKeyDown);
+      // Entering sectioning: every existing plane should feel like it's
+      // already in edit state. Auto-promote the most recently added plane
+      // so the fill-mesh hover path is live for it on the very first move.
+      // Hovering near any other plane still picks it up via the default
+      // proximity check + onMouseDown (which begins a drag immediately).
+      if (!this.activeSectionPlaneId && this.clipPlanes.size > 0) {
+        const lastPlaneId = [...this.clipPlanes.keys()].pop();
+        if (lastPlaneId) this._editSectionPlane(lastPlaneId);
+      }
     }
 
     if (this._onToolChange) this._onToolChange(tool);
@@ -323,6 +349,7 @@ export class Sectioning {
     this.domElement.addEventListener('mousedown', this.boundOnMouseDown);
     this.domElement.addEventListener('mousemove', this.boundOnMouseMove);
     this.domElement.addEventListener('mouseup', this.boundOnMouseUp);
+    this.domElement.addEventListener('contextmenu', this.boundOnContextMenu);
 
     // Frame loop to keep HTML overlay icons in sync with camera
     this._overlayAnimId = null;
@@ -341,7 +368,18 @@ export class Sectioning {
       if (this.planeHoverMarker?.userData._arrowSprite) {
         this._updateArrowSpriteRotation();
       }
-      if (this._activePlaneContour || (this.activeSectionPlaneId && this.planeHoverMarker) || this._tiltGizmoScene) {
+      // Smoothly grow/shrink the outer green ring between placement-preview
+      // (1x) and adjust-existing-plane (4x) sizes. The center dark circle,
+      // the stroke thickness, and the arrow sprite stay fixed — only the
+      // ring's outer radius (and fill area) scales.
+      if (this.planeHoverMarker) {
+        const t = this._planeHoverScaleTarget;
+        const c = this._planeHoverScale;
+        const next = c + (t - c) * 0.25;
+        this._planeHoverScale = Math.abs(t - next) < 0.001 ? t : next;
+        this._applyPlaneHoverRingScale(this._planeHoverScale);
+      }
+      if (this._activePlaneContour || this.planeHoverMarker || this._tiltGizmoScene) {
         this._renderActivePlaneContour();
       }
       // Tilt gizmo: keep scale consistent on screen regardless of camera distance
@@ -624,6 +662,11 @@ export class Sectioning {
     if (this.activeSectionPlaneId === planeId) {
       this.activeSectionPlaneId = null;
       activePlaneCleared = true;
+      // Tear down the contour scene that was built for this (now deleted)
+      // plane — leaving it orphaned makes the tick-loop render gate think a
+      // plane is still active, which breaks the hover marker on remaining
+      // planes (causes visible cursor flicker).
+      this._clearActivePlaneContour();
     }
 
     // Update renderer
@@ -1276,8 +1319,14 @@ export class Sectioning {
     this._buildActivePlaneContour();
   }
 
-  setPlaneHoverMarker(point, normal) {
-    this.clearPlaneHoverMarker();
+  setPlaneHoverMarker(point, normal, opts = {}) {
+    const targetScale = typeof opts.scale === 'number' ? opts.scale : 1;
+    this._planeHoverScaleTarget = targetScale;
+    // Preserve the lerped current scale across the clear+rebuild done every
+    // mouse move; if no marker existed, snap current to target so the new
+    // marker doesn't pop in undersized.
+    if (!this.planeHoverMarker) this._planeHoverScale = targetScale;
+    this.clearPlaneHoverMarker(true);
 
     const camDist = this.camera.position.distanceTo(point);
     const radius = camDist * 0.017;
@@ -1303,6 +1352,10 @@ export class Sectioning {
     const greenFillMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 0.3 });
     const darkMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x194d1e, opacity: 0.6 });
 
+    // Outer green ring is split into the thin stroke and the translucent fill.
+    // Their geometries get rebuilt each frame as scale animates so the fill
+    // (and outer radius) grows with scale while the stroke THICKNESS and the
+    // inner edge stay constant — only outer radius scales.
     const ringStroke = new THREE.Mesh(new THREE.RingGeometry(outerR - strokeW, outerR, 48), greenMat);
     ringStroke.userData.isPlaneHelper = true;
     ringStroke.renderOrder = 1001;
@@ -1312,6 +1365,11 @@ export class Sectioning {
     ringFill.userData.isPlaneHelper = true;
     ringFill.renderOrder = 1000;
     group.add(ringFill);
+
+    group.userData._ringStroke = ringStroke;
+    group.userData._ringFill = ringFill;
+    group.userData._ringBase = { innerR, outerR, strokeW };
+    group.userData._ringAppliedScale = 1;
 
     const center = new THREE.Mesh(new THREE.CircleGeometry(innerR, 32), darkMat);
     center.userData.isPlaneHelper = true;
@@ -1344,9 +1402,34 @@ export class Sectioning {
     }
 
     this.planeHoverMarker = group;
+    this._applyPlaneHoverRingScale(this._planeHoverScale);
     this.helpersGroup.add(group);
     this._updateArrowSpriteRotation();
     this._setCursor('none');
+  }
+
+  // Rebuild the outer ring geometries so the OUTER radius scales with `s`
+  // while the stroke thickness and the fill's inner edge stay constant.
+  _applyPlaneHoverRingScale(s) {
+    const m = this.planeHoverMarker;
+    if (!m) return;
+    const base = m.userData._ringBase;
+    const stroke = m.userData._ringStroke;
+    const fill = m.userData._ringFill;
+    if (!base || !stroke || !fill) return;
+    if (Math.abs(m.userData._ringAppliedScale - s) < 0.001) return;
+    const newOuter = base.outerR * s;
+    const newStrokeInner = newOuter - base.strokeW;
+    const newFillInner = base.innerR;
+    const newFillOuter = Math.max(newStrokeInner, newFillInner + 1e-5);
+
+    stroke.geometry.dispose();
+    stroke.geometry = new THREE.RingGeometry(newStrokeInner, newOuter, 48);
+
+    fill.geometry.dispose();
+    fill.geometry = new THREE.RingGeometry(newFillInner, newFillOuter, 48);
+
+    m.userData._ringAppliedScale = s;
   }
 
   _updateArrowSpriteRotation() {
@@ -1460,11 +1543,24 @@ export class Sectioning {
     this._cutPreviewLine = null;
   }
 
-  clearPlaneHoverMarker() {
-    if (!this.planeHoverMarker) return;
+  clearPlaneHoverMarker(preserveScale = false) {
+    if (!this.planeHoverMarker) {
+      if (!preserveScale) {
+        this._planeHoverScale = 1;
+        this._planeHoverScaleTarget = 1;
+      }
+      return;
+    }
     this.helpersGroup.remove(this.planeHoverMarker);
     this.disposeHelper(this.planeHoverMarker);
     this.planeHoverMarker = null;
+    // True clears (the marker is genuinely going away) reset scale state so
+    // the next show starts fresh. Recreates from setPlaneHoverMarker pass
+    // preserveScale=true so the lerped current scale isn't lost mid-stream.
+    if (!preserveScale) {
+      this._planeHoverScale = 1;
+      this._planeHoverScaleTarget = 1;
+    }
   }
 
   _showScissorsOverlay(worldPoint) {
@@ -1757,10 +1853,8 @@ export class Sectioning {
 
     this._removePlaneOverlay(planeId);
 
-    // Place icon at the centroid of the cross-section so it sits on the cut face
-    const iconPos = this._computeCrossSectionCentroid(planeData.plane) || planeData.point;
-    const overlay = this._createPlaneEditOverlay(planeId, iconPos);
-    this._planeOverlays.set(planeId, overlay);
+    // No edit-icon overlay: every committed plane stays freely draggable on
+    // hover, so the wedge-with-arrows gizmo is intentionally not created here.
 
     this._refreshSectionPlaneActiveVisuals();
     if (activePlaneCleared) {
@@ -2146,7 +2240,6 @@ export class Sectioning {
 
   _renderActivePlaneContour() {
     if (!this._activePlaneContour && !this.planeHoverMarker && !this._tiltGizmoScene) return;
-    if (!this.activeSectionPlaneId) return;
 
     const savedClipPlanes = this.renderer.clippingPlanes;
     const savedAutoClear = this.renderer.autoClear;
@@ -2155,7 +2248,13 @@ export class Sectioning {
 
     // Contour geometry is pre-clipped against other planes in _buildActivePlaneContour,
     // so render with no clipping to ensure the full stroke is always visible.
-    if (this._activePlaneContour) {
+    // The contour is still built when hidden so raycast-driven UI (e.g. the
+    // front-face drag-arrow hover) keeps working; we only skip the draw.
+    if (
+      this._activePlaneContour &&
+      this._planeContourVisible &&
+      this.activeSectionPlaneId
+    ) {
       this.renderer.clippingPlanes = [];
       this.renderer.render(this._activePlaneContour, this.camera);
     }
@@ -2475,7 +2574,7 @@ export class Sectioning {
             const planeHit = new THREE.Vector3();
             this.raycaster.ray.intersectPlane(mathPlane, planeHit);
             if (planeHit && this._beginPlaneDrag(this.activeSectionPlaneId, planeHit.clone())) {
-              this.setPlaneHoverMarker(planeHit, activePd.normal);
+              this.setPlaneHoverMarker(planeHit, activePd.normal, { scale: 4 });
               this._setCursor('none');
               event.stopPropagation();
               event.preventDefault();
@@ -2487,14 +2586,21 @@ export class Sectioning {
         }
       }
 
-      // Check if click is near ANY existing default-state plane — re-edit it.
-      // This is also tool-agnostic: any committed plane can be re-entered
-      // for editing from either tool.
+      // Click is near ANY existing default-state plane — enter edit state
+      // AND begin a drag in the same gesture. With the edit-icon gizmo gone,
+      // every committed plane behaves like it's always editable: hover
+      // surfaces the drag arrow, mousedown immediately starts translating.
       for (const [existingId, pd] of this.clipPlanes) {
         const mathPlane = new THREE.Plane();
         mathPlane.setFromNormalAndCoplanarPoint(pd.normal, pd.point);
         if (Math.abs(mathPlane.distanceToPoint(hit.point)) < threshold) {
+          const planeHit = new THREE.Vector3();
+          const intersected = this.raycaster.ray.intersectPlane(mathPlane, planeHit);
           this._editSectionPlane(existingId);
+          if (intersected && this._beginPlaneDrag(existingId, planeHit.clone())) {
+            this.setPlaneHoverMarker(planeHit, pd.normal, { scale: 4 });
+            this._setCursor('none');
+          }
           event.stopPropagation();
           event.preventDefault();
           return;
@@ -2515,7 +2621,7 @@ export class Sectioning {
         // mouseup rebuilds it. If the user clicks without dragging, mouseup
         // still goes through the drag-end branch and builds the contour.
         this._beginPlaneDrag(planeId, hit.point.clone());
-        this.setPlaneHoverMarker(hit.point, hitNormal);
+        this.setPlaneHoverMarker(hit.point, hitNormal, { scale: 4 });
         this._setCursor('none');
       } else {
         // section-cut: place a plane whose normal is perpendicular to the
@@ -2530,7 +2636,7 @@ export class Sectioning {
         this._buildActivePlaneContour();
         this.clearCutHoverMarker();
         this._removeCutSurfaceHighlight();
-        this.setPlaneHoverMarker(hit.point, cutNormal);
+        this.setPlaneHoverMarker(hit.point, cutNormal, { scale: 4 });
         this._setCursor('none');
       }
       event.stopPropagation();
@@ -2568,6 +2674,17 @@ export class Sectioning {
   onMouseMove(event) {
     this.updateMouse(event);
     this.raycaster.setFromCamera(this.mouse, this.camera);
+
+    // ── Plane context menu open: suppress all hover affordances so the user
+    // gets a normal cursor over the menu and the surrounding viewer. ──
+    if (this._planeContextMenuOpen) {
+      this.clearPlaneHoverMarker();
+      this.clearCutHoverMarker();
+      this._removeCutSurfaceHighlight();
+      this.clearHoverHighlight();
+      this._setCursor('');
+      return;
+    }
 
     // ── Tilt gizmo drag ──
     if (this._tiltDragging && this.activeSectionPlaneId) {
@@ -2690,16 +2807,6 @@ export class Sectioning {
     if (this.activeTool === 'section-cut' || this.activeTool === 'section-plane') {
       const isSectionPlane = this.activeTool === 'section-plane';
 
-      // Hovering over a committed wedge edit icon — hide placement cursor
-      if (this._hoveringPlaneEditIcon) {
-        this.clearCutHoverMarker();
-        this.clearPlaneHoverMarker();
-        this._removeCutSurfaceHighlight();
-        this.clearHoverHighlight();
-        this._setCursor('');
-        return;
-      }
-
       const bounds = this.getSceneBounds();
       const _bSize = new THREE.Vector3();
       bounds.getSize(_bSize);
@@ -2721,26 +2828,12 @@ export class Sectioning {
           if (fillMeshes.length > 0) {
             const fillHits = this.raycaster.intersectObjects(fillMeshes, false);
             if (fillHits.length > 0) {
-              const dFill = fillHits[0].distance;
-
-              // Check if any visible model geometry is closer (in front of the fill).
-              // The fill has depthTest:false so it registers hits through geometry;
-              // we only want the drag arrow when the plane face is the frontmost thing.
-              const modelMeshesForFill = [];
-              this.scene.traverse(obj => {
-                if (obj.isMesh && obj.visible &&
-                    !obj.userData.isPlaneHelper &&
-                    !obj.userData.isTiltGizmo &&
-                    !obj.userData.isPlaneContourFill) {
-                  modelMeshesForFill.push(obj);
-                }
-              });
-              const nearerModelHits = this.raycaster
-                .intersectObjects(modelMeshesForFill, false)
-                .filter(h => h.distance < dFill - 0.01);
-
-              if (nearerModelHits.length === 0) {
-                // Nothing in front of the plane — cursor is on the plane face.
+              // Front face of the plane only: dot(rayDir, normal) < 0 means
+              // the ray is striking the side the normal points out of, so the
+              // drag arrow should show. A back-face hit falls through to the
+              // normal placement cursor.
+              const dot = this.raycaster.ray.direction.dot(activePd.normal);
+              if (dot < 0) {
                 const mathPlane = new THREE.Plane();
                 mathPlane.setFromNormalAndCoplanarPoint(activePd.normal, activePd.point);
                 const planeHit = new THREE.Vector3();
@@ -2748,14 +2841,12 @@ export class Sectioning {
                   this.clearCutHoverMarker();
                   this._removeCutSurfaceHighlight();
                   this.clearHoverHighlight();
-                  this.setPlaneHoverMarker(planeHit, activePd.normal);
+                  this.setPlaneHoverMarker(planeHit, activePd.normal, { scale: 4 });
                   this._setCursor('none');
                   return;
                 }
               }
-              // Model geometry is closer — fall through to normal placement logic.
             }
-            // Cursor is outside the green area — fall through to normal placement logic.
           }
         }
       }
@@ -2786,7 +2877,7 @@ export class Sectioning {
               this.clearCutHoverMarker();
               this._removeCutSurfaceHighlight();
               this.clearHoverHighlight();
-              this.setPlaneHoverMarker(planeHit, pd.normal);
+              this.setPlaneHoverMarker(planeHit, pd.normal, { scale: 4 });
               this._setCursor('none');
               return;
             }
@@ -2827,6 +2918,93 @@ export class Sectioning {
     // Default hover for other tools
     this.clearHoverHighlight();
     this._setCursor(intersects.length > 0 ? 'grab' : '');
+  }
+
+  /**
+   * Right-click on (or near) a plane while in a sectioning tool opens the
+   * Flip / Delete context menu. Emits 'request-plane-context-menu' with the
+   * planeId and viewport coords so the React layer can render it.
+   */
+  onContextMenu(event) {
+    const isSectioningTool = this.activeTool === 'section-cut' || this.activeTool === 'section-plane';
+    if (!isSectioningTool) return;
+
+    this.updateMouse(event);
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+
+    const bounds = this.getSceneBounds();
+    const _bSize = new THREE.Vector3();
+    bounds.getSize(_bSize);
+    const threshold = Math.max(_bSize.x, _bSize.y, _bSize.z) * 0.02;
+
+    let targetPlaneId = null;
+
+    // Prefer a hit on the active plane's fill (front-face only) — same gate
+    // as the hover/drag logic, so right-click feels co-located with the cursor.
+    if (this.activeSectionPlaneId && this._activePlaneContour) {
+      const activePd = this.clipPlanes.get(this.activeSectionPlaneId);
+      if (activePd) {
+        const fillMeshes = [];
+        this._activePlaneContour.traverse(obj => {
+          if (obj.isMesh && obj.userData.isPlaneContourFill) fillMeshes.push(obj);
+        });
+        if (fillMeshes.length > 0) {
+          const fillHits = this.raycaster.intersectObjects(fillMeshes, false);
+          if (fillHits.length > 0 && this.raycaster.ray.direction.dot(activePd.normal) < 0) {
+            targetPlaneId = this.activeSectionPlaneId;
+          }
+        }
+      }
+    }
+
+    // Fall back to proximity to any committed plane via model raycast.
+    if (!targetPlaneId) {
+      const modelMeshes = [];
+      this.scene.traverse(obj => {
+        if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isTiltGizmo) {
+          modelMeshes.push(obj);
+        }
+      });
+      const rawHits = this.raycaster.intersectObjects(modelMeshes, false);
+      const modelHits = this._filterClippedHits(rawHits);
+      if (modelHits.length > 0) {
+        const hitPoint = modelHits[0].point;
+        for (const [planeId, pd] of this.clipPlanes) {
+          const mathPlane = new THREE.Plane();
+          mathPlane.setFromNormalAndCoplanarPoint(pd.normal, pd.point);
+          if (Math.abs(mathPlane.distanceToPoint(hitPoint)) < threshold) {
+            targetPlaneId = planeId;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!targetPlaneId) return;
+
+    event.preventDefault();
+    // Make the right-clicked plane active so Flip/Delete (which operate on
+    // the active plane) target the one the user is pointing at.
+    if (this.activeSectionPlaneId !== targetPlaneId) {
+      this._editSectionPlane(targetPlaneId);
+    }
+    this.setPlaneContextMenuOpen(true);
+    this.emit('request-plane-context-menu', {
+      planeId: targetPlaneId,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }
+
+  setPlaneContextMenuOpen(open) {
+    this._planeContextMenuOpen = Boolean(open);
+    if (this._planeContextMenuOpen) {
+      this.clearPlaneHoverMarker();
+      this.clearCutHoverMarker();
+      this._removeCutSurfaceHighlight();
+      this.clearHoverHighlight();
+      this._setCursor('');
+    }
   }
 
   /**
@@ -3013,6 +3191,7 @@ export class Sectioning {
     this.domElement.removeEventListener('mousedown', this.boundOnMouseDown);
     this.domElement.removeEventListener('mousemove', this.boundOnMouseMove);
     this.domElement.removeEventListener('mouseup', this.boundOnMouseUp);
+    this.domElement.removeEventListener('contextmenu', this.boundOnContextMenu);
     document.removeEventListener('keydown', this.boundOnKeyDown);
 
     if (this._overlayAnimId != null) {

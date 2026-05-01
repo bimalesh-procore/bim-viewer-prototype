@@ -7,6 +7,7 @@ import { NavigationWheel } from '../navigation-wheel/NavigationWheel';
 import { ViewerCanvas } from '../viewer-canvas/ViewerCanvas';
 import { GlobalSearchOverlay } from '../global-search/GlobalSearchOverlay';
 import { ModeIdentifierOverlay } from '../mode-identifier/ModeIdentifierOverlay';
+import { PlaneContextMenu } from '../plane-context-menu/PlaneContextMenu';
 import { DockManager } from '../dock-manager/DockManager';
 import { useDockStore } from '../dock-manager/useDockStore';
 
@@ -131,6 +132,7 @@ export function ChromeLayout({
             <RightToolbar />
             <MiniMap />
             <NavigationWheel />
+            <PlaneContextMenu />
           </>
         )}
       </div>

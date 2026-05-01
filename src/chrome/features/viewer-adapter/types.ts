@@ -137,14 +137,22 @@ export interface ViewerAdapter {
   subscribeRequestEditPlane?(
     listener: (tool: 'section-plane' | 'section-cut') => void,
   ): () => void;
-  // Active edit-state plane controls — used by the right toolbar's
-  // Flip / Delete buttons. Returns true if a plane was acted on.
+  // Active edit-state plane controls — used by the right-click context
+  // menu's Flip / Delete items. Returns true if a plane was acted on.
   flipActiveSectionPlane?(): boolean;
   deleteActiveSectionPlane?(): boolean;
   hasActiveSectionPlane?(): boolean;
   subscribeActiveSectionPlane?(
     listener: (present: boolean) => void,
   ): () => void;
+  // Right-click on a sectioning plane → context menu request. The viewer
+  // emits screen coords + planeId; the React layer renders the menu.
+  subscribePlaneContextMenu?(
+    listener: (data: { planeId: string; x: number; y: number }) => void,
+  ): () => void;
+  // Tells the engine that the plane context menu is open (true) or closed
+  // (false) so it can suppress the plane hover marker while open.
+  setPlaneContextMenuOpen?(open: boolean): void;
   toggleIsolationMode?(): void;
   toggleSearchSetsPanel?(): void;
   getSearchSets?(): SearchSet[];

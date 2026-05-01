@@ -37,6 +37,7 @@ interface ModelViewerInstance {
     selectByIds(ids: string[]): void;
     deselect(): void;
     setHoverEnabled?(enabled: boolean): void;
+    setContextMenuEnabled?(enabled: boolean): void;
   };
   visibility: {
     showAll(): void;
@@ -67,6 +68,7 @@ interface ModelViewerInstance {
     clearAll(): void;
     flipActivePlane(): boolean;
     deleteActivePlane(): boolean;
+    setPlaneContextMenuOpen(open: boolean): void;
     activeSectionPlaneId: string | null;
     undo(): void;
     redo(): void;
@@ -180,6 +182,9 @@ export function createModelViewerAdapter(
   const sectioningStateListeners = new Set<(active: boolean) => void>();
 
   const emitSectioningState = () => {
+    // Suppress the element-level right-click menu while in sectioning mode —
+    // right-click there is reserved for the plane Flip/Delete menu.
+    viewer.selection.setContextMenuEnabled?.(!sectioningActive);
     for (const listener of sectioningStateListeners) {
       listener(sectioningActive);
     }
@@ -315,6 +320,20 @@ export function createModelViewerAdapter(
       emitActivePlane();
     }
   });
+
+  // ── Right-click on a plane → context menu request relayed to React. ──
+  const planeContextMenuListeners = new Set<
+    (data: { planeId: string; x: number; y: number }) => void
+  >();
+  viewer.sectioning.on(
+    'request-plane-context-menu',
+    (payload?: { planeId?: string; x?: number; y?: number }) => {
+      if (!payload?.planeId || typeof payload.x !== 'number' || typeof payload.y !== 'number') return;
+      for (const listener of planeContextMenuListeners) {
+        listener({ planeId: payload.planeId, x: payload.x, y: payload.y });
+      }
+    },
+  );
 
   // ── Action History Tracking ───────────────────────────────────────
   const actionHistoryListeners = new Set<(s: ActionHistorySummary) => void>();
@@ -492,6 +511,15 @@ export function createModelViewerAdapter(
       return () => {
         activePlaneListeners.delete(listener);
       };
+    },
+    subscribePlaneContextMenu(listener) {
+      planeContextMenuListeners.add(listener);
+      return () => {
+        planeContextMenuListeners.delete(listener);
+      };
+    },
+    setPlaneContextMenuOpen(open: boolean) {
+      viewer.sectioning.setPlaneContextMenuOpen(open);
     },
     isSectioningActive() {
       return sectioningActive;

@@ -15,12 +15,9 @@ import sectioningIcon from '../../assets/icons/right-toolbar/sectioning.svg';
 import sectionBoxIcon from '../../assets/icons/right-toolbar/section-box.svg';
 import sectionPlaneIcon from '../../assets/icons/right-toolbar/section-plane.svg';
 import sectionCutIcon from '../../assets/icons/right-toolbar/section-cut.svg';
-import sectionFlipIcon from '../../assets/icons/right-toolbar/section-flip.svg';
-import sectionDeleteIcon from '../../assets/icons/right-toolbar/section-delete.svg';
 import resetIcon from '../../assets/icons/right-toolbar/reset.svg';
 import undoIcon from '../../assets/icons/right-toolbar/undo.svg';
 import redoIcon from '../../assets/icons/right-toolbar/redo.svg';
-import saveIcon from '../../assets/icons/right-toolbar/save.svg';
 import exitIcon from '../../assets/icons/right-toolbar/exit.svg';
 import markupSelectIcon from '../../assets/icons/right-toolbar/markup-select.svg';
 import markupTextIcon from '../../assets/icons/right-toolbar/markup-text.svg';
@@ -53,9 +50,6 @@ export function RightToolbar() {
   });
   const [activeMeasureTool, setActiveMeasureTool] = useState<'dimensions' | 'point-to-point' | 'laser' | 'manhole' | 'coordinates' | null>(null);
   const [activeSectionTool, setActiveSectionTool] = useState<'section-box' | 'section-plane' | 'section-cut' | null>(null);
-  const [hasActiveSectionPlane, setHasActiveSectionPlane] = useState(
-    () => adapter.hasActiveSectionPlane?.() ?? false,
-  );
   const [activeMarkupTool, setActiveMarkupTool] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [markupColor, setMarkupColor] = useState('#FF0000');
@@ -136,14 +130,6 @@ export function RightToolbar() {
   }, [adapter]);
 
   useEffect(() => {
-    const unsubscribe = adapter.subscribeActiveSectionPlane?.(setHasActiveSectionPlane);
-    if (!unsubscribe) {
-      setHasActiveSectionPlane(adapter.hasActiveSectionPlane?.() ?? false);
-    }
-    return () => unsubscribe?.();
-  }, [adapter]);
-
-  useEffect(() => {
     const unsubscribe = adapter.subscribeRequestEditPlane?.((tool) => {
       exitMarkupIfActive();
       setActiveMode('sectioning');
@@ -179,10 +165,10 @@ export function RightToolbar() {
       if (sourceId === 'mode:sectioning') {
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-box');
+        setActiveSectionTool('section-cut');
         setOpenFlyout(null);
         adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-box');
+        adapter.setActiveSectioningTool?.('section-cut');
         return;
       }
       if (sourceId === 'sectioning:section-box') {
@@ -389,20 +375,25 @@ export function RightToolbar() {
       src: sectioningIcon,
       label: 'Sectioning',
       shortcut: 'X X',
-      onClick: () => setOpenFlyout((prev) => (prev === 'sectioning' ? null : 'sectioning')),
+      onClick: () => {
+        exitMarkupIfActive();
+        setActiveMode('sectioning');
+        setActiveSectionTool('section-cut');
+        setOpenFlyout(null);
+        adapter.setSectioningActive?.(true);
+        adapter.setActiveSectioningTool?.('section-cut');
+      },
       enterMode: () => {
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-box');
+        setActiveSectionTool('section-cut');
         adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-box');
+        adapter.setActiveSectioningTool?.('section-cut');
       },
     },
   ];
 
   const overflowModeButtons = modeButtons.filter((button) => button.id !== activeMode && button.id !== 'create');
-  const isSectioningMode = activeMode === 'sectioning';
-
   // Suppress tooltips on buttons whose tooltip area overlaps the mode toolbar overflow flyout
   const lowerGroupTooltips = showTooltips && !isOverflowOpen;
   // Suppress lower default tooltips only when a lower flyout overlaps them.
@@ -422,7 +413,7 @@ export function RightToolbar() {
       {/* Tools group */}
       <RightToolbarGroup>
         {modeButtons.map((button) => {
-          const hasFlyout = button.id === 'measure' || button.id === 'create' || button.id === 'sectioning';
+          const hasFlyout = button.id === 'measure' || button.id === 'create';
 
           if (button.id === 'measure') {
             return (
@@ -546,37 +537,15 @@ export function RightToolbar() {
 
           if (button.id === 'sectioning') {
             return (
-              <div key={button.id} className="relative">
-                <RightToolbarButton
-                  src={button.src}
-                  label={button.label}
-                  shortcut={button.shortcut}
-                  showTooltip={lowerDefaultTooltips}
-                  hasFlyout
-                  isActive={openFlyout === 'sectioning'}
-                  onClick={button.onClick}
-                />
-                {openFlyout === 'sectioning' && (
-                  <div
-                    className="absolute right-full top-0 mr-2 z-[230] flex flex-col gap-2 w-max"
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      setShowFlyoutTooltips(true);
-                      setShowTooltips(false);
-                    }}
-                    onMouseLeave={() => {
-                      setShowFlyoutTooltips(false);
-                      setShowTooltips(true);
-                    }}
-                  >
-                    <RightToolbarGroup>
-                      <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" showTooltip={showFlyoutTooltips} onClick={() => { exitMarkupIfActive(); setActiveSectionTool('section-box'); setActiveMode('sectioning'); setOpenFlyout(null); adapter.setSectioningActive?.(true); adapter.setActiveSectioningTool?.('section-box'); }} />
-                      <RightToolbarButton src={sectionPlaneIcon} label="Section plane" shortcut="--" showTooltip={showFlyoutTooltips} onClick={() => { exitMarkupIfActive(); setActiveSectionTool('section-plane'); setActiveMode('sectioning'); setOpenFlyout(null); adapter.setSectioningActive?.(true); adapter.setActiveSectioningTool?.('section-plane'); }} />
-                      <RightToolbarButton src={sectionCutIcon} label="Section cut" shortcut="--" showTooltip={showFlyoutTooltips} onClick={() => { exitMarkupIfActive(); setActiveSectionTool('section-cut'); setActiveMode('sectioning'); setOpenFlyout(null); adapter.setSectioningActive?.(true); adapter.setActiveSectioningTool?.('section-cut'); }} />
-                    </RightToolbarGroup>
-                  </div>
-                )}
-              </div>
+              <RightToolbarButton
+                key={button.id}
+                src={button.src}
+                label={button.label}
+                shortcut={button.shortcut}
+                showTooltip={lowerDefaultTooltips}
+                isActive={false}
+                onClick={button.onClick}
+              />
             );
           }
 
@@ -648,7 +617,7 @@ export function RightToolbar() {
     >
       {activeMode === 'default' ? defaultToolbar : (
         <>
-          {/* Save / Exit group */}
+          {/* Save / Exit group — exit is the only path; it always saves. */}
           <RightToolbarGroup>
             <button
               type="button"
@@ -668,40 +637,13 @@ export function RightToolbar() {
                 setActiveMeasureTool(null);
                 setActiveSectionTool(null);
               }}
-              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#C6ECC9] hover:bg-[#aee0b3]"
-            >
-              <img src={saveIcon} alt="" width={24} height={24} />
-              {showTooltips && (
-                <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left" aria-hidden="true">
-                  <span className="mv-toolbar-tooltip-shortcut">Enter</span>
-                  <span className="mv-toolbar-tooltip-label">Save and exit</span>
-                </div>
-              )}
-            </button>
-            <button
-              type="button"
-              aria-label="Clear and exit"
-              onClick={() => {
-                if (activeMode === 'markup' || activeMode === 'create') {
-                  adapter.exitMarkupMode?.(false);
-                  setActiveMarkupTool(null);
-                }
-                if (activeMode === 'sectioning') {
-                  adapter.setActiveSectioningTool?.(null);
-                  adapter.setSectioningActive?.(false);
-                }
-                setActiveMode('default');
-                setIsOverflowOpen(false);
-                setActiveMeasureTool(null);
-                setActiveSectionTool(null);
-              }}
-              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#F7D4DA] hover:bg-[#f0bac5]"
+              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#E3E6E8] hover:bg-[#D6DADC]"
             >
               <img src={exitIcon} alt="" width={24} height={24} />
               {showTooltips && (
                 <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left" aria-hidden="true">
-                  <span className="mv-toolbar-tooltip-shortcut">Esc Esc</span>
-                  <span className="mv-toolbar-tooltip-label">Clear and exit</span>
+                  <span className="mv-toolbar-tooltip-shortcut">Enter</span>
+                  <span className="mv-toolbar-tooltip-label">Save and exit</span>
                 </div>
               )}
             </button>
@@ -715,28 +657,7 @@ export function RightToolbar() {
                 <RightToolbarButton src={sectionPlaneIcon} label="Section plane" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-plane'} onClick={() => { setActiveSectionTool('section-plane'); adapter.setActiveSectioningTool?.('section-plane'); }} />
                 <RightToolbarButton src={sectionCutIcon} label="Section cut" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-cut'} onClick={() => { setActiveSectionTool('section-cut'); adapter.setActiveSectioningTool?.('section-cut'); }} />
               </RightToolbarGroup>
-              {/* Plane actions — separate group, only for plane-based tools.
-                  Disabled until a plane is in edit state. */}
-              {(activeSectionTool === 'section-plane' || activeSectionTool === 'section-cut') && (
-                <RightToolbarGroup>
-                  <RightToolbarButton
-                    src={sectionFlipIcon}
-                    label="Flip plane"
-                    shortcut="F"
-                    showTooltip={showTooltips}
-                    disabled={!hasActiveSectionPlane}
-                    onClick={() => adapter.flipActiveSectionPlane?.()}
-                  />
-                  <RightToolbarButton
-                    src={sectionDeleteIcon}
-                    label="Delete plane"
-                    shortcut="Del"
-                    showTooltip={showTooltips}
-                    disabled={!hasActiveSectionPlane}
-                    onClick={() => adapter.deleteActiveSectionPlane?.()}
-                  />
-                </RightToolbarGroup>
-              )}
+              {/* Flip / Delete now live in the right-click context menu over a plane. */}
             </>
           ) : activeMode === 'measure' ? (
             <RightToolbarGroup>

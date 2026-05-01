@@ -92,6 +92,15 @@ export const mockViewerAdapter: ViewerAdapter = {
       log('unsubscribeRequestEditPlane');
     };
   },
+  subscribePlaneContextMenu(_listener) {
+    log('subscribePlaneContextMenu');
+    return () => {
+      log('unsubscribePlaneContextMenu');
+    };
+  },
+  setPlaneContextMenuOpen(open: boolean) {
+    log('setPlaneContextMenuOpen', open);
+  },
   toggleIsolationMode() {
     log('toggleIsolationMode');
   },

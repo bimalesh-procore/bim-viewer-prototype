@@ -14,6 +14,10 @@ export class Selection {
     this.hoveredElement = null;
     this.hoverEnabled = true;
     this.selectionEnabled = true;
+    // When false, right-click does not open the element context menu.
+    // Used to suppress the element menu while in sectioning mode (the
+    // sectioning plane Flip/Delete menu takes over right-click there).
+    this.contextMenuEnabled = true;
 
     this.highlightColor = new THREE.Color(0x2066df);
 
@@ -232,7 +236,7 @@ export class Selection {
     const wasRightClick = !!this.rightMouseDown && !this.rightMouseMoved;
     this.rightMouseDown = null;
     this.rightMouseMoved = false;
-    if (wasRightClick) {
+    if (wasRightClick && this.contextMenuEnabled) {
       this.openContextMenuAtEvent(event);
     }
   }
@@ -401,6 +405,10 @@ export class Selection {
       this.removeHover(this.hoveredElement);
       this.hoveredElement = null;
     }
+  }
+
+  setContextMenuEnabled(enabled) {
+    this.contextMenuEnabled = !!enabled;
   }
 
   setSelectionEnabled(enabled) {

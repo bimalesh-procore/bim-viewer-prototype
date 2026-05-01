@@ -83,22 +83,34 @@ export function RightToolbar() {
   };
 
   useEffect(() => {
-    const labelByMode: Record<ModeId, string> = {
-      default: '',
-      markup: 'Markup',
-      measure: 'Measure',
-      create: 'Create',
-      sectioning: 'Sectioning',
-    };
+    let label: string;
+    if (activeMode === 'sectioning') {
+      const subLabel: Record<string, string> = {
+        'section-plane': 'Sectioning: Plane',
+        'section-cut': 'Sectioning: Cut',
+        'section-box': 'Sectioning: Box',
+      };
+      label = (activeSectionTool && subLabel[activeSectionTool]) || 'Sectioning';
+    } else {
+      const labelByMode: Record<ModeId, string> = {
+        default: '',
+        markup: 'Markup',
+        measure: 'Measure',
+        create: 'Create',
+        sectioning: 'Sectioning',
+      };
+      label = labelByMode[activeMode];
+    }
     window.dispatchEvent(
       new CustomEvent('mv:mode-identifier', {
         detail: {
           mode: activeMode,
-          label: labelByMode[activeMode],
+          label,
+          subTool: activeMode === 'sectioning' ? (activeSectionTool ?? null) : null,
         },
       }),
     );
-  }, [activeMode]);
+  }, [activeMode, activeSectionTool]);
 
   useEffect(() => {
     const unsubscribe = adapter.subscribeActionHistory?.(setActionHistory);

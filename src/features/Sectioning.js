@@ -169,6 +169,32 @@ export class Sectioning {
     const overlayParent = this.domElement.parentElement || this.domElement;
     overlayParent.appendChild(this.scissorsOverlay);
 
+    // Blue pill tooltip that appears beside the section-cut cursor and fades
+    // after 5 s to tell the user about the Command+R rotate shortcut.
+    this._rotatePill = document.createElement('div');
+    this._rotatePill.textContent = 'Rotate: Command + R';
+    Object.assign(this._rotatePill.style, {
+      position: 'absolute',
+      pointerEvents: 'none',
+      zIndex: '999',
+      background: 'rgba(31, 111, 235, 0.8)',
+      color: '#fff',
+      fontSize: '12px',
+      fontWeight: '500',
+      fontFamily: 'system-ui, sans-serif',
+      padding: '4px 10px',
+      borderRadius: '999px',
+      whiteSpace: 'nowrap',
+      display: 'none',
+      opacity: '1',
+      transition: 'opacity 1s ease',
+    });
+    overlayParent.appendChild(this._rotatePill);
+    this._rotatePillVisible = false;        // whether it is currently shown
+    this._rotatePillTimer = null;           // setTimeout handle for the 5-s hold
+    this._rotatePillShownForSession = false; // reset each time section-cut is activated
+    this._rotatePillDone = false;           // true once the fade has fully completed
+
     this.init();
   }
 
@@ -188,6 +214,12 @@ export class Sectioning {
     // fresh entry into the tool always starts at the unrotated default.
     if (prevTool === 'section-cut' && tool !== 'section-cut') {
       this._cutRotationAngle = 0;
+      this._hideRotatePill();
+    }
+    // Re-arm the rotate pill whenever the user activates section-cut so
+    // it shows again on the first surface hover of each tool session.
+    if (tool === 'section-cut' && prevTool !== 'section-cut') {
+      this._rotatePillShownForSession = false;
     }
     // Both section-plane and section-cut share the same post-commit edit
     // state. When leaving either tool, drop the active plane back to its
@@ -388,6 +420,7 @@ export class Sectioning {
       normal: normal.clone().normalize(),
       point: point.clone(),
       helper, enabled: true, visible: true,
+      creatorTool: opts.creatorTool || 'section-plane'
     });
     this.updateRendererClipPlanes();
     this.emit('plane-add', { id, plane, normal, point });
@@ -425,7 +458,8 @@ export class Sectioning {
       point: point.clone(),
       helper,
       enabled: true,
-      visible: true
+      visible: true,
+      creatorTool: opts.creatorTool || 'section-plane'
     });
 
     // Update renderer clipping planes
@@ -1444,10 +1478,71 @@ export class Sectioning {
     // the hover point so it never touches the top crosshair arm.
     this.scissorsOverlay.style.top = `${y - 52}px`;
     this.scissorsOverlay.style.display = 'block';
+
+    // Keep the rotate pill tracking the cursor (16px right of the scissor icon).
+    if (this._rotatePill) {
+      this._rotatePill.style.left = `${x + 16}px`;
+      // Vertically centred on the scissor icon.
+      this._rotatePill.style.top = `${y - 52}px`;
+
+      // Show the pill the first time the cursor lands on a surface in this
+      // section-cut session, then let it run its 5-s hold + 1-s fade.
+      if (!this._rotatePillShownForSession) {
+        // First surface hit this session — arm the pill.
+        this._rotatePillShownForSession = true;
+        this._rotatePillDone = false;
+        this._rotatePill.style.display = 'block';
+        this._rotatePill.style.opacity = '1';
+        this._rotatePill.style.transition = 'none';
+        this._rotatePillVisible = true;
+
+        clearTimeout(this._rotatePillTimer);
+        this._rotatePillTimer = setTimeout(() => {
+          // Start 1-s fade-out.
+          this._rotatePill.style.transition = 'opacity 1s ease';
+          this._rotatePill.style.opacity = '0';
+          this._rotatePillTimer = setTimeout(() => {
+            this._rotatePill.style.display = 'none';
+            this._rotatePillVisible = false;
+            this._rotatePillDone = true;
+          }, 1000);
+        }, 5000);
+      } else if (!this._rotatePillDone) {
+        // Session active but pill was temporarily hidden during camera rotation —
+        // restore it now that the cursor is back on a surface.
+        this._rotatePill.style.display = 'block';
+        this._rotatePill.style.transition = 'none';
+        this._rotatePill.style.opacity = '1';
+        this._rotatePillVisible = true;
+      }
+    }
   }
 
   _hideScissorsOverlay() {
     if (this.scissorsOverlay) this.scissorsOverlay.style.display = 'none';
+    // Hide the pill instantly while the cursor is off a surface (e.g. camera
+    // rotation). It will reappear when the cursor returns to a surface,
+    // unless the fade has already completed.
+    if (this._rotatePill && this._rotatePillVisible && !this._rotatePillDone) {
+      this._rotatePill.style.transition = 'none';
+      this._rotatePill.style.opacity = '0';
+      this._rotatePill.style.display = 'none';
+      this._rotatePillVisible = false;
+      // Note: we do NOT clear _rotatePillTimer — the countdown keeps running
+      // so the total on-screen time doesn't extend each time the user rotates.
+    }
+  }
+
+  _hideRotatePill() {
+    if (!this._rotatePill) return;
+    clearTimeout(this._rotatePillTimer);
+    this._rotatePillTimer = null;
+    this._rotatePill.style.transition = 'none';
+    this._rotatePill.style.opacity = '0';
+    this._rotatePill.style.display = 'none';
+    this._rotatePillVisible = false;
+    this._rotatePillShownForSession = false;
+    this._rotatePillDone = false;
   }
 
   /**
@@ -1701,12 +1796,10 @@ export class Sectioning {
     const planeData = this.clipPlanes.get(planeId);
     if (!planeData) return;
 
-    // Preserve the user's active tool. Both section-plane and section-cut
-    // share the same edit state, so clicking the wedge icon should stay
-    // in whichever sectioning tool the user is in. Only force a default
-    // tool (section-plane) when the user is outside any sectioning tool.
+    // When outside sectioning mode, switch to whichever tool created this plane.
+    // When already in sectioning mode, preserve the tool the user is currently on.
     if (this.activeTool !== 'section-plane' && this.activeTool !== 'section-cut') {
-      this.setActiveTool('section-plane');
+      this.setActiveTool(planeData.creatorTool || 'section-plane');
     }
 
     this._editSectionPlane(planeId);
@@ -2003,6 +2096,7 @@ export class Sectioning {
 
     const mesh = new THREE.Mesh(geo, mat);
     mesh.renderOrder = 997;
+    mesh.userData.isPlaneContourFill = true;
     return mesh;
   }
 
@@ -2415,7 +2509,7 @@ export class Sectioning {
         const inwardNormal = this._resolveInwardSectionPlaneNormal(hit.point, hitNormal);
         const outwardNormal = inwardNormal.clone().negate();
         const placementPoint = this._getSectionPlanePlacementPoint(hit.point, inwardNormal);
-        const planeId = this.addClipPlane(outwardNormal, placementPoint);
+        const planeId = this.addClipPlane(outwardNormal, placementPoint, { creatorTool: 'section-plane' });
         this._setActiveSectionPlane(planeId);
         // No contour build here — _beginPlaneDrag will be cleared anyway, and
         // mouseup rebuilds it. If the user clicks without dragging, mouseup
@@ -2431,7 +2525,7 @@ export class Sectioning {
         // contour drawn) — identical to section-plane's post-placement
         // flow. The next placement will drop this plane to default.
         const cutNormal = this._computeSectionCutNormal(hitNormal);
-        const planeId = this.addClipPlane(cutNormal, hit.point);
+        const planeId = this.addClipPlane(cutNormal, hit.point, { creatorTool: 'section-cut' });
         this._setActiveSectionPlane(planeId);
         this._buildActivePlaneContour();
         this.clearCutHoverMarker();
@@ -2611,6 +2705,63 @@ export class Sectioning {
       bounds.getSize(_bSize);
       const nearPlaneThreshold = Math.max(_bSize.x, _bSize.y, _bSize.z) * 0.02;
 
+      // ── Edit-state plane ──
+      // Raycast against the green fill mesh of the active plane's contour.
+      // The fill mesh is exactly the green rectangle the user sees, so the
+      // drag arrow only shows when the cursor is inside that green area.
+      // Outside it, fall through to normal placement cursor behaviour.
+      if (this.activeSectionPlaneId && this._activePlaneContour) {
+        const activePd = this.clipPlanes.get(this.activeSectionPlaneId);
+        if (activePd) {
+          const fillMeshes = [];
+          this._activePlaneContour.traverse(obj => {
+            if (obj.isMesh && obj.userData.isPlaneContourFill) fillMeshes.push(obj);
+          });
+
+          if (fillMeshes.length > 0) {
+            const fillHits = this.raycaster.intersectObjects(fillMeshes, false);
+            if (fillHits.length > 0) {
+              const dFill = fillHits[0].distance;
+
+              // Check if any visible model geometry is closer (in front of the fill).
+              // The fill has depthTest:false so it registers hits through geometry;
+              // we only want the drag arrow when the plane face is the frontmost thing.
+              const modelMeshesForFill = [];
+              this.scene.traverse(obj => {
+                if (obj.isMesh && obj.visible &&
+                    !obj.userData.isPlaneHelper &&
+                    !obj.userData.isTiltGizmo &&
+                    !obj.userData.isPlaneContourFill) {
+                  modelMeshesForFill.push(obj);
+                }
+              });
+              const nearerModelHits = this.raycaster
+                .intersectObjects(modelMeshesForFill, false)
+                .filter(h => h.distance < dFill - 0.01);
+
+              if (nearerModelHits.length === 0) {
+                // Nothing in front of the plane — cursor is on the plane face.
+                const mathPlane = new THREE.Plane();
+                mathPlane.setFromNormalAndCoplanarPoint(activePd.normal, activePd.point);
+                const planeHit = new THREE.Vector3();
+                if (this.raycaster.ray.intersectPlane(mathPlane, planeHit)) {
+                  this.clearCutHoverMarker();
+                  this._removeCutSurfaceHighlight();
+                  this.clearHoverHighlight();
+                  this.setPlaneHoverMarker(planeHit, activePd.normal);
+                  this._setCursor('none');
+                  return;
+                }
+              }
+              // Model geometry is closer — fall through to normal placement logic.
+            }
+            // Cursor is outside the green area — fall through to normal placement logic.
+          }
+        }
+      }
+
+      // ── No plane in edit state (or cursor is outside the green plane area). ──
+
       const modelMeshes = [];
       this.scene.traverse(obj => {
         if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isTiltGizmo) {
@@ -2620,62 +2771,6 @@ export class Sectioning {
       const rawHits = this.raycaster.intersectObjects(modelMeshes, false);
       const modelHits = this._filterClippedHits(rawHits);
 
-      // ── Edit-state plane: show drag cursor near the active plane's cut ──
-      // This branch is now tool-agnostic. A plane in edit state behaves
-      // identically under section-plane and section-cut: hovering its
-      // cut shows the drag arrow, hovering anywhere else shows the
-      // tool's placement cursor.
-      if (this.activeSectionPlaneId) {
-        const activePd = this.clipPlanes.get(this.activeSectionPlaneId);
-        if (activePd) {
-          if (modelHits.length > 0) {
-            const mathPlane = new THREE.Plane();
-            mathPlane.setFromNormalAndCoplanarPoint(activePd.normal, activePd.point);
-            const distToPlane = Math.abs(mathPlane.distanceToPoint(modelHits[0].point));
-
-            if (distToPlane < nearPlaneThreshold) {
-              // Near the active plane's cut — show drag cursor locked to plane angle
-              const planeHit = new THREE.Vector3();
-              if (this.raycaster.ray.intersectPlane(mathPlane, planeHit)) {
-                this.clearCutHoverMarker();
-                this._removeCutSurfaceHighlight();
-                this.clearHoverHighlight();
-                this.setPlaneHoverMarker(planeHit, activePd.normal);
-                this._setCursor('none');
-                return;
-              }
-            } else {
-              // Over model but NOT near active plane — show the placement
-              // cursor / surface highlight for whichever tool is active.
-              const surfNormal = this.getWorldNormalFromHit(modelHits[0]);
-              if (surfNormal) {
-                this.clearHoverHighlight();
-                if (isSectionPlane) {
-                  this.clearCutHoverMarker();
-                  this._applyCutSurfaceHighlight(modelHits[0], this._planeHoverMaterial);
-                  this.setPlaneHoverMarker(modelHits[0].point, surfNormal);
-                } else {
-                  this.clearPlaneHoverMarker();
-                  this._applyCutSurfaceHighlight(modelHits[0], this._cutHoverMaterial);
-                  this.setCutHoverMarker(modelHits[0].point, surfNormal);
-                }
-                this._setCursor('none');
-                return;
-              }
-            }
-          }
-
-          // Mouse is over empty space — standard cursor
-          this.clearPlaneHoverMarker();
-          this.clearCutHoverMarker();
-          this._removeCutSurfaceHighlight();
-          this.clearHoverHighlight();
-          this._setCursor('');
-          return;
-        }
-      }
-
-      // ── No plane in edit state. ──
       // First, if the cursor is near any committed default-state plane,
       // surface the drag arrow (mousedown will enter edit + drag in one
       // step). This unifies "click near a cut to start moving it" across
@@ -2929,6 +3024,10 @@ export class Sectioning {
 
     if (this.scissorsOverlay && this.scissorsOverlay.parentElement) {
       this.scissorsOverlay.parentElement.removeChild(this.scissorsOverlay);
+    }
+    if (this._rotatePill && this._rotatePill.parentElement) {
+      clearTimeout(this._rotatePillTimer);
+      this._rotatePill.parentElement.removeChild(this._rotatePill);
     }
 
     this.scene.remove(this.helpersGroup);

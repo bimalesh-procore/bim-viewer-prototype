@@ -1191,6 +1191,73 @@ export class Sectioning {
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
   }
 
+  _showToast(message) {
+    // Inject slide-up keyframe once
+    if (!document.getElementById('_sectionToastStyles')) {
+      const style = document.createElement('style');
+      style.id = '_sectionToastStyles';
+      style.textContent = `
+        @keyframes _toastSlideUp {
+          from { transform: translateY(40px); opacity: 0; }
+          to   { transform: translateY(0);    opacity: 1; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // Full-width fixed container handles centering — no transform conflict with
+    // the slide-up animation which only moves in Y.
+    const container = document.createElement('div');
+    Object.assign(container.style, {
+      position:       'fixed',
+      bottom:         '16px',
+      left:           '0',
+      right:          '0',
+      display:        'flex',
+      justifyContent: 'center',
+      zIndex:         '99999',
+      pointerEvents:  'none',
+    });
+
+    const toast = document.createElement('div');
+    Object.assign(toast.style, {
+      display:      'flex',
+      alignItems:   'center',
+      gap:          '10px',
+      padding:      '12px 20px',
+      borderRadius: '10px',
+      background:   '#C0392B',
+      color:        '#fff',
+      fontSize:     '14px',
+      fontWeight:   '500',
+      fontFamily:   'system-ui, sans-serif',
+      boxShadow:    '0 4px 20px rgba(0,0,0,0.35)',
+      whiteSpace:   'nowrap',
+      animation:    '_toastSlideUp 0.28s cubic-bezier(0.22,1,0.36,1) forwards',
+    });
+
+    const icon = document.createElement('span');
+    icon.textContent = '⚠';
+    icon.style.fontSize = '16px';
+    toast.appendChild(icon);
+
+    const text = document.createElement('span');
+    text.textContent = message;
+    toast.appendChild(text);
+
+    container.appendChild(toast);
+    document.body.appendChild(container);
+
+    // After 5 s: transition opacity 0→1 then remove
+    const DISPLAY_MS = 5000;
+    const FADE_MS    = 400;
+    setTimeout(() => {
+      toast.style.transition = `opacity ${FADE_MS}ms ease`;
+      toast.style.opacity    = '0';
+      setTimeout(() => container.remove(), FADE_MS);
+    }, DISPLAY_MS);
+  }
+
   _loadGizmoArrowTexture() {
     // Draws the two polygon arrows (top full opacity, bottom 40% dim) onto a
     // 128×128 canvas so they can be used as a billboard sprite on the gizmo ring.
@@ -1489,7 +1556,7 @@ export class Sectioning {
 
     const greenMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 1.0, toneMapped: false });
     const blackFillMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x000000, opacity: 0.1 });
-    const darkMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x194d1e, opacity: 1.0 });
+    const darkMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 1.0, toneMapped: false });
 
     const innerDotR = innerR * 0.5;
 
@@ -1558,11 +1625,6 @@ export class Sectioning {
       sprite.material.rotation = -Math.atan2(dx, dy);
     }
 
-    // Oscillate the sprite along the local Z axis (surface normal direction)
-    const baseZ = this.planeHoverMarker.userData._spriteBaseZ ?? sprite.position.z;
-    this.planeHoverMarker.userData._spriteBaseZ = baseZ;
-    const amplitude = this.planeHoverMarker.userData._outerR * 0.18;
-    sprite.position.z = baseZ + Math.sin(performance.now() * 0.004) * amplitude;
   }
 
   clearCutHoverMarker() {
@@ -3089,6 +3151,12 @@ export class Sectioning {
       const bSize = new THREE.Vector3();
       bounds.getSize(bSize);
       const threshold = Math.max(bSize.x, bSize.y, bSize.z) * 0.02;
+
+      // Enforce 3-plane maximum
+      if (this.clipPlanes.size >= 3) {
+        this._showToast('No more than 3 section planes can be created');
+        return;
+      }
 
       // Click is on model → create a new plane. The gizmo appears immediately;
       // dragging is initiated only by clicking the gizmo, not by this click.

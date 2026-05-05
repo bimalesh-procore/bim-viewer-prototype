@@ -672,6 +672,7 @@ export class Sectioning {
     const quaternion = new THREE.Quaternion();
     quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
     group.quaternion.copy(quaternion);
+
     return group;
   }
 
@@ -1944,6 +1945,7 @@ export class Sectioning {
       if (gizmoData?.currentPos) {
         gizmoData.dragStartPos = gizmoData.currentPos.clone();
       }
+      this._selectSectionPlane(planeId);
       this._beginPlaneDrag(planeId, startPt);
       el.style.cursor = 'grabbing';
 
@@ -2091,7 +2093,7 @@ export class Sectioning {
 
     const matOpts = { transparent: true, side: THREE.DoubleSide, depthTest: false, depthWrite: false, clippingPlanes: [] };
     const strokeMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 1.0, toneMapped: false });
-    const fillMat   = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 0.20, toneMapped: false });
+    const fillMat   = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x000000, opacity: 0.30, toneMapped: false });
     const dotMat    = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 1.0, toneMapped: false });
 
     // Unit-radius geometry — scaled every frame based on camera distance
@@ -2188,7 +2190,8 @@ export class Sectioning {
       dMat.needsUpdate = true;
     }
 
-    fMat.opacity = isSelected ? 0.5 : 0.20;
+    fMat.color.set(isSelected ? 0x45CC5F : 0x000000);
+    fMat.opacity = isSelected ? 0.5 : 0.30;
     fMat.needsUpdate = true;
   }
 
@@ -2436,7 +2439,10 @@ export class Sectioning {
         if (visible) {
           data.ring3D.position.copy(gizmoWorld);
           const camDist = camPos.distanceTo(gizmoWorld);
-          const r = camDist * 0.036;
+          // Zone 1 (close):    r = camDist * 0.036  → constant screen-space size
+          // Zone 2 (mid):      r = 8 world units     → shrinks on screen with model
+          // Zone 3 (far out):  r = camDist * 0.009  → minimum screen-space size (~25% of normal)
+          const r = Math.max(Math.min(camDist * 0.036, 8), camDist * 0.009);
           data.ring3D.scale.setScalar(r);
 
           // ── Screen-space hover detection ─────────────────────────────────
@@ -2466,10 +2472,12 @@ export class Sectioning {
             ? data._ringAnimScale + (targetScale - data._ringAnimScale) * 0.18
             : targetScale;
           const as = data._ringAnimScale;
-          const rStroke = data.ring3D.userData._ringStroke;
-          const rFill   = data.ring3D.userData._ringFill;
+          const rStroke  = data.ring3D.userData._ringStroke;
+          const rFill    = data.ring3D.userData._ringFill;
+          const rDot     = data.ring3D.userData._centerDot;
           if (rStroke) rStroke.scale.setScalar(as);
           if (rFill)   rFill.scale.setScalar(as);
+          if (rDot)    rDot.scale.setScalar(as);
 
           // ── Rotate arrow sprite to align with projected plane normal ─────
           const arrowSprite = data.ring3D.userData._arrowSprite;
@@ -3064,6 +3072,19 @@ export class Sectioning {
       const hitNormal = this.getWorldNormalFromHit(hit);
       if (!hitNormal) return;
 
+      // Mirror the onMouseMove suppression: don't create a plane where the
+      // create-plane cursor isn't shown (inside the cut area or on the cut face).
+      if (this.clipPlanes.size > 0) {
+        const hitPt = hit.point;
+        const hiddenBehindCut = rawHits.length > 0 &&
+          rawHits[0].distance < visibleHits[0].distance - 0.05;
+        let onCutFace = false;
+        for (const [, pd] of this.clipPlanes) {
+          if (pd.plane.distanceToPoint(hitPt) < 0.4) { onCutFace = true; break; }
+        }
+        if (hiddenBehindCut || onCutFace) return;
+      }
+
       const bounds = this.getSceneBounds();
       const bSize = new THREE.Vector3();
       bounds.getSize(bSize);
@@ -3305,7 +3326,37 @@ export class Sectioning {
       const modelHits = this._filterClippedHits(rawHits);
 
       if (modelHits.length > 0) {
+        const hitPt  = modelHits[0].point;
         const normal = this.getWorldNormalFromHit(modelHits[0]);
+
+        if (this.clipPlanes.size > 0) {
+          // PRIMARY CHECK — "visible only through the cut"
+          // If rawHits[0] (closest geometry regardless of clipping) is meaningfully closer
+          // than modelHits[0] (closest visible geometry), there is clipped material between
+          // the camera and the surface we hit.  That surface is only visible because the
+          // section removed what was in front of it — default cursor, no new plane here.
+          const hiddenBehindCut = rawHits.length > 0 &&
+            rawHits[0].distance < modelHits[0].distance - 0.05;
+
+          // SECONDARY CHECK — "we're right at the cut face"
+          // A straddling triangle whose visible side lands < 0.4 m from the plane is the
+          // actual cross-section surface.  rawHits[0] === modelHits[0] in this case so the
+          // primary check won't fire; catch it here.
+          let onCutFace = false;
+          for (const [, pd] of this.clipPlanes) {
+            if (pd.plane.distanceToPoint(hitPt) < 0.4) { onCutFace = true; break; }
+          }
+
+          if (hiddenBehindCut || onCutFace) {
+            this.clearCutHoverMarker();
+            this.clearPlaneHoverMarker();
+            this._removeCutSurfaceHighlight();
+            this.clearHoverHighlight();
+            this._setCursor('');
+            return;
+          }
+        }
+
         if (normal) {
           this.clearHoverHighlight();
           this._applyCutSurfaceHighlight(

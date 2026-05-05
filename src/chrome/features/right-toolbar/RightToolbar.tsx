@@ -20,8 +20,6 @@ import sectionDeleteIcon from '../../assets/icons/right-toolbar/section-delete.s
 import resetIcon from '../../assets/icons/right-toolbar/reset.svg';
 import undoIcon from '../../assets/icons/right-toolbar/undo.svg';
 import redoIcon from '../../assets/icons/right-toolbar/redo.svg';
-import saveIcon from '../../assets/icons/right-toolbar/save.svg';
-import exitIcon from '../../assets/icons/right-toolbar/exit.svg';
 import markupSelectIcon from '../../assets/icons/right-toolbar/markup-select.svg';
 import markupTextIcon from '../../assets/icons/right-toolbar/markup-text.svg';
 import markupLineIcon from '../../assets/icons/right-toolbar/markup-line.svg';
@@ -648,7 +646,7 @@ export function RightToolbar() {
     >
       {activeMode === 'default' ? defaultToolbar : (
         <>
-          {/* Save / Exit group */}
+          {/* Exit group */}
           <RightToolbarGroup>
             <button
               type="button"
@@ -668,40 +666,17 @@ export function RightToolbar() {
                 setActiveMeasureTool(null);
                 setActiveSectionTool(null);
               }}
-              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#C6ECC9] hover:bg-[#aee0b3]"
+              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#E3E6E8] hover:bg-[#D6DADC]"
             >
-              <img src={saveIcon} alt="" width={24} height={24} />
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <g transform="translate(3 3)">
+                  <path d="M11.3686 9.00025L18.0003 2.36856L15.6317 0L9 6.63169L2.36856 0.000253665L0 2.36881L6.63144 9.00025L0 15.6317L2.36856 18.0003L9 11.3688L15.6317 18.0005L18.0003 15.6319L11.3686 9.00025Z" fill="#232729"/>
+                </g>
+              </svg>
               {showTooltips && (
                 <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left" aria-hidden="true">
                   <span className="mv-toolbar-tooltip-shortcut">Enter</span>
                   <span className="mv-toolbar-tooltip-label">Save and exit</span>
-                </div>
-              )}
-            </button>
-            <button
-              type="button"
-              aria-label="Clear and exit"
-              onClick={() => {
-                if (activeMode === 'markup' || activeMode === 'create') {
-                  adapter.exitMarkupMode?.(false);
-                  setActiveMarkupTool(null);
-                }
-                if (activeMode === 'sectioning') {
-                  adapter.setActiveSectioningTool?.(null);
-                  adapter.setSectioningActive?.(false);
-                }
-                setActiveMode('default');
-                setIsOverflowOpen(false);
-                setActiveMeasureTool(null);
-                setActiveSectionTool(null);
-              }}
-              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#F7D4DA] hover:bg-[#f0bac5]"
-            >
-              <img src={exitIcon} alt="" width={24} height={24} />
-              {showTooltips && (
-                <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left" aria-hidden="true">
-                  <span className="mv-toolbar-tooltip-shortcut">Esc Esc</span>
-                  <span className="mv-toolbar-tooltip-label">Clear and exit</span>
                 </div>
               )}
             </button>
@@ -760,7 +735,8 @@ export function RightToolbar() {
             </RightToolbarGroup>
           )}
 
-          <RightToolbarGroup>
+          {/* More-tools group — hidden, restore by removing the outer div */}
+          <div style={{ display: 'none' }}><RightToolbarGroup>
             {activeMode !== 'measure' && activeMode !== 'sectioning' && (
               <div className="relative">
                 <button
@@ -852,7 +828,7 @@ export function RightToolbar() {
                 </div>
               )}
             </div>
-          </RightToolbarGroup>
+          </RightToolbarGroup></div>
 
           <RightToolbarGroup>
             <RightToolbarButton src={resetIcon} label="Reset" shortcut="Ctrl + R" showTooltip={lowerGroupTooltips} onClick={() => adapter.resetView()} />

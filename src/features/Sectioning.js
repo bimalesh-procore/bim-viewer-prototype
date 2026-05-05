@@ -56,12 +56,6 @@ export class Sectioning {
     this.boundOnMouseDown = this.onMouseDown.bind(this);
     this.boundOnMouseMove = this.onMouseMove.bind(this);
     this.boundOnMouseUp = this.onMouseUp.bind(this);
-    this.boundOnContextMenu = this.onContextMenu.bind(this);
-
-    // True while the React plane context menu (Flip/Delete) is open over a
-    // plane. When set, the plane hover marker is suppressed so the user gets
-    // a normal cursor over the menu itself.
-    this._planeContextMenuOpen = false;
 
     // Cached scene bounds for plane sizing
     this.sceneBounds = null;
@@ -76,8 +70,8 @@ export class Sectioning {
     // Section-cut placement-cursor + section-plane edit-state markers.
     // The rotation-authoring and persistent-contour systems were removed —
     // every committed plane (regardless of which tool placed it) is owned by
-    // the shared Section Plane post-commit machinery (_planeOverlays,
-    // _setSectionPlaneDefault, _editSectionPlane, drag-to-translate).
+    // the shared Section Plane post-commit machinery (_planeGizmos,
+    // _setSectionPlaneDefault, _showPlaneGizmo, drag-to-translate).
     this.cutHoverMarker = null;          // crosshair/scissor cursor for section-cut placement
     this.planeHoverMarker = null;        // drag-arrow cursor for hovering committed planes
     this._cutSurfaceHighlight = null;    // overlay mesh for hovered surface
@@ -90,15 +84,17 @@ export class Sectioning {
       depthWrite: false,
       depthTest: false,
       clippingPlanes: [],
+      toneMapped: false,
     });
     this._planeHoverMaterial = new THREE.MeshBasicMaterial({
-      color: 0x56ff77,
+      color: 0x00a8ff,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.3,
       side: THREE.DoubleSide,
       depthWrite: false,
       depthTest: false,
       clippingPlanes: [],
+      toneMapped: false,
     });
 
     this.boundOnKeyDown = this.onKeyDown.bind(this);
@@ -107,11 +103,14 @@ export class Sectioning {
     this._arrowSpriteTexture = null;
     this._loadArrowSpriteTexture();
 
-    // Plane hover marker scale state — driven by setPlaneHoverMarker's scale
-    // opt and lerped each tick toward the target so the cursor smoothly grows
-    // from placement-preview size (1x) to adjust-existing-plane size (4x).
-    this._planeHoverScale = 1;
-    this._planeHoverScaleTarget = 1;
+    this._gizmoArrowTexture = null;
+    this._loadGizmoArrowTexture();
+
+    // Spring-back state — used to elastically return a plane to bounds after
+    // an overshot drag release.
+    this._springPlaneId  = null;
+    this._springTargetD  = 0;   // target projection onto plane normal (world)
+    this._springVelocity = 0;
 
     // Section-cut placement preview line.
     // Shows a green line on the hovered surface indicating where the cut
@@ -123,16 +122,12 @@ export class Sectioning {
     this._lastCutHover = null;           // { point, normal } cached so 'r' can re-apply without a mousemove
 
     // Section-plane default-state overlays (ring-with-arrows icon per set plane)
-    this._planeOverlays = new Map(); // planeId → { el, worldPos }
-    this._hoveringPlaneEditIcon = false;
+    this._planeGizmos = new Map(); // planeId → { el, centroid }
+    this._hoveringPlaneGizmo = false;
+    this._hoveredPlaneId = null;  // which gizmo is under the cursor right now
 
     // Live contour outline + fill for the active edit-state section plane
-    // Rendered in a separate THREE.Scene to bypass global clipping planes.
-    // The contour scene is still built when the flag is off so the front-face
-    // hit test for the drag-arrow hover still has a fill mesh to raycast
-    // against — only the visible draw call is skipped. Set to true to bring
-    // the green stroke + fill back.
-    this._planeContourVisible = false;
+    // Rendered in a separate THREE.Scene to bypass global clipping planes
     this._activePlaneContour = null;
     this._activePlaneContourPlaneId = null;
     // rAF id for coalescing contour rebuilds during drag — prevents stacking
@@ -147,6 +142,8 @@ export class Sectioning {
     this._redoStack = [];
     this._skipRecord = false;
     this._dragCumulativeDistance = 0;
+    this._dragMinD = null;  // model AABB min projection onto drag normal (set per drag)
+    this._dragMaxD = null;  // model AABB max projection onto drag normal
 
     // ── Tilt gizmo (2-axis section plane tilt control) ──────────────
     // Tunable constants — adjust these to change gizmo feel
@@ -189,7 +186,7 @@ export class Sectioning {
     // Blue pill tooltip that appears beside the section-cut cursor and fades
     // after 5 s to tell the user about the Command+R rotate shortcut.
     this._rotatePill = document.createElement('div');
-    this._rotatePill.textContent = 'Rotate: Command + R';
+    this._rotatePill.textContent = 'Rotate: R';
     Object.assign(this._rotatePill.style, {
       position: 'absolute',
       pointerEvents: 'none',
@@ -238,20 +235,32 @@ export class Sectioning {
     if (tool === 'section-cut' && prevTool !== 'section-cut') {
       this._rotatePillShownForSession = false;
     }
-    // Both section-plane and section-cut share the same post-commit edit
-    // state. When leaving either tool, drop the active plane back to its
-    // default (icon-only) visual.
     const isSectioningTool = tool === 'section-plane' || tool === 'section-cut';
     if (!isSectioningTool) {
-      if (this.activeSectionPlaneId) {
-        this._setSectionPlaneDefault(this.activeSectionPlaneId);
-      }
-      this.activeSectionPlaneId = null;
-      this._refreshSectionPlaneActiveVisuals();
+      // Leaving sectioning mode — hide all plane helpers and gizmos.
+      this._detachTiltGizmo();
       this._clearActivePlaneContour();
-    }
-    for (const [, data] of this._planeOverlays) {
-      if (data.el) data.el.style.display = 'flex';
+      this._selectSectionPlane(null);
+      for (const [, pd] of this.clipPlanes) {
+        if (pd.helper) pd.helper.visible = false;
+      }
+      for (const [, gizmoData] of this._planeGizmos) {
+        if (gizmoData.el) gizmoData.el.style.display = 'none';
+        if (gizmoData.ring3D) gizmoData.ring3D.visible = false;
+      }
+    } else {
+      // Entering (or switching within) sectioning mode — ensure all planes
+      // and their gizmos are visible.
+      for (const [planeId, pd] of this.clipPlanes) {
+        if (pd.helper) pd.helper.visible = true;
+        if (!this._planeGizmos.has(planeId)) {
+          const centroid = this._computeCrossSectionCentroid(pd.plane) || pd.point.clone();
+          const gizmo = this._createPlaneGizmo(planeId, centroid);
+          this._planeGizmos.set(planeId, gizmo);
+        }
+        const gizmoData = this._planeGizmos.get(planeId);
+        if (gizmoData?.el) gizmoData.el.style.display = 'flex';
+      }
     }
 
     // Attach/detach keyboard listener for section-plane/section-cut shortcuts.
@@ -261,15 +270,6 @@ export class Sectioning {
     }
     if (isSectioningTool && !prevWasSectioning) {
       document.addEventListener('keydown', this.boundOnKeyDown);
-      // Entering sectioning: every existing plane should feel like it's
-      // already in edit state. Auto-promote the most recently added plane
-      // so the fill-mesh hover path is live for it on the very first move.
-      // Hovering near any other plane still picks it up via the default
-      // proximity check + onMouseDown (which begins a drag immediately).
-      if (!this.activeSectionPlaneId && this.clipPlanes.size > 0) {
-        const lastPlaneId = [...this.clipPlanes.keys()].pop();
-        if (lastPlaneId) this._editSectionPlane(lastPlaneId);
-      }
     }
 
     if (this._onToolChange) this._onToolChange(tool);
@@ -347,16 +347,50 @@ export class Sectioning {
 
   init() {
     this.domElement.addEventListener('mousedown', this.boundOnMouseDown);
-    this.domElement.addEventListener('mousemove', this.boundOnMouseMove);
+    // Use window capture so onMouseMove fires even when the cursor is over a
+    // sibling overlay element (e.g. a plane gizmo div) rather than the canvas.
+    window.addEventListener('mousemove', this.boundOnMouseMove, { capture: true });
     this.domElement.addEventListener('mouseup', this.boundOnMouseUp);
-    this.domElement.addEventListener('contextmenu', this.boundOnContextMenu);
 
     // Frame loop to keep HTML overlay icons in sync with camera
     this._overlayAnimId = null;
     const tick = () => {
       this._overlayAnimId = requestAnimationFrame(tick);
-      if (this._planeOverlays.size > 0) {
-        this._updatePlaneOverlayPositions();
+
+      // Spring-back animation: runs after an overshot drag release.
+      // Uses a simple spring-damper so the plane decelerates and settles
+      // at the boundary without oscillating (critically-damped feel).
+      if (this._springPlaneId) {
+        const spd = this.clipPlanes.get(this._springPlaneId);
+        if (spd) {
+          const currentD  = spd.point.dot(spd.normal);
+          const error     = this._springTargetD - currentD;
+          // Stiffness 0.22, damping 0.68 → fast return, no bounce
+          this._springVelocity = (this._springVelocity + error * 0.22) * 0.68;
+          const step = this._springVelocity;
+          if (Math.abs(error) > 0.002 || Math.abs(step) > 0.002) {
+            this.movePlane(this._springPlaneId, step);
+          } else {
+            // Snap exactly to target and stop
+            this.movePlane(this._springPlaneId, error);
+            this._springPlaneId  = null;
+            this._springVelocity = 0;
+          }
+        } else {
+          this._springPlaneId = null;
+        }
+      }
+
+      if (this._planeGizmos.size > 0) {
+        this._updatePlaneGizmoPositions();
+      }
+      // Safety net: if the cursor is over a gizmo, ensure the placement cursor
+      // is never visible — even if the canvas mousemove listener missed the event
+      // because the cursor was over the overlay div instead.
+      if (this._hoveredPlaneId !== null && !this.isDragging) {
+        if (this.planeHoverMarker) this.clearPlaneHoverMarker();
+        if (this.cutHoverMarker) this.clearCutHoverMarker();
+        this._removeCutSurfaceHighlight();
       }
       if (this._activePlaneContour) {
         this._activePlaneContour.traverse(obj => {
@@ -365,21 +399,17 @@ export class Sectioning {
           }
         });
       }
+      if (this.planeHoverMarker) {
+        this.planeHoverMarker.traverse(obj => {
+          if (obj.material?.isLineMaterial) {
+            obj.material.resolution.set(this.domElement.clientWidth, this.domElement.clientHeight);
+          }
+        });
+      }
       if (this.planeHoverMarker?.userData._arrowSprite) {
         this._updateArrowSpriteRotation();
       }
-      // Smoothly grow/shrink the outer green ring between placement-preview
-      // (1x) and adjust-existing-plane (4x) sizes. The center dark circle,
-      // the stroke thickness, and the arrow sprite stay fixed — only the
-      // ring's outer radius (and fill area) scales.
-      if (this.planeHoverMarker) {
-        const t = this._planeHoverScaleTarget;
-        const c = this._planeHoverScale;
-        const next = c + (t - c) * 0.25;
-        this._planeHoverScale = Math.abs(t - next) < 0.001 ? t : next;
-        this._applyPlaneHoverRingScale(this._planeHoverScale);
-      }
-      if (this._activePlaneContour || this.planeHoverMarker || this._tiltGizmoScene) {
+      if (this.planeHoverMarker || this._tiltGizmoScene || this._activePlaneContour || this._gizmoRingScene) {
         this._renderActivePlaneContour();
       }
       // Tilt gizmo: keep scale consistent on screen regardless of camera distance
@@ -596,17 +626,22 @@ export class Sectioning {
     // Snapshot the eligible mesh list once — the scene shouldn't change shape
     // mid-drag, and re-traversing it every pointer move is wasteful on big models.
     this._dragMeshCache = this._collectSectionTargetMeshes();
-    // Clear the cross-section contour for the duration of the drag. Rebuilding
-    // it every frame is the dominant cost on transverse cuts (a horizontal
-    // section through a multi-story IFC intersects thousands of triangles), so
-    // we hide it during drag and rebuild once on mouseup. The renderer's
-    // clipping planes still update every frame, so the live cut on the model
-    // is always correct — only the green outline is deferred.
-    if (this._activeContourRafId) {
-      cancelAnimationFrame(this._activeContourRafId);
-      this._activeContourRafId = 0;
+
+    // Cache model AABB projected onto the drag normal so movePlane can clamp
+    // the plane within the model bounds every frame without re-traversing the scene.
+    {
+      const box = this.getSceneBounds();
+      const n = planeData.normal;
+      const center = new THREE.Vector3();
+      const half   = new THREE.Vector3();
+      box.getCenter(center);
+      box.getSize(half).multiplyScalar(0.5);
+      // Support extent: max distance any AABB corner can project onto n
+      const extent = Math.abs(half.x * n.x) + Math.abs(half.y * n.y) + Math.abs(half.z * n.z);
+      const cProj  = center.dot(n);
+      this._dragMinD = cProj - extent;
+      this._dragMaxD = cProj + extent;
     }
-    this._clearActivePlaneContour();
 
     if (this._tiltGizmo) this._tiltGizmo.visible = false;
 
@@ -653,29 +688,21 @@ export class Sectioning {
       this.disposeHelper(planeData.helper);
     }
 
-    // Remove associated plane overlay (icon-only state)
-    this._removePlaneOverlay(planeId);
+    // Remove associated plane gizmo
+    this._removePlaneGizmo(planeId);
 
     // Remove from map
     this.clipPlanes.delete(planeId);
-    let activePlaneCleared = false;
     if (this.activeSectionPlaneId === planeId) {
+      // Use direct assignment here — gizmo is about to be removed, no need to update its visuals
       this.activeSectionPlaneId = null;
-      activePlaneCleared = true;
-      // Tear down the contour scene that was built for this (now deleted)
-      // plane — leaving it orphaned makes the tick-loop render gate think a
-      // plane is still active, which breaks the hover marker on remaining
-      // planes (causes visible cursor flicker).
-      this._clearActivePlaneContour();
+      this.emit('active-plane-change', { planeId: null });
     }
 
     // Update renderer
     this.updateRendererClipPlanes();
 
     this.emit('plane-remove', { id: planeId });
-    if (activePlaneCleared) {
-      this.emit('active-plane-change', { planeId: null });
-    }
 
     return true;
   }
@@ -1034,6 +1061,7 @@ export class Sectioning {
       depthTest: false,
       depthWrite: false,
       clippingPlanes: [],
+      toneMapped: false,
     });
     const strokeMat = new THREE.MeshBasicMaterial({
       color: 0x00ff33,
@@ -1043,6 +1071,7 @@ export class Sectioning {
       depthTest: false,
       depthWrite: false,
       clippingPlanes: [],
+      toneMapped: false,
     });
 
     // Dimmed copies for the half-arm that points into the cut-away
@@ -1159,6 +1188,113 @@ export class Sectioning {
       this._arrowSpriteTexture = tex;
     };
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+  }
+
+  _loadGizmoArrowTexture() {
+    // Draws the two polygon arrows (top full opacity, bottom 40% dim) onto a
+    // 128×128 canvas so they can be used as a billboard sprite on the gizmo ring.
+    // The SVG source viewBox is 16×68; we scale it to fill the canvas height.
+    const sz = 128;
+    const pad = 8;
+    const svgW = 16, svgH = 68;
+    const scale = (sz - pad * 2) / svgH;
+    const offsetX = (sz - svgW * scale) / 2;
+    const offsetY = pad;
+    const tx = (x) => offsetX + x * scale;
+    const ty = (y) => offsetY + y * scale;
+
+    // c=center, aW=arrowhead half-width, sW=stem half-width (tune independently)
+    const c = 8, aW = 6, sW = 1.5;
+    // iR: convex corner radius — tip + outer arrowhead shoulders (warp inward)
+    // oR: outward-bulge radius  — where arrowhead meets stem (warp outward)
+    // base corners (where stem meets center ring) stay sharp
+    const iR = 1.5; // SVG units
+    const oR = 2.0; // SVG units
+
+    // Each arrow: [tip, rightOuter, rightInner, rightBase, leftBase, leftInner, leftOuter]
+    const arrowBase = 20; // arrowhead base y (top arrow); closer to 34 = shorter stem
+    const topPts = [
+      [c,          1 ], [c+aW, arrowBase], [c+sW, arrowBase],
+      [c+sW,      34 ], [c-sW,        34], [c-sW, arrowBase], [c-aW, arrowBase],
+    ];
+    const botPts = [
+      [c,         67 ], [c+aW, 68-arrowBase], [c+sW, 68-arrowBase],
+      [c+sW,      34 ], [c-sW,            34], [c-sW, 68-arrowBase], [c-aW, 68-arrowBase],
+    ];
+
+    const canvas = document.createElement('canvas');
+    canvas.width = sz;
+    canvas.height = sz;
+    const ctx = canvas.getContext('2d');
+
+    // Unit vector from point a toward point b
+    const norm = (a, b) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const len = Math.sqrt(dx * dx + dy * dy);
+      return [dx / len, dy / len];
+    };
+
+    const drawArrow = (pts, alpha) => {
+      // pts order: [P0=tip, P1=rightOuter, P2=rightInner, P3=rightBase,
+      //             P4=leftBase, P5=leftInner, P6=leftOuter]
+      const [P0, P1, P2, P3, P4, P5, P6] = pts;
+      const d32 = norm(P3, P2); // direction: base → inner
+      const d21 = norm(P2, P1); // direction: inner → outer
+      const d65 = norm(P6, P5); // direction: outer → inner (left side)
+      const d54 = norm(P5, P4); // direction: inner → base (left side)
+      const ir = iR * scale;    // convex radius in canvas px
+
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+
+      // Start at rightBase — sharp corner
+      ctx.moveTo(tx(P3[0]), ty(P3[1]));
+
+      // ── rightInner (P2): outward bulge where arrowhead meets stem ────────
+      ctx.lineTo(tx(P2[0] - d32[0] * oR), ty(P2[1] - d32[1] * oR));
+      ctx.quadraticCurveTo(
+        tx(P2[0]), ty(P2[1]),
+        tx(P2[0] + d21[0] * oR), ty(P2[1] + d21[1] * oR),
+      );
+
+      // ── rightOuter (P1): inward arc — outer arrowhead shoulder ───────────
+      ctx.arcTo(tx(P1[0]), ty(P1[1]), tx(P0[0]), ty(P0[1]), ir);
+
+      // ── tip (P0): inward arc ──────────────────────────────────────────────
+      ctx.arcTo(tx(P0[0]), ty(P0[1]), tx(P6[0]), ty(P6[1]), ir);
+
+      // ── leftOuter (P6): inward arc — outer arrowhead shoulder ────────────
+      ctx.arcTo(tx(P6[0]), ty(P6[1]), tx(P5[0]), ty(P5[1]), ir);
+
+      // ── leftInner (P5): outward bulge where arrowhead meets stem ─────────
+      ctx.lineTo(tx(P5[0] - d65[0] * oR), ty(P5[1] - d65[1] * oR));
+      ctx.quadraticCurveTo(
+        tx(P5[0]), ty(P5[1]),
+        tx(P5[0] + d54[0] * oR), ty(P5[1] + d54[1] * oR),
+      );
+
+      // ── leftBase (P4): sharp corner — close path ─────────────────────────
+      ctx.lineTo(tx(P4[0]), ty(P4[1]));
+      ctx.closePath();
+
+      ctx.fillStyle = '#194D1E';
+      ctx.fill();
+      ctx.strokeStyle = '#56FF77';
+      ctx.lineWidth = 0.75 * scale;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+
+    drawArrow(topPts, 1.0);
+    drawArrow(botPts, 0.4);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.premultiplyAlpha = false;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    this._gizmoArrowTexture = tex;
   }
 
   _loadTiltGizmo() {
@@ -1316,23 +1452,25 @@ export class Sectioning {
     );
 
     this.updateRendererClipPlanes();
-    this._buildActivePlaneContour();
+    // Refresh gizmo centroid after flip so camera-following falls back correctly
+    if (this.activeSectionPlaneId) {
+      const pd = this.clipPlanes.get(this.activeSectionPlaneId);
+      const gizmoData = this._planeGizmos.get(this.activeSectionPlaneId);
+      if (pd && gizmoData) {
+        const newCentroid = this._computeCrossSectionCentroid(pd.plane);
+        if (newCentroid) gizmoData.centroid.copy(newCentroid);
+      }
+    }
   }
 
-  setPlaneHoverMarker(point, normal, opts = {}) {
-    const targetScale = typeof opts.scale === 'number' ? opts.scale : 1;
-    this._planeHoverScaleTarget = targetScale;
-    // Preserve the lerped current scale across the clear+rebuild done every
-    // mouse move; if no marker existed, snap current to target so the new
-    // marker doesn't pop in undersized.
-    if (!this.planeHoverMarker) this._planeHoverScale = targetScale;
-    this.clearPlaneHoverMarker(true);
+  setPlaneHoverMarker(point, normal) {
+    this.clearPlaneHoverMarker();
 
     const camDist = this.camera.position.distanceTo(point);
     const radius = camDist * 0.017;
-    const strokeW = radius * 0.16;
-    const outerR = radius;
-    const innerR = outerR * 0.36;
+    const strokeW = radius * 0.128;
+    const outerR = radius * 1.2;
+    const innerR = radius * 0.36;
 
     const up = new THREE.Vector3(0, 1, 0);
     const tangent = new THREE.Vector3();
@@ -1348,30 +1486,23 @@ export class Sectioning {
 
     const matOpts = { transparent: true, side: THREE.DoubleSide, depthTest: false, depthWrite: false, clippingPlanes: [] };
 
-    const greenMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 1.0 });
-    const greenFillMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 0.3 });
-    const darkMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x194d1e, opacity: 0.6 });
+    const greenMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 1.0, toneMapped: false });
+    const blackFillMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x000000, opacity: 0.1 });
+    const darkMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x194d1e, opacity: 1.0 });
 
-    // Outer green ring is split into the thin stroke and the translucent fill.
-    // Their geometries get rebuilt each frame as scale animates so the fill
-    // (and outer radius) grows with scale while the stroke THICKNESS and the
-    // inner edge stay constant — only outer radius scales.
+    const innerDotR = innerR * 0.5;
+
     const ringStroke = new THREE.Mesh(new THREE.RingGeometry(outerR - strokeW, outerR, 48), greenMat);
     ringStroke.userData.isPlaneHelper = true;
     ringStroke.renderOrder = 1001;
     group.add(ringStroke);
 
-    const ringFill = new THREE.Mesh(new THREE.RingGeometry(innerR, outerR - strokeW, 48), greenFillMat);
+    const ringFill = new THREE.Mesh(new THREE.RingGeometry(innerDotR, outerR - strokeW, 48), blackFillMat);
     ringFill.userData.isPlaneHelper = true;
     ringFill.renderOrder = 1000;
     group.add(ringFill);
 
-    group.userData._ringStroke = ringStroke;
-    group.userData._ringFill = ringFill;
-    group.userData._ringBase = { innerR, outerR, strokeW };
-    group.userData._ringAppliedScale = 1;
-
-    const center = new THREE.Mesh(new THREE.CircleGeometry(innerR, 32), darkMat);
+    const center = new THREE.Mesh(new THREE.CircleGeometry(innerDotR, 32), darkMat);
     center.userData.isPlaneHelper = true;
     center.renderOrder = 1002;
     group.add(center);
@@ -1389,6 +1520,7 @@ export class Sectioning {
         depthWrite: false,
         transparent: true,
         sizeAttenuation: true,
+        toneMapped: false,
       });
       const sprite = new THREE.Sprite(spriteMat);
       sprite.userData.isPlaneHelper = true;
@@ -1399,37 +1531,13 @@ export class Sectioning {
       group.add(sprite);
       group.userData._arrowSprite = sprite;
       group.userData._planeNormal = normal.clone();
+      group.userData._outerR = outerR;
     }
 
     this.planeHoverMarker = group;
-    this._applyPlaneHoverRingScale(this._planeHoverScale);
     this.helpersGroup.add(group);
     this._updateArrowSpriteRotation();
     this._setCursor('none');
-  }
-
-  // Rebuild the outer ring geometries so the OUTER radius scales with `s`
-  // while the stroke thickness and the fill's inner edge stay constant.
-  _applyPlaneHoverRingScale(s) {
-    const m = this.planeHoverMarker;
-    if (!m) return;
-    const base = m.userData._ringBase;
-    const stroke = m.userData._ringStroke;
-    const fill = m.userData._ringFill;
-    if (!base || !stroke || !fill) return;
-    if (Math.abs(m.userData._ringAppliedScale - s) < 0.001) return;
-    const newOuter = base.outerR * s;
-    const newStrokeInner = newOuter - base.strokeW;
-    const newFillInner = base.innerR;
-    const newFillOuter = Math.max(newStrokeInner, newFillInner + 1e-5);
-
-    stroke.geometry.dispose();
-    stroke.geometry = new THREE.RingGeometry(newStrokeInner, newOuter, 48);
-
-    fill.geometry.dispose();
-    fill.geometry = new THREE.RingGeometry(newFillInner, newFillOuter, 48);
-
-    m.userData._ringAppliedScale = s;
   }
 
   _updateArrowSpriteRotation() {
@@ -1448,6 +1556,12 @@ export class Sectioning {
     if (len > 0.0001) {
       sprite.material.rotation = -Math.atan2(dx, dy);
     }
+
+    // Oscillate the sprite along the local Z axis (surface normal direction)
+    const baseZ = this.planeHoverMarker.userData._spriteBaseZ ?? sprite.position.z;
+    this.planeHoverMarker.userData._spriteBaseZ = baseZ;
+    const amplitude = this.planeHoverMarker.userData._outerR * 0.18;
+    sprite.position.z = baseZ + Math.sin(performance.now() * 0.004) * amplitude;
   }
 
   clearCutHoverMarker() {
@@ -1543,24 +1657,11 @@ export class Sectioning {
     this._cutPreviewLine = null;
   }
 
-  clearPlaneHoverMarker(preserveScale = false) {
-    if (!this.planeHoverMarker) {
-      if (!preserveScale) {
-        this._planeHoverScale = 1;
-        this._planeHoverScaleTarget = 1;
-      }
-      return;
-    }
+  clearPlaneHoverMarker() {
+    if (!this.planeHoverMarker) return;
     this.helpersGroup.remove(this.planeHoverMarker);
     this.disposeHelper(this.planeHoverMarker);
     this.planeHoverMarker = null;
-    // True clears (the marker is genuinely going away) reset scale state so
-    // the next show starts fresh. Recreates from setPlaneHoverMarker pass
-    // preserveScale=true so the lerped current scale isn't lost mid-stream.
-    if (!preserveScale) {
-      this._planeHoverScale = 1;
-      this._planeHoverScaleTarget = 1;
-    }
   }
 
   _showScissorsOverlay(worldPoint) {
@@ -1785,55 +1886,120 @@ export class Sectioning {
 
   // ── Section-Plane Edit / Default State ────────────────────────────
 
-  _createPlaneEditOverlay(planeId, worldPos) {
+  _createPlaneGizmo(planeId, centroid) {
     const el = document.createElement('div');
-    el.innerHTML = `<svg width="24" height="44" viewBox="0 0 24 44" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#clip0_8307_6281)"><g opacity="0.7"><mask id="mask0_8307_6281_p${planeId}" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="-1" y="22" width="25" height="31"><path d="M0 22H23.5V40.5L-1 53L0 22Z" fill="#E0E0E0"/></mask><g mask="url(#mask0_8307_6281_p${planeId})"><mask id="path-2-outside-1_8307_6281_p${planeId}" maskUnits="userSpaceOnUse" x="3.82031" y="0" width="17" height="44" fill="black"><rect fill="white" x="3.82031" y="0" width="17" height="44"/><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z"/></mask><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z" fill="#00851A"/><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z" stroke="#56FF77" stroke-width="2" mask="url(#path-2-outside-1_8307_6281_p${planeId})"/></g></g><path d="M12 17.5C15.124 17.5 17.928 18.051 19.933 18.923C20.936 19.359 21.716 19.866 22.238 20.402C22.758 20.937 23 21.476 23 22C23 22.524 22.758 23.063 22.238 23.598C21.716 24.135 20.936 24.641 19.933 25.077C17.928 25.949 15.124 26.5 12 26.5C8.876 26.5 6.072 25.949 4.067 25.077C3.064 24.641 2.284 24.135 1.762 23.598C1.242 23.063 1 22.524 1 22C1 21.476 1.242 20.937 1.762 20.402C2.284 19.866 3.064 19.359 4.067 18.923C6.072 18.051 8.876 17.5 12 17.5Z" fill="#00851A" fill-opacity="0.3" stroke="#56FF77"/><ellipse cx="12" cy="22" rx="5.5" ry="2" fill="#56FF77"/><mask id="mask1_8307_6281_p${planeId}" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="-2" y="-2" width="26" height="24"><path d="M-2 -1.5L23.5 -1L23 22H-0.5L-2 -1.5Z" fill="#E0E0E0"/></mask><g mask="url(#mask1_8307_6281_p${planeId})"><mask id="path-7-outside-2_8307_6281_p${planeId}" maskUnits="userSpaceOnUse" x="3.82031" y="0" width="17" height="44" fill="black"><rect fill="white" x="3.82031" y="0" width="17" height="44"/><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z"/></mask><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z" fill="#194D1E"/><path d="M5.232 33C4.462 31.667 5.424 30 6.964 30H8.66C9.765 30 10.66 29.105 10.66 28V16C10.66 14.895 9.765 14 8.66 14H6.964C5.424 14 4.462 12.333 5.232 11L10.428 2C11.198 0.667 13.122 0.667 13.892 2L19.088 11C19.858 12.333 18.896 14 17.356 14H15.66C14.556 14 13.66 14.895 13.66 16V28C13.66 29.105 14.556 30 15.66 30H17.356C18.896 30 19.858 31.667 19.088 33L13.892 42C13.122 43.333 11.198 43.333 10.428 42L5.232 33Z" stroke="#56FF77" stroke-width="2" mask="url(#path-7-outside-2_8307_6281_p${planeId})"/></g></g></g><defs><clipPath id="clip0_8307_6281"><rect width="24" height="44" fill="white"/></clipPath></defs></svg>`;
-    const iconSize = 44;
-    const padding = 4;
-    const circleSize = iconSize + padding * 2;
+    // Visual arrows are now a 3D sprite inside the ring group (_createGizmoRing3D).
+    // This div is kept as an invisible hit area for mouse events only.
     Object.assign(el.style, {
       position: 'absolute',
       pointerEvents: 'auto',
       cursor: 'pointer',
       zIndex: '1000',
-      filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.4))',
+      filter: 'none',
       transform: 'translate(-50%, -50%)',
       display: 'none',
-      width: `${circleSize}px`,
-      height: `${circleSize}px`,
-      borderRadius: '50%',
+      width: '68px',
+      height: '68px',
       justifyContent: 'center',
       alignItems: 'center',
-      background: 'rgba(255, 255, 255, 0.3)',
-      transition: 'background 0.15s ease',
+      background: 'transparent',
     });
     el.dataset.sectionPlaneId = planeId;
 
-    el.addEventListener('mouseenter', () => {
-      this._hoveringPlaneEditIcon = true;
+    const clearPlacementCursor = () => {
       this.clearCutHoverMarker();
       this.clearPlaneHoverMarker();
       this._removeCutSurfaceHighlight();
       this.clearHoverHighlight();
-      this._setCursor('');
-      el.style.background = 'rgba(0, 198, 40, 0.7)';
+      this._setCursor('pointer');
+    };
+
+    el.addEventListener('mouseenter', () => {
+      this._hoveringPlaneGizmo = true;
+      this._hoveredPlaneId = planeId;
+      // onMouseMove is only bound to the canvas; when the cursor is over this
+      // overlay div it never fires there. Clear the placement cursor immediately.
+      clearPlacementCursor();
+    });
+    // Keep clearing while the cursor moves around inside the element.
+    el.addEventListener('mousemove', (e) => {
+      e.stopPropagation();
+      clearPlacementCursor();
     });
     el.addEventListener('mouseleave', () => {
-      this._hoveringPlaneEditIcon = false;
-      el.style.background = 'rgba(255, 255, 255, 0.3)';
+      this._hoveringPlaneGizmo = false;
+      if (this._hoveredPlaneId === planeId) this._hoveredPlaneId = null;
     });
     el.addEventListener('mousedown', (e) => {
       e.stopPropagation();
       e.preventDefault();
-      this.editPlaneFromOverlay(planeId);
+      this._hoveringPlaneGizmo = true;
+
+      const downX = e.clientX, downY = e.clientY;
+      let didDrag = false;
+
+      // Compute drag start point
+      const gizmoData = this._planeGizmos.get(planeId);
+      const startPt = gizmoData ? gizmoData.centroid.clone() : this.clipPlanes.get(planeId)?.point.clone() ?? new THREE.Vector3();
+      if (gizmoData?.currentPos) {
+        gizmoData.dragStartPos = gizmoData.currentPos.clone();
+      }
+      this._beginPlaneDrag(planeId, startPt);
+      el.style.cursor = 'grabbing';
+
+      // Let all mousemove/mouseup events fall through to the canvas during drag
+      // so the existing drag math runs smoothly. Restoring pointer-events on mouseup.
+      el.style.pointerEvents = 'none';
+
+      const onGizmoMouseMove = (moveEvent) => {
+        const dx = moveEvent.clientX - downX;
+        const dy = moveEvent.clientY - downY;
+        if (Math.sqrt(dx * dx + dy * dy) > 4) didDrag = true;
+        // Drive drag directly from the window capture handler so it works
+        // regardless of which DOM element (canvas or overlay) receives mousemove.
+        if (this.isDragging) this.onMouseMove(moveEvent);
+      };
+
+      const onGizmoMouseUp = (upEvent) => {
+        window.removeEventListener('mousemove', onGizmoMouseMove, { capture: true });
+        window.removeEventListener('mouseup', onGizmoMouseUp, { capture: true });
+        el.style.pointerEvents = 'auto';
+
+        // Restore cursor; if pointer left the element during drag (mouseleave
+        // couldn't fire while pointerEvents was none), clear hover state now.
+        el.style.cursor = 'pointer';
+        const rect = el.getBoundingClientRect();
+        const overEl = (
+          upEvent.clientX >= rect.left && upEvent.clientX <= rect.right &&
+          upEvent.clientY >= rect.top  && upEvent.clientY <= rect.bottom
+        );
+        if (!overEl) {
+          this._hoveringPlaneGizmo = false;
+          // _hoveredPlaneId will be corrected next frame by the proximity check,
+          // but clear it now so onMouseMove immediately stops showing pointer.
+          if (this._hoveredPlaneId === planeId) this._hoveredPlaneId = null;
+        }
+
+        // Only select on a clean click (no significant pointer movement)
+        if (!didDrag) {
+          this._selectSectionPlane(planeId);
+        }
+        this.onMouseUp(upEvent);
+      };
+
+      window.addEventListener('mousemove', onGizmoMouseMove, { capture: true });
+      window.addEventListener('mouseup', onGizmoMouseUp, { capture: true });
     });
 
     const overlayParent = this.domElement.parentElement || this.domElement;
     overlayParent.appendChild(el);
 
-    return { el, worldPos: worldPos.clone() };
+    const ring3D = this._createGizmoRing3D(planeId);
+    return { el, centroid: centroid.clone(), planeBounds2D: null, currentPos: centroid.clone(), dragStartPos: null, ring3D, _ringAnimScale: 1.0 };
   }
 
+  // Called when exiting sectioning mode entirely — hides gizmos and helpers.
+  // No longer transitions planes to an icon-only state while inside the mode.
   _setSectionPlaneDefault(planeId) {
     const planeData = this.clipPlanes.get(planeId);
     if (!planeData) return;
@@ -1851,10 +2017,10 @@ export class Sectioning {
       planeData.helper.visible = false;
     }
 
-    this._removePlaneOverlay(planeId);
-
-    // No edit-icon overlay: every committed plane stays freely draggable on
-    // hover, so the wedge-with-arrows gizmo is intentionally not created here.
+    // Hide the gizmo DOM element and 3D ring (keep in map for re-entry)
+    const gizmoData = this._planeGizmos.get(planeId);
+    if (gizmoData?.el) gizmoData.el.style.display = 'none';
+    if (gizmoData?.ring3D) gizmoData.ring3D.visible = false;
 
     this._refreshSectionPlaneActiveVisuals();
     if (activePlaneCleared) {
@@ -1862,31 +2028,31 @@ export class Sectioning {
     }
   }
 
-  _editSectionPlane(planeId) {
+  // Show a plane's gizmo immediately — used on plane creation and mode re-entry.
+  _showPlaneGizmo(planeId) {
     const planeData = this.clipPlanes.get(planeId);
     if (!planeData) return;
 
-    if (this.activeSectionPlaneId && this.activeSectionPlaneId !== planeId) {
-      this._setSectionPlaneDefault(this.activeSectionPlaneId);
-    }
-
-    this._removePlaneOverlay(planeId);
-
+    // Show the plane helper (3D frame)
     if (planeData.helper) {
       planeData.helper.visible = true;
     }
 
-    const prevActive = this.activeSectionPlaneId;
-    this.activeSectionPlaneId = planeId;
-    this._refreshSectionPlaneActiveVisuals();
-    this._buildActivePlaneContour();
-    this._attachTiltGizmo(planeId);
-    if (prevActive !== planeId) {
-      this.emit('active-plane-change', { planeId });
+    // Ensure gizmo DOM element exists
+    if (!this._planeGizmos.has(planeId)) {
+      const centroid = this._computeCrossSectionCentroid(planeData.plane) || planeData.point.clone();
+      const gizmo = this._createPlaneGizmo(planeId, centroid);
+      this._planeGizmos.set(planeId, gizmo);
+    }
+
+    const gizmoData = this._planeGizmos.get(planeId);
+    if (gizmoData?.el) {
+      gizmoData.el.style.display = 'flex';
     }
   }
 
-  editPlaneFromOverlay(planeId) {
+  // Re-enter edit for a plane when clicking its gizmo from outside sectioning mode.
+  editPlaneFromGizmo(planeId) {
     const planeData = this.clipPlanes.get(planeId);
     if (!planeData) return;
 
@@ -1896,40 +2062,243 @@ export class Sectioning {
       this.setActiveTool(planeData.creatorTool || 'section-plane');
     }
 
-    this._editSectionPlane(planeId);
+    this._showPlaneGizmo(planeId);
+
+    const prevActive = this.activeSectionPlaneId;
+    this.activeSectionPlaneId = planeId;
+    if (prevActive !== planeId) {
+      this.emit('active-plane-change', { planeId });
+    }
     this.emit('request-edit-plane', { planeId, tool: this.activeTool });
   }
 
-  _removePlaneOverlay(planeId) {
-    const data = this._planeOverlays.get(planeId);
+  _createGizmoRing3D(planeId) {
+    const planeData = this.clipPlanes.get(planeId);
+    if (!planeData) return null;
+
+    const normal = planeData.normal.clone();
+    const up = new THREE.Vector3(0, 1, 0);
+    const tangent = new THREE.Vector3();
+    if (Math.abs(normal.dot(up)) > 0.99) {
+      tangent.crossVectors(normal, new THREE.Vector3(1, 0, 0)).normalize();
+    } else {
+      tangent.crossVectors(normal, up).normalize();
+    }
+    const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+
+    const group = new THREE.Group();
+    group.userData.isPlaneHelper = true;
+
+    const matOpts = { transparent: true, side: THREE.DoubleSide, depthTest: false, depthWrite: false, clippingPlanes: [] };
+    const strokeMat = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 1.0, toneMapped: false });
+    const fillMat   = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 0.20, toneMapped: false });
+    const dotMat    = new THREE.MeshBasicMaterial({ ...matOpts, color: 0x56ff77, opacity: 1.0, toneMapped: false });
+
+    // Unit-radius geometry — scaled every frame based on camera distance
+    const r = 1;
+    const strokeW = r * 0.05;
+    const dotR = r * 0.196;  // center dot — 40% bigger than original 0.14
+
+    const ringStroke = new THREE.Mesh(new THREE.RingGeometry(r - strokeW, r, 72), strokeMat);
+    ringStroke.renderOrder = 2001;
+    group.add(ringStroke);
+
+    const ringFill = new THREE.Mesh(new THREE.RingGeometry(dotR, r - strokeW, 72), fillMat);
+    ringFill.renderOrder = 2000;
+    group.add(ringFill);
+
+    const centerDot = new THREE.Mesh(new THREE.CircleGeometry(dotR, 32), dotMat);
+    centerDot.renderOrder = 2002;
+    group.add(centerDot);
+
+    // Store refs for selected-state updates
+    group.userData._strokeMat  = strokeMat;
+    group.userData._fillMat    = fillMat;
+    group.userData._dotMat     = dotMat;
+    group.userData._ringStroke = ringStroke;
+    group.userData._ringFill   = ringFill;
+    group.userData._centerDot  = centerDot;
+    group.userData._strokeW    = strokeW;
+    group.userData._dotR       = dotR;
+    group.userData._r          = r;
+
+    // ── Arrow sprite — billboard that always faces the camera ────────────────
+    // Uses a canvas texture with the polygon arrows drawn at the correct style.
+    // material.rotation is updated each frame to align arrows with projected normal.
+    if (this._gizmoArrowTexture) {
+      const spriteMat = new THREE.SpriteMaterial({
+        map: this._gizmoArrowTexture,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        toneMapped: false,
+      });
+      const arrowSprite = new THREE.Sprite(spriteMat);
+      arrowSprite.renderOrder = 2003;
+      // Texture is 128×128 square; arrow content is 16/68 aspect inside it.
+      // Uniform scale — the square canvas crops correctly around the tall arrows.
+      arrowSprite.scale.set(3.2, 2.42, 1);
+      arrowSprite.userData.isPlaneHelper = true;
+      group.add(arrowSprite);
+      group.userData._arrowSprite  = arrowSprite;
+      group.userData._planeNormal  = normal.clone();
+    }
+
+    // Orient flat on the plane surface
+    const basisQuat = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(tangent, bitangent, normal)
+    );
+    group.quaternion.copy(basisQuat);
+    group.position.copy(planeData.point);
+    group.visible = false;
+
+    // Store in a dedicated scene so it renders in the unclipped overlay pass
+    // (same pattern as _tiltGizmoScene) — avoids alpha sorting against model geo.
+    if (!this._gizmoRingScene) {
+      this._gizmoRingScene = new THREE.Scene();
+    }
+    this._gizmoRingScene.add(group);
+    return group;
+  }
+
+  // Update ring gizmo visuals between normal and selected states.
+  _updateGizmoRingSelected(ring3D, isSelected) {
+    if (!ring3D) return;
+    const { _strokeMat: sMat, _fillMat: fMat, _dotMat: dMat,
+            _ringStroke: rStroke, _ringFill: rFill, _centerDot: dot,
+            _strokeW: sw, _dotR: dotR, _r: r } = ring3D.userData;
+    if (!sMat || !fMat || !rStroke || !rFill) return;
+
+    const newStrokeW = isSelected ? sw * (4 / 3) : sw;
+    const newDotR    = isSelected ? dotR * (4 / 3) : dotR;
+
+    rStroke.geometry.dispose();
+    rStroke.geometry = new THREE.RingGeometry(r - newStrokeW, r, 72);
+
+    rFill.geometry.dispose();
+    rFill.geometry = new THREE.RingGeometry(newDotR, r - newStrokeW, 72);
+
+    if (dot) {
+      dot.geometry.dispose();
+      dot.geometry = new THREE.CircleGeometry(newDotR, 32);
+    }
+
+    if (dMat) {
+      dMat.color.set(0x56ff77);
+      dMat.needsUpdate = true;
+    }
+
+    fMat.opacity = isSelected ? 0.5 : 0.20;
+    fMat.needsUpdate = true;
+  }
+
+  // Select a plane by click — updates visual, emits event.
+  // Pass null to deselect.
+  _selectSectionPlane(planeId) {
+    const prev = this.activeSectionPlaneId;
+    if (prev === planeId) return;
+
+    // Deselect previous ring and snap its scale animation back to normal
+    if (prev) {
+      const prevGizmo = this._planeGizmos.get(prev);
+      if (prevGizmo?.ring3D) this._updateGizmoRingSelected(prevGizmo.ring3D, false);
+      if (prevGizmo) prevGizmo._ringAnimScale = 1.0;
+    }
+
+    this.activeSectionPlaneId = planeId;
+
+    // Select new ring
+    if (planeId) {
+      const gizmo = this._planeGizmos.get(planeId);
+      if (gizmo?.ring3D) this._updateGizmoRingSelected(gizmo.ring3D, true);
+    }
+
+    this.emit('active-plane-change', { planeId: planeId ?? null });
+  }
+
+  _removePlaneGizmo(planeId) {
+    const data = this._planeGizmos.get(planeId);
     if (!data) return;
     if (data.el?.parentElement) {
       data.el.parentElement.removeChild(data.el);
     }
-    this._planeOverlays.delete(planeId);
-    this._hoveringPlaneEditIcon = false;
+    if (data.ring3D) {
+      if (this._gizmoRingScene) this._gizmoRingScene.remove(data.ring3D);
+      data.ring3D.traverse(obj => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) obj.material.dispose();
+      });
+    }
+    this._planeGizmos.delete(planeId);
+    this._hoveringPlaneGizmo = false;
+    if (this._hoveredPlaneId === planeId) this._hoveredPlaneId = null;
   }
 
-  _clearAllPlaneOverlays() {
-    for (const [planeId] of this._planeOverlays) {
-      this._removePlaneOverlay(planeId);
+  _clearAllPlaneGizmos() {
+    for (const [planeId] of this._planeGizmos) {
+      this._removePlaneGizmo(planeId);
     }
   }
 
   _computeCrossSectionCentroid(clipPlane) {
     const edges = this._computePlaneIntersection(clipPlane);
     if (edges.length === 0) return null;
-    const centroid = new THREE.Vector3();
-    let count = 0;
+    // Use bounding-box center instead of point average so dense geometry
+    // near the base (foundations, platform) can't drag the centroid down.
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
     for (const [p1, p2] of edges) {
-      centroid.add(p1).add(p2);
-      count += 2;
+      for (const p of [p1, p2]) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
+      }
     }
-    if (count > 0) centroid.divideScalar(count);
-    return centroid;
+    return new THREE.Vector3(
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2,
+    );
   }
 
-  _updatePlaneOverlayPositions() {
+  // Compute the 2D bounding box of the cross-section on the plane surface,
+  // expressed in local (tangent, bitangent) coordinates. Returns null if no
+  // intersection edges exist. Used to clamp the camera-following gizmo position
+  // so it never floats outside the actual cut face.
+  _computeCrossSectionBounds(clipPlane, normal) {
+    const edges = this._computePlaneIntersection(clipPlane);
+    if (edges.length === 0) return null;
+
+    // Build local 2-D axes on the plane surface
+    const tangent = new THREE.Vector3();
+    if (Math.abs(normal.x) < 0.9) {
+      tangent.crossVectors(normal, new THREE.Vector3(1, 0, 0)).normalize();
+    } else {
+      tangent.crossVectors(normal, new THREE.Vector3(0, 1, 0)).normalize();
+    }
+    const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (const [p1, p2] of edges) {
+      for (const p of [p1, p2]) {
+        const u = p.dot(tangent);
+        const v = p.dot(bitangent);
+        if (u < minU) minU = u;
+        if (u > maxU) maxU = u;
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      }
+    }
+
+    return { tangent, bitangent, minU, maxU, minV, maxV };
+  }
+
+  _updatePlaneGizmoPositions() {
+    // Only show gizmos while in sectioning mode
+    const isSectioningTool = this.activeTool === 'section-plane' || this.activeTool === 'section-cut';
+    if (!isSectioningTool) return;
+
     const rect = this.domElement.getBoundingClientRect();
     const halfW = rect.width / 2;
     const halfH = rect.height / 2;
@@ -1940,6 +2309,7 @@ export class Sectioning {
     this.scene.traverse(obj => {
       if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper &&
           !obj.userData.isCutEditIcon && !obj.userData.isCutContour && !obj.userData.isTiltGizmo &&
+          !obj.userData.isPlaneContourFill &&
           obj.parent?.name !== 'CutContours' &&
           obj.parent?.name !== 'SectionPlaneHelpers') {
         modelMeshes.push(obj);
@@ -1949,17 +2319,93 @@ export class Sectioning {
     const camPos = this.camera.position;
     const occlusionRay = new THREE.Raycaster();
 
-    for (const [planeId, data] of this._planeOverlays) {
+    // Screen-center ray for camera-following gizmo position
+    const centerRay = new THREE.Raycaster();
+    centerRay.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+
+    const sceneBounds = this.getSceneBounds();
+
+    for (const [planeId, data] of this._planeGizmos) {
       if (!data.el) continue;
-      tempV.copy(data.worldPos);
+      const planeData = this.clipPlanes.get(planeId);
+      if (!planeData) continue;
+
+      // ── Camera-following gizmo position ──────────────────────────────────
+      const mathPlane = new THREE.Plane();
+      mathPlane.setFromNormalAndCoplanarPoint(planeData.normal, planeData.point);
+
+      // Lazily compute and cache 2-D cross-section bounds for this gizmo.
+      if (!data.planeBounds2D) {
+        data.planeBounds2D = this._computeCrossSectionBounds(planeData.plane, planeData.normal);
+      }
+
+      const isDraggingThisPlane = this.isDragging && this.dragPlaneId === planeId;
+
+      // ── Compute target world position ────────────────────────────────────
+      let targetWorld;
+      if (isDraggingThisPlane) {
+        // During drag: offset the gizmo's pre-drag visual position along the
+        // normal by cumulative drag distance. Using dragStartPos (not centroid)
+        // means the gizmo starts from exactly where it was rendered — no jump.
+        const base = data.dragStartPos || data.centroid;
+        targetWorld = base.clone()
+          .addScaledVector(planeData.normal, this._dragCumulativeDistance);
+      } else {
+        tempV.copy(data.centroid);
+        tempV.project(this.camera);
+        const centScreenX = (tempV.x * halfW) + halfW;
+        const centScreenY = -(tempV.y * halfH) + halfH;
+        const centroidOnScreen =
+          tempV.z <= 1 &&
+          centScreenX >= 0 && centScreenX <= rect.width &&
+          centScreenY >= 0 && centScreenY <= rect.height;
+
+        if (centroidOnScreen) {
+          targetWorld = data.centroid;
+        } else {
+          // Centroid off-screen — target screen center clamped to cross-section bounds.
+          const hitPt = new THREE.Vector3();
+          if (centerRay.ray.intersectPlane(mathPlane, hitPt) && data.planeBounds2D) {
+            const { tangent, bitangent, minU, maxU, minV, maxV } = data.planeBounds2D;
+            let u = hitPt.dot(tangent);
+            let v = hitPt.dot(bitangent);
+            u = Math.max(minU, Math.min(maxU, u));
+            v = Math.max(minV, Math.min(maxV, v));
+            const refU = planeData.point.dot(tangent);
+            const refV = planeData.point.dot(bitangent);
+            targetWorld = planeData.point.clone()
+              .addScaledVector(tangent, u - refU)
+              .addScaledVector(bitangent, v - refV);
+          } else {
+            targetWorld = data.centroid;
+          }
+        }
+      }
+
+      // ── Lerp current position toward target ──────────────────────────────
+      // During drag: snap instantly (gizmo locks to the moving plane).
+      // After release: lerp gently from wherever currentPos is — the gizmo
+      // eases to the new centroid without any visible jump.
+      if (!data.currentPos) {
+        data.currentPos = targetWorld.clone();
+      } else if (isDraggingThisPlane) {
+        data.currentPos.copy(targetWorld);
+      } else {
+        data.currentPos.lerp(targetWorld, 0.10);
+      }
+      const gizmoWorld = data.currentPos;
+
+      // ── Screen-space projection ──────────────────────────────────────────
+      tempV.copy(gizmoWorld);
       tempV.project(this.camera);
       const x = (tempV.x * halfW) + halfW;
       const y = -(tempV.y * halfH) + halfH;
       const behind = tempV.z > 1;
 
+      // ── Occlusion check ──────────────────────────────────────────────────
       let occluded = false;
       if (!behind) {
-        const dir = data.worldPos.clone().sub(camPos);
+        const dir = gizmoWorld.clone().sub(camPos);
         const dist = dir.length();
         dir.normalize();
         occlusionRay.set(camPos, dir);
@@ -1971,26 +2417,85 @@ export class Sectioning {
         }
       }
 
-      data.el.style.display = (behind || occluded) ? 'none' : 'flex';
+      const visible = !behind && !occluded;
+      data.el.style.display = visible ? 'flex' : 'none';
       data.el.style.left = `${x}px`;
       data.el.style.top = `${y}px`;
 
-      const planeData = this.clipPlanes.get(planeId);
-      if (planeData) {
-        const nEnd = data.worldPos.clone().add(planeData.normal);
-        const nProj = nEnd.project(this.camera);
-        const nx = (nProj.x * halfW) + halfW;
-        const ny = -(nProj.y * halfH) + halfH;
-        const angle = Math.atan2(nx - x, -(ny - y)) * (180 / Math.PI);
-        data.el.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+      // Rotate the DOM arrows to point along the plane normal in screen space
+      const nEnd = gizmoWorld.clone().add(planeData.normal);
+      const nProj = nEnd.project(this.camera);
+      const nx = (nProj.x * halfW) + halfW;
+      const ny = -(nProj.y * halfH) + halfH;
+      const angle = Math.atan2(nx - x, -(ny - y)) * (180 / Math.PI);
+      data.el.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+
+      // ── Sync 3D ring ─────────────────────────────────────────────────────
+      if (data.ring3D) {
+        data.ring3D.visible = visible;
+        if (visible) {
+          data.ring3D.position.copy(gizmoWorld);
+          const camDist = camPos.distanceTo(gizmoWorld);
+          const r = camDist * 0.036;
+          data.ring3D.scale.setScalar(r);
+
+          // ── Screen-space hover detection ─────────────────────────────────
+          // Check cursor proximity every frame so hover triggers correctly
+          // even when the gizmo spawns or moves under the cursor (which would
+          // silently skip the DOM mouseenter event).
+          if (this._cursorClientX !== undefined) {
+            const rect   = this.domElement.getBoundingClientRect();
+            const cx     = this._cursorClientX - rect.left;
+            const cy     = this._cursorClientY - rect.top;
+            const hitR   = 34; // gizmo DOM element is 68×68px, so ±34
+            const inside = Math.abs(cx - x) < hitR && Math.abs(cy - y) < hitR;
+            if (inside && this._hoveredPlaneId !== planeId) {
+              this._hoveredPlaneId = planeId;
+            } else if (!inside && this._hoveredPlaneId === planeId) {
+              this._hoveredPlaneId = null;
+            }
+          }
+
+          // ── Smooth outer-ring expansion on hover / selected ──────────────
+          // Only the stroke ring and fill ring scale up — arrows + dot stay put.
+          const isHovered  = this._hoveredPlaneId === planeId;
+          const isSelected = this.activeSectionPlaneId === planeId;
+          const targetScale = (isHovered || isSelected || this.isDragging && this.dragPlaneId === planeId) ? 1.22 : 1.0;
+          // Lerp toward target (fast in, same speed out for snappiness vs. smoothness)
+          data._ringAnimScale = data._ringAnimScale !== undefined
+            ? data._ringAnimScale + (targetScale - data._ringAnimScale) * 0.18
+            : targetScale;
+          const as = data._ringAnimScale;
+          const rStroke = data.ring3D.userData._ringStroke;
+          const rFill   = data.ring3D.userData._ringFill;
+          if (rStroke) rStroke.scale.setScalar(as);
+          if (rFill)   rFill.scale.setScalar(as);
+
+          // ── Rotate arrow sprite to align with projected plane normal ─────
+          const arrowSprite = data.ring3D.userData._arrowSprite;
+          const planeNormal = data.ring3D.userData._planeNormal;
+          if (arrowSprite && planeNormal) {
+            const wPos = new THREE.Vector3();
+            arrowSprite.getWorldPosition(wPos);
+            const p1 = wPos.clone().project(this.camera);
+            const p2 = wPos.clone().add(planeNormal).project(this.camera);
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            if (Math.sqrt(dx * dx + dy * dy) > 0.0001) {
+              arrowSprite.material.rotation = -Math.atan2(dx, dy);
+            }
+          }
+        }
       }
     }
   }
 
   _buildActivePlaneContour() {
     this._clearActivePlaneContour();
-    if (!this.activeSectionPlaneId) return;
-    const planeData = this.clipPlanes.get(this.activeSectionPlaneId);
+    // During drag use the dragging plane; otherwise use the selected plane.
+    const targetId = this.dragPlaneId || this.activeSectionPlaneId;
+    if (!targetId) return;
+    const planeData = this.clipPlanes.get(targetId);
     if (!planeData) return;
 
     let allEdges = this._computePlaneIntersection(planeData.plane);
@@ -2007,7 +2512,7 @@ export class Sectioning {
       if (allEdges.length === 0) return;
     }
 
-    // Scene-relative offset so the contour/fill sit safely on the visible side
+    // Scene-relative offset so lines sit safely on the visible side of the plane
     const bounds = this.getSceneBounds();
     const bSize = new THREE.Vector3();
     bounds.getSize(bSize);
@@ -2015,56 +2520,51 @@ export class Sectioning {
     const offsetDir = planeData.plane.normal.clone();
     const offsetDist = diag * 0.005;
 
-    // Build a plane-local 2D coordinate system for boundary extraction
-    const normal = planeData.plane.normal;
-    let tangent = new THREE.Vector3();
-    if (Math.abs(normal.x) < 0.9) {
-      tangent.crossVectors(normal, new THREE.Vector3(1, 0, 0)).normalize();
-    } else {
-      tangent.crossVectors(normal, new THREE.Vector3(0, 1, 0)).normalize();
-    }
-    const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
-
-    // Collect all intersection points and compute their convex hull for the outer boundary
-    const hullEdges = this._computeConvexHullEdges(allEdges, tangent, bitangent, normal, planeData.plane);
-
     const contourScene = new THREE.Scene();
     contourScene.name = 'ActivePlaneContourScene';
 
-    // ── Contour stroke (convex hull boundary only) ──
-    if (hullEdges.length > 0) {
+    // ── Object cut-edge highlight — chain raw edges into per-object loops ──
+    // Each loop is one connected cross-section outline (a wall, column, floor, etc.).
+    // This shows the actual geometry edges being sliced rather than a convex hull.
+    const loops = this._chainEdgesIntoLoops(allEdges);
+    if (loops.length > 0) {
       const positions = [];
-      for (const [p1, p2] of hullEdges) {
-        positions.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+      for (const loop of loops) {
+        if (loop.length < 2) continue;
+        for (let i = 0; i < loop.length; i++) {
+          const p1 = loop[i];
+          const p2 = loop[(i + 1) % loop.length];
+          positions.push(
+            p1.x + offsetDir.x * offsetDist,
+            p1.y + offsetDir.y * offsetDist,
+            p1.z + offsetDir.z * offsetDist,
+            p2.x + offsetDir.x * offsetDist,
+            p2.y + offsetDir.y * offsetDist,
+            p2.z + offsetDir.z * offsetDist,
+          );
+        }
       }
-      for (let i = 0; i < positions.length; i += 3) {
-        positions[i]     += offsetDir.x * offsetDist;
-        positions[i + 1] += offsetDir.y * offsetDist;
-        positions[i + 2] += offsetDir.z * offsetDist;
+      if (positions.length > 0) {
+        const lsGeo = new LineSegmentsGeometry();
+        lsGeo.setPositions(positions);
+        const lsMat = new LineMaterial({
+          color: 0x56ff77,
+          linewidth: 1,
+          transparent: true,
+          opacity: 0.5,
+          depthTest: false,
+          worldUnits: false,
+          toneMapped: false,
+        });
+        lsMat.resolution.set(this.domElement.clientWidth, this.domElement.clientHeight);
+        const lineSegs = new LineSegments2(lsGeo, lsMat);
+        lineSegs.renderOrder = 998;
+        contourScene.add(lineSegs);
       }
-
-      const lsGeo = new LineSegmentsGeometry();
-      lsGeo.setPositions(positions);
-      const lsMat = new LineMaterial({
-        color: 0x00ff33,
-        linewidth: 4,
-        depthTest: false,
-        worldUnits: false,
-      });
-      lsMat.resolution.set(this.domElement.clientWidth, this.domElement.clientHeight);
-      const lineSegs = new LineSegments2(lsGeo, lsMat);
-      lineSegs.renderOrder = 998;
-      contourScene.add(lineSegs);
-    }
-
-    // ── Cross-section fill (uses ALL edges for complete coverage) ──
-    const fillMesh = this._buildCrossSectionFill(allEdges, planeData.plane, offsetDir, offsetDist * 0.5);
-    if (fillMesh) {
-      contourScene.add(fillMesh);
     }
 
     this._activePlaneContour = contourScene;
-    this._activePlaneContourPlaneId = this.activeSectionPlaneId;
+    this._activePlaneContourPlaneId = targetId;
   }
 
   _computeConvexHullEdges(edges, tangent, bitangent, normal, clipPlane) {
@@ -2186,6 +2686,7 @@ export class Sectioning {
       opacity: 0.13,
       side: THREE.DoubleSide,
       depthTest: false,
+      toneMapped: false,
     });
 
     const mesh = new THREE.Mesh(geo, mat);
@@ -2239,7 +2740,7 @@ export class Sectioning {
   }
 
   _renderActivePlaneContour() {
-    if (!this._activePlaneContour && !this.planeHoverMarker && !this._tiltGizmoScene) return;
+    if (!this.planeHoverMarker && !this._tiltGizmoScene && !this._activePlaneContour && !this._gizmoRingScene) return;
 
     const savedClipPlanes = this.renderer.clippingPlanes;
     const savedAutoClear = this.renderer.autoClear;
@@ -2248,13 +2749,7 @@ export class Sectioning {
 
     // Contour geometry is pre-clipped against other planes in _buildActivePlaneContour,
     // so render with no clipping to ensure the full stroke is always visible.
-    // The contour is still built when hidden so raycast-driven UI (e.g. the
-    // front-face drag-arrow hover) keeps working; we only skip the draw.
-    if (
-      this._activePlaneContour &&
-      this._planeContourVisible &&
-      this.activeSectionPlaneId
-    ) {
+    if (this._activePlaneContour) {
       this.renderer.clippingPlanes = [];
       this.renderer.render(this._activePlaneContour, this.camera);
     }
@@ -2275,6 +2770,13 @@ export class Sectioning {
     if (this._tiltGizmoScene && this._tiltGizmo) {
       this.renderer.clippingPlanes = [];
       this.renderer.render(this._tiltGizmoScene, this.camera);
+    }
+
+    // Render gizmo rings unclipped in the overlay pass for clean transparency
+    if (this._gizmoRingScene) {
+      this._gizmoRingScene.updateMatrixWorld(true);
+      this.renderer.clippingPlanes = [];
+      this.renderer.render(this._gizmoRingScene, this.camera);
     }
 
     this.renderer.autoClear = savedAutoClear;
@@ -2321,12 +2823,12 @@ export class Sectioning {
     const isSectioningTool = this.activeTool === 'section-plane' || this.activeTool === 'section-cut';
     if (!isSectioningTool) return;
 
-    // Enter commits the active edit-state plane back to its default state
-    // (icon-only). Works the same for both tools — the post-commit state
-    // is shared.
+    // Enter deselects the active plane (clears Flip/Delete context) without
+    // hiding anything — planes and gizmos are always visible in sectioning mode.
     if (event.key === 'Enter') {
       if (this.activeSectionPlaneId) {
-        this._setSectionPlaneDefault(this.activeSectionPlaneId);
+        this.activeSectionPlaneId = null;
+        this.emit('active-plane-change', { planeId: null });
         event.preventDefault();
       }
     } else if (event.key === 'f' || event.key === 'F') {
@@ -2343,7 +2845,7 @@ export class Sectioning {
       // section-cut tool is active and we have a placement preview to
       // refresh — i.e. we're hovering on a surface.
       if (this.activeTool === 'section-cut') {
-        this._cutRotationAngle += Math.PI / 4;
+        this._cutRotationAngle -= Math.PI / 4;
         if (this._lastCutHover) {
           // Rebuild the whole hover marker (crosshair + line) so the
           // rotation snaps through both visuals on the same frame —
@@ -2370,7 +2872,7 @@ export class Sectioning {
     this._removeCutSurfaceHighlight();
     this.clearCutHoverMarker();
     this.clearPlaneHoverMarker();
-    this._clearAllPlaneOverlays();
+    this._clearAllPlaneGizmos();
     this._clearActivePlaneContour();
     this.updateRendererClipPlanes();
   }
@@ -2429,6 +2931,10 @@ export class Sectioning {
     }
 
     this.updateRendererClipPlanes();
+
+    // Invalidate cached 2D cross-section bounds so gizmo repositions correctly
+    const gizmoData = this._planeGizmos.get(planeId);
+    if (gizmoData) gizmoData.planeBounds2D = null;
 
     this._pushAction({
       type: 'flip-plane',
@@ -2548,7 +3054,11 @@ export class Sectioning {
       });
       const rawHits = this.raycaster.intersectObjects(modelMeshes, false);
       const visibleHits = this._filterClippedHits(rawHits);
-      if (visibleHits.length === 0) return;
+      if (visibleHits.length === 0) {
+        // Click on empty space → deselect through proper channel so ring visuals reset
+        this._selectSectionPlane(null);
+        return;
+      }
 
       const hit = visibleHits[0];
       const hitNormal = this.getWorldNormalFromHit(hit);
@@ -2559,85 +3069,24 @@ export class Sectioning {
       bounds.getSize(bSize);
       const threshold = Math.max(bSize.x, bSize.y, bSize.z) * 0.02;
 
-      // If there's an active edit-state plane and click is near it → drag.
-      // This works the same under both tools — once a plane is in edit
-      // state, hovering its cut shows the drag arrow and clicking starts
-      // a translation drag along the plane normal.
-      if (this.activeSectionPlaneId) {
-        const activePd = this.clipPlanes.get(this.activeSectionPlaneId);
-        if (activePd) {
-          const mathPlane = new THREE.Plane();
-          mathPlane.setFromNormalAndCoplanarPoint(activePd.normal, activePd.point);
-          const distToPlane = Math.abs(mathPlane.distanceToPoint(hit.point));
-
-          if (distToPlane < threshold) {
-            const planeHit = new THREE.Vector3();
-            this.raycaster.ray.intersectPlane(mathPlane, planeHit);
-            if (planeHit && this._beginPlaneDrag(this.activeSectionPlaneId, planeHit.clone())) {
-              this.setPlaneHoverMarker(planeHit, activePd.normal, { scale: 4 });
-              this._setCursor('none');
-              event.stopPropagation();
-              event.preventDefault();
-            }
-            return;
-          }
-          // Click is on model but NOT near the active plane → set it to default, continue
-          this._setSectionPlaneDefault(this.activeSectionPlaneId);
-        }
-      }
-
-      // Click is near ANY existing default-state plane — enter edit state
-      // AND begin a drag in the same gesture. With the edit-icon gizmo gone,
-      // every committed plane behaves like it's always editable: hover
-      // surfaces the drag arrow, mousedown immediately starts translating.
-      for (const [existingId, pd] of this.clipPlanes) {
-        const mathPlane = new THREE.Plane();
-        mathPlane.setFromNormalAndCoplanarPoint(pd.normal, pd.point);
-        if (Math.abs(mathPlane.distanceToPoint(hit.point)) < threshold) {
-          const planeHit = new THREE.Vector3();
-          const intersected = this.raycaster.ray.intersectPlane(mathPlane, planeHit);
-          this._editSectionPlane(existingId);
-          if (intersected && this._beginPlaneDrag(existingId, planeHit.clone())) {
-            this.setPlaneHoverMarker(planeHit, pd.normal, { scale: 4 });
-            this._setCursor('none');
-          }
-          event.stopPropagation();
-          event.preventDefault();
-          return;
-        }
-      }
-
-      // Click is on model and not near any existing plane → create new plane.
-      // The placement *gesture* is what differs between the two tools:
-      //   section-plane: plane lies along the surface (normal = surface normal)
-      //   section-cut:   plane slices through the surface (normal ⟂ surface)
+      // Click is on model → create a new plane. The gizmo appears immediately;
+      // dragging is initiated only by clicking the gizmo, not by this click.
       if (this.activeTool === 'section-plane') {
         const inwardNormal = this._resolveInwardSectionPlaneNormal(hit.point, hitNormal);
         const outwardNormal = inwardNormal.clone().negate();
         const placementPoint = this._getSectionPlanePlacementPoint(hit.point, inwardNormal);
         const planeId = this.addClipPlane(outwardNormal, placementPoint, { creatorTool: 'section-plane' });
-        this._setActiveSectionPlane(planeId);
-        // No contour build here — _beginPlaneDrag will be cleared anyway, and
-        // mouseup rebuilds it. If the user clicks without dragging, mouseup
-        // still goes through the drag-end branch and builds the contour.
-        this._beginPlaneDrag(planeId, hit.point.clone());
-        this.setPlaneHoverMarker(hit.point, hitNormal, { scale: 4 });
-        this._setCursor('none');
+        this._showPlaneGizmo(planeId);
+        this._selectSectionPlane(planeId);
       } else {
-        // section-cut: place a plane whose normal is perpendicular to the
-        // surface normal at the click point, so the cut slices into the
-        // model. Mirrors the angle=0 result of the old rotation gizmo.
-        // The new plane goes straight into edit state (helper visible,
-        // contour drawn) — identical to section-plane's post-placement
-        // flow. The next placement will drop this plane to default.
+        // section-cut: normal perpendicular to the surface normal so the cut
+        // slices through the model rather than along the surface.
         const cutNormal = this._computeSectionCutNormal(hitNormal);
         const planeId = this.addClipPlane(cutNormal, hit.point, { creatorTool: 'section-cut' });
-        this._setActiveSectionPlane(planeId);
-        this._buildActivePlaneContour();
         this.clearCutHoverMarker();
         this._removeCutSurfaceHighlight();
-        this.setPlaneHoverMarker(hit.point, cutNormal, { scale: 4 });
-        this._setCursor('none');
+        this._showPlaneGizmo(planeId);
+        this._selectSectionPlane(planeId);
       }
       event.stopPropagation();
       event.preventDefault();
@@ -2675,15 +3124,23 @@ export class Sectioning {
     this.updateMouse(event);
     this.raycaster.setFromCamera(this.mouse, this.camera);
 
-    // ── Plane context menu open: suppress all hover affordances so the user
-    // gets a normal cursor over the menu and the surrounding viewer. ──
-    if (this._planeContextMenuOpen) {
-      this.clearPlaneHoverMarker();
-      this.clearCutHoverMarker();
-      this._removeCutSurfaceHighlight();
-      this.clearHoverHighlight();
-      this._setCursor('');
-      return;
+    // ── Synchronous gizmo proximity check ────────────────────────────────────
+    // _hoveredPlaneId is also updated in the RAF render loop, but that runs one
+    // frame after mousemove. Recalculate it here immediately using the DOM
+    // element's bounding rect — the most accurate source since it IS the hit area.
+    if (!this.isDragging && this._planeGizmos.size > 0) {
+      let foundId = null;
+      for (const [pid, data] of this._planeGizmos) {
+        if (!data.el || data.el.style.display === 'none') continue;
+        const er = data.el.getBoundingClientRect();
+        const cx = er.left + er.width  / 2;
+        const cy = er.top  + er.height / 2;
+        if (Math.abs(event.clientX - cx) < 34 && Math.abs(event.clientY - cy) < 34) {
+          foundId = pid;
+          break;
+        }
+      }
+      this._hoveredPlaneId = foundId;
     }
 
     // ── Tilt gizmo drag ──
@@ -2774,22 +3231,37 @@ export class Sectioning {
       const intersection = new THREE.Vector3();
       if (this.raycaster.ray.intersectPlane(this.dragPlane, intersection)) {
         const delta = intersection.clone().sub(this.dragStartPoint);
-        const distance = delta.dot(planeData.normal);
+        let distance = delta.dot(planeData.normal);
+
+        // Elastic boundary: inside the model AABB the plane moves normally.
+        // Outside it, movement is heavily resisted (25% speed) and capped at
+        // 8% of the AABB span so it never floats far away.  On release the
+        // spring-back animation returns it smoothly to the nearest boundary.
+        if (this._dragMinD != null && this._dragMaxD != null) {
+          const span       = this._dragMaxD - this._dragMinD;
+          const maxOver    = span * 0.08;
+          const currentD   = planeData.point.dot(planeData.normal);
+          const proposedD  = currentD + distance;
+
+          if (proposedD < this._dragMinD) {
+            const over     = proposedD - this._dragMinD; // negative
+            const softOver = Math.max(-maxOver, over * 0.25);
+            distance       = (this._dragMinD + softOver) - currentD;
+          } else if (proposedD > this._dragMaxD) {
+            const over     = proposedD - this._dragMaxD; // positive
+            const softOver = Math.min(maxOver, over * 0.25);
+            distance       = (this._dragMaxD + softOver) - currentD;
+          }
+        }
 
         if (Math.abs(distance) > 0.001) {
           this.movePlane(this.dragPlaneId, distance);
           this.dragStartPoint.copy(intersection);
+          // Rebuild the contour outline once per frame while dragging.
+          this._scheduleActivePlaneContourUpdate();
         }
       }
-      if (this.planeHoverMarker && planeData) {
-        const markerPlane = new THREE.Plane();
-        markerPlane.setFromNormalAndCoplanarPoint(planeData.normal, planeData.point);
-        const markerPos = new THREE.Vector3();
-        if (this.raycaster.ray.intersectPlane(markerPlane, markerPos)) {
-          this.planeHoverMarker.position.copy(markerPos);
-        }
-      }
-      // Contour rebuild is deferred until mouseup — see _beginPlaneDrag.
+      // No planeHoverMarker to update — drag is gizmo-driven, not cursor-driven.
       this._updateTiltGizmoPosition(this.dragPlaneId);
       this._setCursor('none');
       return;
@@ -2807,52 +3279,22 @@ export class Sectioning {
     if (this.activeTool === 'section-cut' || this.activeTool === 'section-plane') {
       const isSectionPlane = this.activeTool === 'section-plane';
 
-      const bounds = this.getSceneBounds();
-      const _bSize = new THREE.Vector3();
-      bounds.getSize(_bSize);
-      const nearPlaneThreshold = Math.max(_bSize.x, _bSize.y, _bSize.z) * 0.02;
-
-      // ── Edit-state plane ──
-      // Raycast against the green fill mesh of the active plane's contour.
-      // The fill mesh is exactly the green rectangle the user sees, so the
-      // drag arrow only shows when the cursor is inside that green area.
-      // Outside it, fall through to normal placement cursor behaviour.
-      if (this.activeSectionPlaneId && this._activePlaneContour) {
-        const activePd = this.clipPlanes.get(this.activeSectionPlaneId);
-        if (activePd) {
-          const fillMeshes = [];
-          this._activePlaneContour.traverse(obj => {
-            if (obj.isMesh && obj.userData.isPlaneContourFill) fillMeshes.push(obj);
-          });
-
-          if (fillMeshes.length > 0) {
-            const fillHits = this.raycaster.intersectObjects(fillMeshes, false);
-            if (fillHits.length > 0) {
-              // Front face of the plane only: dot(rayDir, normal) < 0 means
-              // the ray is striking the side the normal points out of, so the
-              // drag arrow should show. A back-face hit falls through to the
-              // normal placement cursor.
-              const dot = this.raycaster.ray.direction.dot(activePd.normal);
-              if (dot < 0) {
-                const mathPlane = new THREE.Plane();
-                mathPlane.setFromNormalAndCoplanarPoint(activePd.normal, activePd.point);
-                const planeHit = new THREE.Vector3();
-                if (this.raycaster.ray.intersectPlane(mathPlane, planeHit)) {
-                  this.clearCutHoverMarker();
-                  this._removeCutSurfaceHighlight();
-                  this.clearHoverHighlight();
-                  this.setPlaneHoverMarker(planeHit, activePd.normal, { scale: 4 });
-                  this._setCursor('none');
-                  return;
-                }
-              }
-            }
-          }
-        }
+      // Cursor is over a plane gizmo — suppress placement cursor and show pointer.
+      // Use the frame-accurate _hoveredPlaneId (set by proximity check every frame)
+      // rather than _hoveringPlaneGizmo (DOM mouseenter/leave) which misses cases
+      // where a gizmo spawns or moves under the cursor without a real entry event.
+      if (this._hoveredPlaneId !== null) {
+        this.clearCutHoverMarker();
+        this.clearPlaneHoverMarker();
+        this._removeCutSurfaceHighlight();
+        this.clearHoverHighlight();
+        this._setCursor('pointer');
+        return;
       }
 
-      // ── No plane in edit state (or cursor is outside the green plane area). ──
-
+      // ── Placement cursor — show the tool's cursor on model surfaces ──
+      // Drag is now exclusively initiated via the plane gizmo, so there is
+      // no hover-near-plane drag-arrow logic here any more.
       const modelMeshes = [];
       this.scene.traverse(obj => {
         if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isTiltGizmo) {
@@ -2862,31 +3304,7 @@ export class Sectioning {
       const rawHits = this.raycaster.intersectObjects(modelMeshes, false);
       const modelHits = this._filterClippedHits(rawHits);
 
-      // First, if the cursor is near any committed default-state plane,
-      // surface the drag arrow (mousedown will enter edit + drag in one
-      // step). This unifies "click near a cut to start moving it" across
-      // both tools.
       if (modelHits.length > 0) {
-        const hitPoint = modelHits[0].point;
-        for (const [, pd] of this.clipPlanes) {
-          const mathPlane = new THREE.Plane();
-          mathPlane.setFromNormalAndCoplanarPoint(pd.normal, pd.point);
-          if (Math.abs(mathPlane.distanceToPoint(hitPoint)) < nearPlaneThreshold) {
-            const planeHit = new THREE.Vector3();
-            if (this.raycaster.ray.intersectPlane(mathPlane, planeHit)) {
-              this.clearCutHoverMarker();
-              this._removeCutSurfaceHighlight();
-              this.clearHoverHighlight();
-              this.setPlaneHoverMarker(planeHit, pd.normal, { scale: 4 });
-              this._setCursor('none');
-              return;
-            }
-          }
-        }
-
-        // Otherwise, show the tool's placement cursor (drag arrow for
-        // section-plane, crosshair/scissors for section-cut) on the
-        // hovered surface.
         const normal = this.getWorldNormalFromHit(modelHits[0]);
         if (normal) {
           this.clearHoverHighlight();
@@ -2917,94 +3335,7 @@ export class Sectioning {
 
     // Default hover for other tools
     this.clearHoverHighlight();
-    this._setCursor(intersects.length > 0 ? 'grab' : '');
-  }
-
-  /**
-   * Right-click on (or near) a plane while in a sectioning tool opens the
-   * Flip / Delete context menu. Emits 'request-plane-context-menu' with the
-   * planeId and viewport coords so the React layer can render it.
-   */
-  onContextMenu(event) {
-    const isSectioningTool = this.activeTool === 'section-cut' || this.activeTool === 'section-plane';
-    if (!isSectioningTool) return;
-
-    this.updateMouse(event);
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-
-    const bounds = this.getSceneBounds();
-    const _bSize = new THREE.Vector3();
-    bounds.getSize(_bSize);
-    const threshold = Math.max(_bSize.x, _bSize.y, _bSize.z) * 0.02;
-
-    let targetPlaneId = null;
-
-    // Prefer a hit on the active plane's fill (front-face only) — same gate
-    // as the hover/drag logic, so right-click feels co-located with the cursor.
-    if (this.activeSectionPlaneId && this._activePlaneContour) {
-      const activePd = this.clipPlanes.get(this.activeSectionPlaneId);
-      if (activePd) {
-        const fillMeshes = [];
-        this._activePlaneContour.traverse(obj => {
-          if (obj.isMesh && obj.userData.isPlaneContourFill) fillMeshes.push(obj);
-        });
-        if (fillMeshes.length > 0) {
-          const fillHits = this.raycaster.intersectObjects(fillMeshes, false);
-          if (fillHits.length > 0 && this.raycaster.ray.direction.dot(activePd.normal) < 0) {
-            targetPlaneId = this.activeSectionPlaneId;
-          }
-        }
-      }
-    }
-
-    // Fall back to proximity to any committed plane via model raycast.
-    if (!targetPlaneId) {
-      const modelMeshes = [];
-      this.scene.traverse(obj => {
-        if (obj.isMesh && obj.visible && !obj.userData.isPlaneHelper && !obj.userData.isTiltGizmo) {
-          modelMeshes.push(obj);
-        }
-      });
-      const rawHits = this.raycaster.intersectObjects(modelMeshes, false);
-      const modelHits = this._filterClippedHits(rawHits);
-      if (modelHits.length > 0) {
-        const hitPoint = modelHits[0].point;
-        for (const [planeId, pd] of this.clipPlanes) {
-          const mathPlane = new THREE.Plane();
-          mathPlane.setFromNormalAndCoplanarPoint(pd.normal, pd.point);
-          if (Math.abs(mathPlane.distanceToPoint(hitPoint)) < threshold) {
-            targetPlaneId = planeId;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!targetPlaneId) return;
-
-    event.preventDefault();
-    // Make the right-clicked plane active so Flip/Delete (which operate on
-    // the active plane) target the one the user is pointing at.
-    if (this.activeSectionPlaneId !== targetPlaneId) {
-      this._editSectionPlane(targetPlaneId);
-    }
-    this.setPlaneContextMenuOpen(true);
-    this.emit('request-plane-context-menu', {
-      planeId: targetPlaneId,
-      x: event.clientX,
-      y: event.clientY,
-    });
-  }
-
-  setPlaneContextMenuOpen(open) {
-    this._planeContextMenuOpen = Boolean(open);
-    if (this._planeContextMenuOpen) {
-      this.clearPlaneHoverMarker();
-      this.clearCutHoverMarker();
-      this._removeCutSurfaceHighlight();
-      this.clearHoverHighlight();
-      this._setCursor('');
-    }
+    this._setCursor(intersects.length > 0 ? 'pointer' : '');
   }
 
   /**
@@ -3070,16 +3401,49 @@ export class Sectioning {
       this.isDragging = false;
       this.dragPlaneId = null;
       this._dragCumulativeDistance = 0;
+
+      // Spring-back: if the plane was dragged beyond the model AABB, animate
+      // it back to the nearest boundary instead of leaving it out of bounds.
+      if (this._dragMinD != null && this._dragMaxD != null && draggedPlaneId) {
+        const pd = this.clipPlanes.get(draggedPlaneId);
+        if (pd) {
+          const currentD = pd.point.dot(pd.normal);
+          const clampedD = Math.max(this._dragMinD, Math.min(this._dragMaxD, currentD));
+          if (Math.abs(clampedD - currentD) > 0.001) {
+            this._springPlaneId  = draggedPlaneId;
+            this._springTargetD  = clampedD;
+            this._springVelocity = 0;
+          }
+        }
+      }
+      this._dragMinD = null;
+      this._dragMaxD = null;
       // Drop the cached mesh list and run a final synchronous, accurate build
       // so the contour reflects the exact resting position even if a queued
       // rAF rebuild was still pending mid-drag.
       this._dragMeshCache = null;
+      // Cancel any pending contour rebuild and clear the outline — it should
+      // only be visible while actively dragging.
       if (this._activeContourRafId) {
         cancelAnimationFrame(this._activeContourRafId);
         this._activeContourRafId = 0;
       }
-      if (draggedPlaneId && this.activeSectionPlaneId === draggedPlaneId) {
-        this._buildActivePlaneContour();
+      this._clearActivePlaneContour();
+      // Update gizmo anchor after drag completes
+      if (draggedPlaneId) {
+        const gizmoData = this._planeGizmos.get(draggedPlaneId);
+        if (gizmoData) {
+          // Anchor the centroid to wherever the gizmo visually landed — no
+          // recentering after release. Camera-following still works from here.
+          if (gizmoData.currentPos) {
+            gizmoData.centroid.copy(gizmoData.currentPos);
+          }
+          // Invalidate cached 2D bounds so they're recomputed at the new plane position
+          gizmoData.planeBounds2D = null;
+        }
+        // Restore pointer cursor on the gizmo element
+        const g = this._planeGizmos.get(draggedPlaneId);
+        if (g?.el) g.el.style.cursor = 'pointer';
       }
       this.clearPlaneHoverMarker();
       this._setCursor('');
@@ -3094,6 +3458,9 @@ export class Sectioning {
     const rect = this.domElement.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    // Store raw client coords for gizmo hover detection (screen-space distance check).
+    this._cursorClientX = event.clientX;
+    this._cursorClientY = event.clientY;
   }
 
   /**
@@ -3189,9 +3556,8 @@ export class Sectioning {
 
   destroy() {
     this.domElement.removeEventListener('mousedown', this.boundOnMouseDown);
-    this.domElement.removeEventListener('mousemove', this.boundOnMouseMove);
+    window.removeEventListener('mousemove', this.boundOnMouseMove, { capture: true });
     this.domElement.removeEventListener('mouseup', this.boundOnMouseUp);
-    this.domElement.removeEventListener('contextmenu', this.boundOnContextMenu);
     document.removeEventListener('keydown', this.boundOnKeyDown);
 
     if (this._overlayAnimId != null) {
@@ -3199,7 +3565,7 @@ export class Sectioning {
     }
 
     this.clearAll();
-    this._clearAllPlaneOverlays();
+    this._clearAllPlaneGizmos();
 
     if (this.scissorsOverlay && this.scissorsOverlay.parentElement) {
       this.scissorsOverlay.parentElement.removeChild(this.scissorsOverlay);

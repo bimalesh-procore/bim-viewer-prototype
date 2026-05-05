@@ -308,7 +308,7 @@ export function GlobalSearchOverlay() {
   return (
     <div
       ref={overlayRef}
-      className="fixed z-[100] flex flex-col gap-2 overflow-visible"
+      className="fixed z-[600] flex flex-col gap-2 overflow-visible"
       style={{
         top: overlayPos?.top ?? 0,
         left: overlayPos?.left ?? '50%',

@@ -26,6 +26,8 @@ export function ModeIdentifierOverlay() {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const seenLabels = useRef<Set<string>>(new Set());
+  const autoCollapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const manuallyExpanded = useRef(false);
 
   const modeDescriptionByMode: Record<ModeIdentifierMode, string> = {
     default: '',
@@ -61,11 +63,33 @@ export function ModeIdentifierOverlay() {
       setModeState(detail);
       const firstVisit = !seenLabels.current.has(detail.label);
       seenLabels.current.add(detail.label);
-      setIsExpanded(firstVisit);
       setLightboxOpen(false);
+
+      // Clear any existing auto-collapse timer
+      if (autoCollapseTimer.current) {
+        clearTimeout(autoCollapseTimer.current);
+        autoCollapseTimer.current = null;
+      }
+
+      if (firstVisit) {
+        manuallyExpanded.current = false;
+        setIsExpanded(true);
+        // Auto-collapse after 5 s unless the user manually opened it
+        autoCollapseTimer.current = setTimeout(() => {
+          if (!manuallyExpanded.current) {
+            setIsExpanded(false);
+          }
+          autoCollapseTimer.current = null;
+        }, 5000);
+      } else {
+        setIsExpanded(false);
+      }
     };
     window.addEventListener('mv:mode-identifier', handler);
-    return () => window.removeEventListener('mv:mode-identifier', handler);
+    return () => {
+      window.removeEventListener('mv:mode-identifier', handler);
+      if (autoCollapseTimer.current) clearTimeout(autoCollapseTimer.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -103,7 +127,15 @@ export function ModeIdentifierOverlay() {
               type="button"
               aria-label="Mode identifier toggle"
               aria-expanded={isExpanded}
-              onClick={() => setIsExpanded((prev) => !prev)}
+              onClick={() => {
+                // Mark as manually controlled — cancel the auto-collapse timer
+                manuallyExpanded.current = true;
+                if (autoCollapseTimer.current) {
+                  clearTimeout(autoCollapseTimer.current);
+                  autoCollapseTimer.current = null;
+                }
+                setIsExpanded((prev) => !prev);
+              }}
               className="w-6 h-6 rounded-[6px] bg-[#3E3E3E] hover:bg-[#4A4A4A] transition-colors flex items-center justify-center shrink-0"
             >
               <img

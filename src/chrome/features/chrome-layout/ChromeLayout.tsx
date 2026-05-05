@@ -72,6 +72,7 @@ export function ChromeLayout({
 
   return (
     <div className="flex flex-col h-screen w-screen bg-white">
+      <GlobalSearchOverlay />
       <div className="relative flex-shrink-0 z-30">
         <Header
           onUploadClick={onUploadClick}
@@ -79,7 +80,6 @@ export function ChromeLayout({
           activeModelId={activeModelId}
           onSelectModel={onSelectModel}
         />
-        <GlobalSearchOverlay />
       </div>
 
       {streamingProgress != null && (

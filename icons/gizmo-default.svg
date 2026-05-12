@@ -1,0 +1,52 @@
+<svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    Plane gizmo  DEFAULT state
+    Ring outer r=80, strokeW=4, dotR=16
+    Fill: rgba(0,0,0,0.30) donut between dotR and outer ring
+    Arrows: billboard arrows as seen face-on to a vertical plane
+  -->
+
+  <!-- Ring fill (donut: from dotR=16 to r-strokeW=76) -->
+  <path fill-rule="evenodd" fill="rgba(0,0,0,0.30)"
+    d="M 44,120 A 76,76 0 1 0 196,120 A 76,76 0 1 0 44,120 Z
+       M 104,120 A 16,16 0 1 0 136,120 A 16,16 0 1 0 104,120 Z"/>
+
+  <!-- Outer ring stroke (inner edge r=76, outer r=80, centered at r=78) -->
+  <circle cx="120" cy="120" r="78" stroke="#56FF77" stroke-width="4"/>
+
+  <!-- Top arrow  full opacity, pointing up/outward (primary direction) -->
+  <path
+    d="M 125,120 L 125,92
+       Q 125,85 132,85
+       L 135,85
+       Q 140,85 138.03,80.4
+       L 121.97,42.6
+       Q 120,38 118.03,42.6
+       L 101.97,80.4
+       Q 100,85 105,85
+       L 108,85
+       Q 115,85 115,92
+       L 115,120 Z"
+    fill="#194D1E" stroke="#56FF77" stroke-width="2.5"
+    stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- Bottom arrow  40% opacity, pointing down/inward -->
+  <path
+    d="M 125,120 L 125,148
+       Q 125,155 132,155
+       L 135,155
+       Q 140,155 138.3,149.7
+       L 121.7,197.3
+       Q 120,202 118.3,197.3
+       L 101.7,149.7
+       Q 100,155 105,155
+       L 108,155
+       Q 115,155 115,148
+       L 115,120 Z"
+    fill="#194D1E" stroke="#56FF77" stroke-width="2.5"
+    stroke-linejoin="round" stroke-linecap="round"
+    opacity="0.4"/>
+
+  <!-- Center dot (on top of arrows and fill) -->
+  <circle cx="120" cy="120" r="16" fill="#56FF77"/>
+</svg>

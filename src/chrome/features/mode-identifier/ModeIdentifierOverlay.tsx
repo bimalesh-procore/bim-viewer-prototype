@@ -23,10 +23,12 @@ export function ModeIdentifierOverlay() {
     subTool: null,
   });
   const [isExpanded, setIsExpanded] = useState(false);
+  const [visible, setVisible] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const seenLabels = useRef<Set<string>>(new Set());
   const autoCollapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manuallyExpanded = useRef(false);
 
   const modeDescriptionByMode: Record<ModeIdentifierMode, string> = {
@@ -65,30 +67,45 @@ export function ModeIdentifierOverlay() {
       seenLabels.current.add(detail.label);
       setLightboxOpen(false);
 
-      // Clear any existing auto-collapse timer
+      // Clear any existing timers
       if (autoCollapseTimer.current) {
         clearTimeout(autoCollapseTimer.current);
         autoCollapseTimer.current = null;
       }
+      if (hideTimer.current) {
+        clearTimeout(hideTimer.current);
+        hideTimer.current = null;
+      }
+
+      manuallyExpanded.current = false;
+      setVisible(true);
 
       if (firstVisit) {
-        manuallyExpanded.current = false;
         setIsExpanded(true);
-        // Auto-collapse after 5 s unless the user manually opened it
+        // Auto-collapse after 1.5 s unless the user manually opened it
         autoCollapseTimer.current = setTimeout(() => {
           if (!manuallyExpanded.current) {
             setIsExpanded(false);
           }
           autoCollapseTimer.current = null;
-        }, 5000);
+        }, 1500);
       } else {
         setIsExpanded(false);
       }
+
+      // Hide entirely after 2 s unless the user has manually interacted
+      hideTimer.current = setTimeout(() => {
+        if (!manuallyExpanded.current) {
+          setVisible(false);
+        }
+        hideTimer.current = null;
+      }, 2000);
     };
     window.addEventListener('mv:mode-identifier', handler);
     return () => {
       window.removeEventListener('mv:mode-identifier', handler);
       if (autoCollapseTimer.current) clearTimeout(autoCollapseTimer.current);
+      if (hideTimer.current) clearTimeout(hideTimer.current);
     };
   }, []);
 
@@ -116,7 +133,10 @@ export function ModeIdentifierOverlay() {
 
   return (
     <>
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[240] pointer-events-auto">
+      <div
+        className="absolute top-4 left-1/2 -translate-x-1/2 z-[240] pointer-events-auto transition-opacity duration-300"
+        style={{ opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none' }}
+      >
         <div
           className={`p-1 rounded-[8px] border border-[#3b4044] bg-[#171a1c] text-white shadow-[0px_4px_20px_rgba(0,0,0,0.35)]${
             isExpanded ? ' w-[350px]' : ''
@@ -128,11 +148,15 @@ export function ModeIdentifierOverlay() {
               aria-label="Mode identifier toggle"
               aria-expanded={isExpanded}
               onClick={() => {
-                // Mark as manually controlled — cancel the auto-collapse timer
+                // Mark as manually controlled — cancel both auto-collapse and hide timers
                 manuallyExpanded.current = true;
                 if (autoCollapseTimer.current) {
                   clearTimeout(autoCollapseTimer.current);
                   autoCollapseTimer.current = null;
+                }
+                if (hideTimer.current) {
+                  clearTimeout(hideTimer.current);
+                  hideTimer.current = null;
                 }
                 setIsExpanded((prev) => !prev);
               }}

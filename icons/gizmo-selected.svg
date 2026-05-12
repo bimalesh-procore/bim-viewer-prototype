@@ -1,0 +1,55 @@
+<svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    Plane gizmo  SELECTED state
+    Ring/dot scaled 1.22� AND geometry updated with 4/3� multiplier:
+      strokeW = 0.05 � (4/3) � 1.22 � 80 = 6.5px
+      dotR    = 0.196 � (4/3) � 1.22 � 80 = 25.5px
+      ring outer r = 98 (same as hover)
+    Fill: rgba(69,204,95,0.50) [#45CC5F  medium green, 50% opacity]
+    Arrows: same size as default (do not scale with ring)
+  -->
+
+  <!-- Ring fill (donut: dotR=25.5 to r-strokeW=91.5)  green tint -->
+  <path fill-rule="evenodd" fill="#45CC5F" fill-opacity="0.5"
+    d="M 28.5,120 A 91.5,91.5 0 1 0 211.5,120 A 91.5,91.5 0 1 0 28.5,120 Z
+       M 94.5,120 A 25.5,25.5 0 1 0 145.5,120 A 25.5,25.5 0 1 0 94.5,120 Z"/>
+
+  <!-- Outer ring stroke (strokeW=6.5, centered at r=94.75) -->
+  <circle cx="120" cy="120" r="94.75" stroke="#56FF77" stroke-width="6.5"/>
+
+  <!-- Top arrow  same size as default, full opacity -->
+  <path
+    d="M 125,120 L 125,92
+       Q 125,85 132,85
+       L 135,85
+       Q 140,85 138.03,80.4
+       L 121.97,42.6
+       Q 120,38 118.03,42.6
+       L 101.97,80.4
+       Q 100,85 105,85
+       L 108,85
+       Q 115,85 115,92
+       L 115,120 Z"
+    fill="#194D1E" stroke="#56FF77" stroke-width="2.5"
+    stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- Bottom arrow  40% opacity -->
+  <path
+    d="M 125,120 L 125,148
+       Q 125,155 132,155
+       L 135,155
+       Q 140,155 138.3,149.7
+       L 121.7,197.3
+       Q 120,202 118.3,197.3
+       L 101.7,149.7
+       Q 100,155 105,155
+       L 108,155
+       Q 115,155 115,148
+       L 115,120 Z"
+    fill="#194D1E" stroke="#56FF77" stroke-width="2.5"
+    stroke-linejoin="round" stroke-linecap="round"
+    opacity="0.4"/>
+
+  <!-- Center dot (scaled: r=25.5) -->
+  <circle cx="120" cy="120" r="25.5" fill="#56FF77"/>
+</svg>

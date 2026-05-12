@@ -177,10 +177,10 @@ export function RightToolbar() {
       if (sourceId === 'mode:sectioning') {
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-box');
+        setActiveSectionTool('section-plane');
         setOpenFlyout(null);
         adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-box');
+        adapter.setActiveSectioningTool?.('section-plane');
         return;
       }
       if (sourceId === 'sectioning:section-box') {
@@ -387,13 +387,20 @@ export function RightToolbar() {
       src: sectioningIcon,
       label: 'Sectioning',
       shortcut: 'X X',
-      onClick: () => setOpenFlyout((prev) => (prev === 'sectioning' ? null : 'sectioning')),
+      onClick: () => {
+        exitMarkupIfActive();
+        setActiveMode('sectioning');
+        setActiveSectionTool('section-plane');
+        setOpenFlyout(null);
+        adapter.setSectioningActive?.(true);
+        adapter.setActiveSectioningTool?.('section-plane');
+      },
       enterMode: () => {
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-box');
+        setActiveSectionTool('section-plane');
         adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-box');
+        adapter.setActiveSectioningTool?.('section-plane');
       },
     },
   ];
@@ -420,7 +427,7 @@ export function RightToolbar() {
       {/* Tools group */}
       <RightToolbarGroup>
         {modeButtons.map((button) => {
-          const hasFlyout = button.id === 'measure' || button.id === 'create' || button.id === 'sectioning';
+          const hasFlyout = button.id === 'measure' || button.id === 'create';
 
           if (button.id === 'measure') {
             return (
@@ -544,37 +551,15 @@ export function RightToolbar() {
 
           if (button.id === 'sectioning') {
             return (
-              <div key={button.id} className="relative">
-                <RightToolbarButton
-                  src={button.src}
-                  label={button.label}
-                  shortcut={button.shortcut}
-                  showTooltip={lowerDefaultTooltips}
-                  hasFlyout
-                  isActive={openFlyout === 'sectioning'}
-                  onClick={button.onClick}
-                />
-                {openFlyout === 'sectioning' && (
-                  <div
-                    className="absolute right-full top-0 mr-2 z-[230] flex flex-col gap-2 w-max"
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      setShowFlyoutTooltips(true);
-                      setShowTooltips(false);
-                    }}
-                    onMouseLeave={() => {
-                      setShowFlyoutTooltips(false);
-                      setShowTooltips(true);
-                    }}
-                  >
-                    <RightToolbarGroup>
-                      <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" showTooltip={showFlyoutTooltips} onClick={() => { exitMarkupIfActive(); setActiveSectionTool('section-box'); setActiveMode('sectioning'); setOpenFlyout(null); adapter.setSectioningActive?.(true); adapter.setActiveSectioningTool?.('section-box'); }} />
-                      <RightToolbarButton src={sectionPlaneIcon} label="Section plane" shortcut="--" showTooltip={showFlyoutTooltips} onClick={() => { exitMarkupIfActive(); setActiveSectionTool('section-plane'); setActiveMode('sectioning'); setOpenFlyout(null); adapter.setSectioningActive?.(true); adapter.setActiveSectioningTool?.('section-plane'); }} />
-                      <RightToolbarButton src={sectionCutIcon} label="Section cut" shortcut="--" showTooltip={showFlyoutTooltips} onClick={() => { exitMarkupIfActive(); setActiveSectionTool('section-cut'); setActiveMode('sectioning'); setOpenFlyout(null); adapter.setSectioningActive?.(true); adapter.setActiveSectioningTool?.('section-cut'); }} />
-                    </RightToolbarGroup>
-                  </div>
-                )}
-              </div>
+              <RightToolbarButton
+                key={button.id}
+                src={button.src}
+                label={button.label}
+                shortcut={button.shortcut}
+                showTooltip={lowerDefaultTooltips}
+                isActive={false}
+                onClick={button.onClick}
+              />
             );
           }
 

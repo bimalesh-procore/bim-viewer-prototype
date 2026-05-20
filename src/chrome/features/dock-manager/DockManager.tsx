@@ -21,7 +21,7 @@
  *                  then restore transitions on the next animation frame.
  */
 
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { DockedPanel } from './DockedPanel';
 import { DetachedPanelPortal } from './DetachedPanelPortal';

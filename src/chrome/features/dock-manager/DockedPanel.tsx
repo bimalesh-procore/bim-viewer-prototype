@@ -228,7 +228,7 @@ export function DockedPanel({
             </div>
           ) : (
             /* Standard layout: optional back button, title, then subheader below */
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-0">
               <div className="flex items-start gap-2 min-w-0">
                 {onBack && (
                   <button

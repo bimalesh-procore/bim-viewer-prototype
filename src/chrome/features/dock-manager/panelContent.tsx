@@ -19,6 +19,7 @@ import type { SearchSet, ViewData, ViewFolder, PropertyGroup, ObjectProperty } f
 import type { PanelId } from './useDockStore';
 import searchFieldIcon from '../../assets/icons/panel/searchField.svg';
 import filterButtonIcon from '../../assets/icons/panel/filterButton.svg';
+import propertiesEmptyIllustration from '../../assets/icons/panel/properties-empty.svg';
 
 export type PropertiesTabId = 'all-properties' | 'related-items';
 
@@ -156,25 +157,47 @@ interface ObjNode {
 
 const DEMO_OBJECT_TREE: ObjNode[] = [
   {
-    id: 'mep', label: 'MEP Schematics', type: 'folder', children: [],
+    id: 'demo-structural', label: 'Structural', type: 'folder', children: [
+      { id: 'o-foundation-slab', label: 'Foundation Slab', type: 'file', objectId: 'demo-1', expressID: 'demo-1', parentId: 'demo-structural' },
+      { id: 'o-grade-beam', label: 'Grade Beam', type: 'file', objectId: 'demo-2', expressID: 'demo-2', parentId: 'demo-structural' },
+      { id: 'o-concrete-column', label: 'Concrete Column', type: 'file', objectId: 'demo-3', expressID: 'demo-3', parentId: 'demo-structural' },
+      { id: 'o-steel-beam', label: 'Steel Beam', type: 'file', objectId: 'demo-4', expressID: 'demo-4', parentId: 'demo-structural' },
+      { id: 'o-shear-wall', label: 'Shear Wall', type: 'file', objectId: 'demo-5', expressID: 'demo-5', parentId: 'demo-structural' },
+      { id: 'o-pile-cap', label: 'Pile Cap', type: 'file', objectId: 'demo-6', expressID: 'demo-6', parentId: 'demo-structural' },
+    ],
   },
-  { id: 'found', label: 'Foundation & Piling', type: 'folder' },
-  { id: 'f02', label: 'Floor 02', type: 'folder' },
-  { id: 'f01', label: 'Floor 01', type: 'folder' },
-  { id: 'struct', label: 'Structural Blueprints', type: 'folder' },
-  { id: 'park', label: 'Parking_Sublevel_P2.ifc', type: 'file' },
-  { id: 'main', label: 'Main_Utility_Hub.nwd', type: 'file' },
-  { id: 'aurora', label: 'Aurora_Towers_Core.rvt', type: 'file' },
-  { id: 'arch', label: 'Architectural Designs', type: 'folder' },
-  { id: 'site', label: 'Site Staging Plans', type: 'folder' },
-  { id: 'facade', label: 'Building Facade', type: 'folder' },
-  { id: 'walls', label: 'Interior Walls', type: 'folder' },
-  { id: 'hvac', label: 'HVAC Layout', type: 'folder' },
-  { id: 'plumb', label: 'Plumbing & Drainage', type: 'folder' },
-  { id: 'elec', label: 'Electrical Grids', type: 'folder' },
-  { id: 'fire', label: 'Fire Suppression', type: 'folder' },
-  { id: 'roof', label: 'Roofing System', type: 'folder' },
-  { id: 'civil', label: 'Civil Engineering Docs', type: 'folder' },
+  {
+    id: 'demo-architecture', label: 'Architecture', type: 'folder', children: [
+      { id: 'o-exterior-wall', label: 'Exterior Wall', type: 'file', objectId: 'demo-7', expressID: 'demo-7', parentId: 'demo-architecture' },
+      { id: 'o-interior-partition', label: 'Interior Partition', type: 'file', objectId: 'demo-8', expressID: 'demo-8', parentId: 'demo-architecture' },
+      { id: 'o-curtain-wall', label: 'Curtain Wall', type: 'file', objectId: 'demo-9', expressID: 'demo-9', parentId: 'demo-architecture' },
+      { id: 'o-door', label: 'Door', type: 'file', objectId: 'demo-10', expressID: 'demo-10', parentId: 'demo-architecture' },
+      { id: 'o-window', label: 'Window', type: 'file', objectId: 'demo-11', expressID: 'demo-11', parentId: 'demo-architecture' },
+      { id: 'o-floor-slab', label: 'Floor Slab', type: 'file', objectId: 'demo-12', expressID: 'demo-12', parentId: 'demo-architecture' },
+      { id: 'o-roof-panel', label: 'Roof Panel', type: 'file', objectId: 'demo-13', expressID: 'demo-13', parentId: 'demo-architecture' },
+      { id: 'o-staircase', label: 'Staircase', type: 'file', objectId: 'demo-14', expressID: 'demo-14', parentId: 'demo-architecture' },
+      { id: 'o-railing', label: 'Railing', type: 'file', objectId: 'demo-15', expressID: 'demo-15', parentId: 'demo-architecture' },
+    ],
+  },
+  {
+    id: 'demo-mep', label: 'MEP', type: 'folder', children: [
+      { id: 'o-ahu', label: 'Air Handler Unit', type: 'file', objectId: 'demo-16', expressID: 'demo-16', parentId: 'demo-mep' },
+      { id: 'o-supply-duct', label: 'Supply Duct', type: 'file', objectId: 'demo-17', expressID: 'demo-17', parentId: 'demo-mep' },
+      { id: 'o-return-duct', label: 'Return Duct', type: 'file', objectId: 'demo-18', expressID: 'demo-18', parentId: 'demo-mep' },
+      { id: 'o-vav-box', label: 'VAV Box', type: 'file', objectId: 'demo-19', expressID: 'demo-19', parentId: 'demo-mep' },
+      { id: 'o-chw-pump', label: 'Chilled Water Pump', type: 'file', objectId: 'demo-20', expressID: 'demo-20', parentId: 'demo-mep' },
+      { id: 'o-sprinkler', label: 'Sprinkler Head', type: 'file', objectId: 'demo-21', expressID: 'demo-21', parentId: 'demo-mep' },
+      { id: 'o-elec-panel', label: 'Electrical Panel', type: 'file', objectId: 'demo-22', expressID: 'demo-22', parentId: 'demo-mep' },
+      { id: 'o-conduit', label: 'Conduit Run', type: 'file', objectId: 'demo-23', expressID: 'demo-23', parentId: 'demo-mep' },
+    ],
+  },
+  {
+    id: 'demo-site', label: 'Site', type: 'folder', children: [
+      { id: 'o-paving', label: 'Paving', type: 'file', objectId: 'demo-24', expressID: 'demo-24', parentId: 'demo-site' },
+      { id: 'o-retaining-wall', label: 'Retaining Wall', type: 'file', objectId: 'demo-25', expressID: 'demo-25', parentId: 'demo-site' },
+      { id: 'o-curb', label: 'Curb & Gutter', type: 'file', objectId: 'demo-26', expressID: 'demo-26', parentId: 'demo-site' },
+    ],
+  },
 ];
 
 export const OBJECT_TREE_BREADCRUMBS = ['Tool Name', 'Child Page Title', 'Active C...'];
@@ -187,11 +210,47 @@ function collectObjNodeIds(node: ObjNode): string[] {
   return [node.id, ...(node.children ? node.children.flatMap(collectObjNodeIds) : [])];
 }
 
+const IFC_TYPE_DISPLAY: Record<string, string> = {
+  IFCBEAM: 'Beams',
+  IFCBUILDING: 'Building',
+  IFCBUILDINGSTOREY: 'Storeys',
+  IFCCOLUMN: 'Columns',
+  IFCCOVERING: 'Coverings',
+  IFCCURTAINWALL: 'Curtain Walls',
+  IFCDOOR: 'Doors',
+  IFCFLOWELEMENT: 'Flow Elements',
+  IFCFLOWCONTROLLER: 'Flow Controllers',
+  IFCFLOWMOVINGDEVICE: 'Fans & Pumps',
+  IFCFLOWSEGMENT: 'Ducts & Pipes',
+  IFCFLOWTERMINAL: 'HVAC Terminals',
+  IFCFOOTING: 'Footings',
+  IFCFURNISHINGELEMENT: 'Furniture',
+  IFCMEMBER: 'Structural Members',
+  IFCOPENINGELEMENT: 'Openings',
+  IFCPILE: 'Piles',
+  IFCPLATE: 'Plates',
+  IFCRAILING: 'Railings',
+  IFCRAMP: 'Ramps',
+  IFCROOF: 'Roofs',
+  IFCSITE: 'Site',
+  IFCSLAB: 'Slabs',
+  IFCSPACE: 'Spaces',
+  IFCSTAIR: 'Stairs',
+  IFCWALL: 'Walls',
+  IFCWALLSTANDARDCASE: 'Walls',
+  IFCWINDOW: 'Windows',
+};
+
+function formatIfcTypeLabel(rawType: string): string {
+  return IFC_TYPE_DISPLAY[rawType.toUpperCase()] ?? rawType;
+}
+
 function buildObjectTreeByType(nodes: Array<{ id: string; label: string; ifcType: string; expressID: string }>): ObjNode[] {
-  const byType = new Map<string, ObjNode[]>();
+  const byType = new Map<string, { displayLabel: string; children: ObjNode[] }>();
   nodes.forEach((node) => {
-    const typeLabel = node.ifcType || 'Uncategorized';
-    const folderId = `ifc-${typeLabel}`;
+    const rawType = node.ifcType || 'Uncategorized';
+    const displayLabel = formatIfcTypeLabel(rawType);
+    const folderId = `ifc-${displayLabel}`;
     const child: ObjNode = {
       id: node.id,
       label: node.label || node.expressID,
@@ -200,15 +259,15 @@ function buildObjectTreeByType(nodes: Array<{ id: string; label: string; ifcType
       expressID: node.expressID,
       parentId: folderId,
     };
-    if (!byType.has(typeLabel)) byType.set(typeLabel, []);
-    byType.get(typeLabel)!.push(child);
+    if (!byType.has(displayLabel)) byType.set(displayLabel, { displayLabel, children: [] });
+    byType.get(displayLabel)!.children.push(child);
   });
 
-  return Array.from(byType.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([typeLabel, children]) => ({
-      id: `ifc-${typeLabel}`,
-      label: typeLabel,
+  return Array.from(byType.values())
+    .sort((a, b) => a.displayLabel.localeCompare(b.displayLabel))
+    .map(({ displayLabel, children }) => ({
+      id: `ifc-${displayLabel}`,
+      label: displayLabel,
       type: 'folder',
       children: children.sort((a, b) => a.label.localeCompare(b.label)),
     }));
@@ -714,12 +773,17 @@ function PropertyGroupCard({
   );
 }
 
-export function PropertiesContent({ propertiesTab = 'all-properties' }: { propertiesTab?: PropertiesTabId } = {}) {
+export function PropertiesContent({
+  propertiesTab = 'all-properties',
+  searchQuery = '',
+}: {
+  propertiesTab?: PropertiesTabId;
+  searchQuery?: string;
+} = {}) {
   const adapter = useViewerAdapter();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [groups, setGroups] = useState<PropertyGroup[]>([]);
   const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set());
-  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     const unsub = adapter.subscribeSelectedObjects?.((ids) => {
@@ -775,9 +839,13 @@ export function PropertiesContent({ propertiesTab = 'all-properties' }: { proper
 
   if (selectedIds.length === 0) {
     return (
-      <p className="px-3 py-6 text-sm text-[#9da7ad] text-center">
-        Select an element to view its properties.
-      </p>
+      <div className="flex flex-col items-center justify-center min-h-[320px] h-full px-6 py-12 gap-3">
+        <img src={propertiesEmptyIllustration} width={101} height={100} alt="" aria-hidden="true" />
+        <div className="text-center">
+          <p className="text-[14px] font-semibold text-[#232729] leading-[20px]">Select an object</p>
+          <p className="text-[13px] text-[#6A767C] leading-[18px] mt-1">Select an object to view its properties.</p>
+        </div>
+      </div>
     );
   }
 
@@ -791,12 +859,6 @@ export function PropertiesContent({ propertiesTab = 'all-properties' }: { proper
 
   return (
     <div className="flex flex-col gap-2">
-      <PanelSearchBar
-        value={searchQuery}
-        onChange={setSearchQuery}
-        placeholder="Search properties"
-        onFilter={() => {}}
-      />
       {favoritesGroup && (
         <PropertyGroupCard
           group={favoritesGroup}
@@ -818,11 +880,37 @@ export function PropertiesContent({ propertiesTab = 'all-properties' }: { proper
   );
 }
 
-export function PropertiesToolbar({ propertiesTab = 'all-properties' }: { propertiesTab?: PropertiesTabId } = {}) {
-  if (propertiesTab === 'related-items') {
-    return null;
-  }
-  return null;
+export function PropertiesToolbar({
+  propertiesTab = 'all-properties',
+  searchQuery = '',
+  onSearchChange,
+}: {
+  propertiesTab?: PropertiesTabId;
+  searchQuery?: string;
+  onSearchChange?: (q: string) => void;
+} = {}) {
+  const adapter = useViewerAdapter();
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    const unsub = adapter.subscribeSelectedObjects?.((ids) => {
+      setSelectedIds(ids.map(String));
+    });
+    return () => unsub?.();
+  }, [adapter]);
+
+  if (propertiesTab !== 'all-properties' || selectedIds.length === 0) return null;
+
+  return (
+    <div className="bg-white border-b border-[#d6dadc] px-4 py-2 shrink-0">
+      <PanelSearchBar
+        value={searchQuery}
+        onChange={onSearchChange ?? (() => {})}
+        placeholder="Filter by Keyword"
+        onFilter={() => {}}
+      />
+    </div>
+  );
 }
 
 // ─── Views & Markups ─────────────────────────────────────────────────────────

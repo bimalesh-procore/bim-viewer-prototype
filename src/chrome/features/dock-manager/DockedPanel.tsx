@@ -22,6 +22,8 @@ interface DockedPanelProps {
   activeTabId?: string;
   onTabChange?: (tabId: string) => void;
   breadcrumbs?: string[];
+  /** Icon rendered to the left of the title text in the panel header. */
+  titleIcon?: React.ReactNode;
   /** When provided, renders an ArrowLeft button at the start of the heading row and indents the subheading. */
   onBack?(): void;
   /** Optional footer slot (rendered below the content area). */
@@ -54,6 +56,7 @@ const MIN_WIDTH = 240;
 export function DockedPanel({
   title,
   subheader,
+  titleIcon,
   docked,
   minimized,
   floatPosition,
@@ -201,30 +204,52 @@ export function DockedPanel({
       {/* Header — grabbing here triggers the drag */}
       <div
         className={`flex items-start justify-between px-4 pt-4 pb-4 bg-white ${isDetached ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} shrink-0 ${
-          minimized || hasTabs ? '' : 'border-b border-[#e5e7eb]'
+          minimized ? '' : 'border-b border-[#d6dadc]'
         }`}
         onPointerDown={isDetached ? undefined : onDragStart}
       >
-        <div className="min-w-0 flex flex-col gap-1">
-          <div className="flex items-start gap-2 min-w-0">
-            {onBack && (
-              <button
-                type="button"
-                onClick={onBack}
-                aria-label="Back"
-                onPointerDown={(e) => e.stopPropagation()}
-                className="shrink-0 w-6 h-6 flex items-center justify-center rounded hover:bg-black/5"
-              >
-                <ArrowLeft size={16} className="text-[#232729]" />
-              </button>
-            )}
-            <span className="block text-[16px] leading-[24px] tracking-[0.15px] font-semibold text-[#232729] truncate min-w-0 flex-1">
-              {title}
-            </span>
-          </div>
-          {!minimized && subheader && (
-            <div className={`text-[14px] leading-[20px] tracking-[0.15px] font-normal text-[#6A767C] truncate ${onBack ? 'pl-8' : ''}`}>
-              {subheader}
+        <div className="min-w-0 flex-1">
+          {titleIcon && !minimized ? (
+            /* Icon present: row with icon vertically centered on the combined title + subheader block */
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="shrink-0 w-6 h-6 flex items-center justify-center">
+                {titleIcon}
+              </div>
+              <div className="flex flex-col min-w-0 flex-1">
+                <span className="block text-[16px] leading-[24px] tracking-[0.15px] font-semibold text-[#232729] truncate">
+                  {title}
+                </span>
+                {subheader && (
+                  <span className="block text-[12px] leading-[16px] tracking-[0.25px] font-normal text-[#6A767C] truncate">
+                    {subheader}
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Standard layout: optional back button, title, then subheader below */
+            <div className="flex flex-col gap-0">
+              <div className="flex items-start gap-2 min-w-0">
+                {onBack && (
+                  <button
+                    type="button"
+                    onClick={onBack}
+                    aria-label="Back"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded hover:bg-black/5"
+                  >
+                    <ArrowLeft size={16} className="text-[#232729]" />
+                  </button>
+                )}
+                <span className="block text-[16px] leading-[24px] tracking-[0.15px] font-semibold text-[#232729] truncate min-w-0 flex-1">
+                  {title}
+                </span>
+              </div>
+              {!minimized && subheader && (
+                <div className={`text-[14px] leading-[20px] tracking-[0.15px] font-normal text-[#6A767C] truncate ${onBack ? 'pl-8' : ''}`}>
+                  {subheader}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -308,7 +333,7 @@ export function DockedPanel({
 
       {/* Optional toolbar (search bar, filters, etc.) */}
       {hasTabs && (
-        <div className="border-b border-[#e5e7eb] px-4">
+        <div className="border-b border-[#d6dadc] px-4">
           <div className="flex items-end gap-6">
             {tabs.map((tab) => {
               const isActive = tab.id === activeTabId;

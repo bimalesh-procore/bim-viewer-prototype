@@ -175,6 +175,8 @@ export interface ViewerAdapter {
 
   getObjectProperties?(expressID: string): PropertyGroup[];
 
+  getLoadedModelName?(): string | null;
+
   toggleOrthographic?(): void;
   isOrthographic?(): boolean;
 

@@ -128,6 +128,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
   const [dragState, setDragState]               = useState<DragState | null>(null);
   const [isResizingDocked, setIsResizingDocked] = useState(false);
   const [propertiesTab, setPropertiesTab] = useState<PropertiesTabId>('all-properties');
+  const [propertiesSearchQuery, setPropertiesSearchQuery] = useState('');
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [objectEntries, setObjectEntries] = useState<GlobalSearchObjectEntry[]>([]);
   /**
@@ -146,11 +147,12 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
 
   const getPanelTabs = useCallback((panelId: PanelId) => {
     if (panelId !== 'properties') return undefined;
+    if (selectedObjectIds.length === 0) return undefined;
     return [
       { id: 'all-properties', label: 'All Properties' },
       { id: 'related-items', label: 'Related Items' },
     ];
-  }, []);
+  }, [selectedObjectIds]);
 
   const getPanelBreadcrumbs = useCallback((panelId: PanelId): string[] | undefined => {
     if (panelId !== 'object-tree') return undefined;
@@ -184,10 +186,24 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
     if (panel.id !== 'properties') return panel.label;
     if (panel.minimized) return 'Properties';
     const selectedId = selectedObjectIds[0];
-    if (!selectedId) return 'Object name here';
+    if (!selectedId) return 'Properties';
     const selectedEntry = objectEntries.find((entry) => String(entry.expressID) === selectedId);
     return selectedEntry?.name?.trim() || selectedId;
   }, [objectEntries, selectedObjectIds]);
+
+  const getPanelSubheader = useCallback((panelId: PanelId): string | undefined => {
+    if (panelId !== 'properties') return undefined;
+    if (selectedObjectIds.length === 0) return undefined;
+    const name = adapter.getLoadedModelName?.();
+    if (!name) return undefined;
+    // If the name already has a file extension, use it as-is; otherwise append .rvt
+    // to make it read as a realistic BIM source file reference.
+    return name.includes('.') ? name : `${name}.rvt`;
+  }, [adapter, selectedObjectIds]);
+
+  const getPanelTitleIcon = useCallback((_panelId: PanelId): React.ReactNode => {
+    return undefined;
+  }, []);
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -567,10 +583,10 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
         {dockedPanels.map((panel, index) => {
           const { Content, Toolbar } = PANEL_REGISTRY[panel.id];
           const toolbarNode = panel.id === 'properties'
-            ? <PropertiesToolbar propertiesTab={propertiesTab} />
+            ? <PropertiesToolbar propertiesTab={propertiesTab} searchQuery={propertiesSearchQuery} onSearchChange={setPropertiesSearchQuery} />
             : (Toolbar ? <Toolbar /> : undefined);
           const contentNode = panel.id === 'properties'
-            ? <PropertiesContent propertiesTab={propertiesTab} />
+            ? <PropertiesContent propertiesTab={propertiesTab} searchQuery={propertiesSearchQuery} />
             : <Content />;
           const isPlaceholder = panel.id === placeholderId;
           const slotH         = getSlotH(panel);
@@ -617,7 +633,8 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
                 <DockedPanel
                   id={panel.id}
                   title={getPanelTitle(panel)}
-                  subheader={panel.id === 'properties' ? 'Properties' : undefined}
+                  subheader={getPanelSubheader(panel.id)}
+                  titleIcon={getPanelTitleIcon(panel.id)}
                   docked
                   minimized={panel.minimized}
                   deemphasized={deemphasized}
@@ -668,10 +685,10 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
         if (!panel) return null;
         const { Content, Toolbar } = PANEL_REGISTRY[panel.id];
         const toolbarNode = panel.id === 'properties'
-          ? <PropertiesToolbar propertiesTab={propertiesTab} />
+          ? <PropertiesToolbar propertiesTab={propertiesTab} searchQuery={propertiesSearchQuery} onSearchChange={setPropertiesSearchQuery} />
           : (Toolbar ? <Toolbar /> : undefined);
         const contentNode = panel.id === 'properties'
-          ? <PropertiesContent propertiesTab={propertiesTab} />
+          ? <PropertiesContent propertiesTab={propertiesTab} searchQuery={propertiesSearchQuery} />
           : <Content />;
         return (
           <div
@@ -693,7 +710,8 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
             <DockedPanel
               id={panel.id}
               title={getPanelTitle(panel)}
-              subheader={panel.id === 'properties' ? 'Properties' : undefined}
+              subheader={getPanelSubheader(panel.id)}
+              titleIcon={getPanelTitleIcon(panel.id)}
               docked
               minimized={panel.minimized}
               isLifted
@@ -720,10 +738,10 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
       {floatingPanels.map((panel) => {
         const { Content, Toolbar } = PANEL_REGISTRY[panel.id];
         const toolbarNode = panel.id === 'properties'
-          ? <PropertiesToolbar propertiesTab={propertiesTab} />
+          ? <PropertiesToolbar propertiesTab={propertiesTab} searchQuery={propertiesSearchQuery} onSearchChange={setPropertiesSearchQuery} />
           : (Toolbar ? <Toolbar /> : undefined);
         const contentNode = panel.id === 'properties'
-          ? <PropertiesContent propertiesTab={propertiesTab} />
+          ? <PropertiesContent propertiesTab={propertiesTab} searchQuery={propertiesSearchQuery} />
           : <Content />;
         const isDragging = dragState?.panelId === panel.id
           && !dragState.wasDockedOnStart
@@ -740,7 +758,8 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
             key={panel.id}
             id={panel.id}
             title={getPanelTitle(panel)}
-            subheader={panel.id === 'properties' ? 'Properties' : undefined}
+            subheader={getPanelSubheader(panel.id)}
+            titleIcon={getPanelTitleIcon(panel.id)}
             docked={false}
             minimized={panel.minimized}
             deemphasized={deemphasized}
@@ -772,10 +791,10 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
       {detachedPanels.map((panel) => {
         const { Content, Toolbar } = PANEL_REGISTRY[panel.id];
         const toolbarNode = panel.id === 'properties'
-          ? <PropertiesToolbar propertiesTab={propertiesTab} />
+          ? <PropertiesToolbar propertiesTab={propertiesTab} searchQuery={propertiesSearchQuery} onSearchChange={setPropertiesSearchQuery} />
           : (Toolbar ? <Toolbar /> : undefined);
         const contentNode = panel.id === 'properties'
-          ? <PropertiesContent propertiesTab={propertiesTab} />
+          ? <PropertiesContent propertiesTab={propertiesTab} searchQuery={propertiesSearchQuery} />
           : <Content />;
 
         return (
@@ -788,7 +807,8 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
             <DockedPanel
               id={panel.id}
               title={getPanelTitle(panel)}
-              subheader={panel.id === 'properties' ? 'Properties' : undefined}
+              subheader={getPanelSubheader(panel.id)}
+              titleIcon={getPanelTitleIcon(panel.id)}
               docked={false}
               minimized={false}
               isDetached

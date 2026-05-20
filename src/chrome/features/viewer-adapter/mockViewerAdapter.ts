@@ -129,6 +129,9 @@ export const mockViewerAdapter: ViewerAdapter = {
       log('unsubscribeSelectedObjects');
     };
   },
+  getLoadedModelName() {
+    return null;
+  },
   getObjectProperties(_expressID: string): PropertyGroup[] {
     log('getObjectProperties', _expressID);
     return [

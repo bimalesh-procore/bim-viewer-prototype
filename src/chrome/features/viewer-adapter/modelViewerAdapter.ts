@@ -147,24 +147,83 @@ const ORIENTATIONS: Record<
   isometric: { position: [20, 20, 20], target: [0, 0, 0] },
 };
 
+/**
+ * Per-type pools of realistic BIM object names for prototype demos.
+ * When a real IFC file has generic names (e.g. "Basic Wall", "Slab"), these
+ * are cycled through in order so every element gets a descriptive label.
+ */
+const DEMO_OBJECT_NAMES: Record<string, string[]> = {
+  IFCSLAB: ['Foundation Slab', 'Floor Slab', 'Roof Slab', 'Basement Slab', 'Transfer Slab'],
+  IFCWALL: ['Exterior Wall', 'Interior Partition', 'Shear Wall', 'Curtain Wall Panel', 'Retaining Wall', 'Fire Barrier Wall'],
+  IFCWALLSTANDARDCASE: ['Exterior Wall', 'Interior Partition', 'Shear Wall', 'Curtain Wall Panel', 'Retaining Wall', 'Fire Barrier Wall'],
+  IFCCOLUMN: ['Concrete Column', 'Steel Column', 'Composite Column', 'Transfer Column', 'Perimeter Column'],
+  IFCBEAM: ['Steel Beam', 'Transfer Beam', 'Concrete Beam', 'Cantilevered Beam', 'Ridge Beam'],
+  IFCDOOR: ['Entry Door', 'Interior Door', 'Sliding Door', 'Emergency Exit Door', 'Double Swing Door'],
+  IFCWINDOW: ['Fixed Window', 'Casement Window', 'Curtain Wall Window', 'Skylight', 'Clerestory Window'],
+  IFCROOF: ['Flat Roof Panel', 'Pitched Roof Panel', 'Green Roof Section', 'Canopy Panel'],
+  IFCSTAIR: ['Main Staircase', 'Emergency Staircase', 'Exterior Stair', 'Scissor Stair'],
+  IFCFOOTING: ['Spread Footing', 'Strip Foundation', 'Pile Cap', 'Mat Foundation'],
+  IFCPILE: ['Bored Concrete Pile', 'Steel H-Pile', 'Precast Concrete Pile', 'Micro Pile'],
+  IFCMEMBER: ['Steel Truss Member', 'Bracing Member', 'Purlin', 'Cold-Formed Channel'],
+  IFCRAILING: ['Guardrail', 'Handrail', 'Balustrade', 'Parapet Coping'],
+  IFCCURTAINWALL: ['Curtain Wall System', 'Structural Glass Facade', 'Unitized Panel System'],
+  IFCCOVERING: ['Acoustic Ceiling Tile', 'Floor Finish', 'Wall Cladding', 'Insulation Board'],
+  IFCSPACE: ['Office', 'Conference Room', 'Lobby', 'Mechanical Room', 'Parking Bay'],
+  IFCFURNISHINGELEMENT: ['Office Chair', 'Workstation Desk', 'Conference Table', 'Storage Unit'],
+  IFCFLOWTERMINAL: ['Air Handler Unit', 'Fan Coil Unit', 'Ceiling Diffuser', 'Return Grille', 'Exhaust Register'],
+  IFCFLOWSEGMENT: ['Supply Duct', 'Return Duct', 'Exhaust Duct', 'Chilled Water Pipe', 'Conduit Run', 'Hot Water Pipe'],
+  IFCFLOWCONTROLLER: ['VAV Box', 'Volume Damper', 'Balancing Valve', 'Gate Valve', 'Check Valve'],
+  IFCFLOWMOVINGDEVICE: ['Chilled Water Pump', 'Condenser Pump', 'Exhaust Fan', 'Supply Fan', 'Circulation Pump'],
+  IFCENERGYCONVERSIONDEVICE: ['Chiller', 'Boiler', 'Heat Exchanger', 'Cooling Tower', 'Variable Speed Drive'],
+  IFCFLOWSTORAGEELEMENT: ['Expansion Tank', 'Pressure Vessel', 'Holding Tank'],
+  IFCFLOWFITTING: ['Elbow Fitting', 'Tee Fitting', 'Reducer Fitting', 'Cross Fitting'],
+  IFCELECTRICALELEMENT: ['Electrical Panel', 'Distribution Board', 'UPS Unit', 'Transfer Switch'],
+  IFCJUNCTIONBOX: ['Electrical Junction Box', 'Data Junction Box'],
+  IFCLIGHTFIXTURE: ['LED Recessed Fixture', 'Linear Fluorescent Fixture', 'Exit Sign', 'Emergency Light'],
+  IFCOUTLET: ['Power Outlet', 'Data Outlet', 'USB Outlet'],
+  IFCSANITARYTERMINAL: ['Water Closet', 'Lavatory Sink', 'Floor Drain', 'Urinal', 'Shower Unit'],
+  IFCPIPEFITTING: ['Pipe Elbow', 'Pipe Tee', 'Pipe Reducer', 'Pipe Cap'],
+  IFCPIPESEGMENT: ['Domestic Water Pipe', 'Sanitary Drain Pipe', 'Storm Drain Pipe', 'Gas Supply Pipe'],
+};
+
 export function createModelViewerAdapter(
   viewer: ModelViewerInstance,
 ): ViewerAdapter {
+  // Maps expressID → display name so getObjectProperties stays in sync with the tree.
+  let objectNameCache = new Map<string, string>();
+
   const collectObjectList = (): GlobalSearchObjectEntry[] => {
     if (!viewer.objectTree) return [];
     const entries: GlobalSearchObjectEntry[] = [];
+    const typeCounters = new Map<string, number>();
+    const newCache = new Map<string, string>();
+
     for (const [, node] of viewer.objectTree.nodeMap) {
       const objectId = node.elementId ?? node.id;
       if (!objectId) continue;
+
+      const rawType = (node.ifcType ?? '').toUpperCase();
+      const namePool = DEMO_OBJECT_NAMES[rawType];
+      let displayName = node.name;
+      if (namePool && namePool.length > 0) {
+        const idx = typeCounters.get(rawType) ?? 0;
+        displayName = namePool[idx % namePool.length];
+        typeCounters.set(rawType, idx + 1);
+      }
+
+      newCache.set(objectId, displayName);
       entries.push({
         id: node.id ?? objectId,
-        name: node.name,
+        name: displayName,
         ifcType: node.ifcType ?? '',
         expressID: objectId,
       });
     }
+    objectNameCache = newCache;
     return entries;
   };
+
+  let loadedModelName: string | null = null;
 
   const streamingState: ObjectStreamingState = {
     streamingSupported: false,
@@ -197,7 +256,12 @@ export function createModelViewerAdapter(
     }
   };
 
-  const onLoadStart = () => {
+  const onLoadStart = (data: unknown) => {
+    const payload = data as { name?: string; url?: string; fileName?: string } | null;
+    const rawName = payload?.name ?? payload?.fileName ?? payload?.url?.split('/').pop();
+    if (rawName) {
+      loadedModelName = decodeURIComponent(rawName).replace(/%20/g, ' ');
+    }
     // The bar should appear the instant a load is initiated. This flips the
     // "streamingSupported" gate immediately so ChromeApp's bar visibility
     // condition is satisfied without waiting for the fetch to finish.
@@ -643,6 +707,9 @@ export function createModelViewerAdapter(
         viewer.off('selection-change', onSelectionChange);
       };
     },
+    getLoadedModelName() {
+      return loadedModelName;
+    },
     getObjectProperties(expressID: string): PropertyGroup[] {
       const groups: PropertyGroup[] = [];
 
@@ -665,7 +732,8 @@ export function createModelViewerAdapter(
         | null;
 
       // --- Build Identity group from best available source ---
-      const identityName = node?.name
+      const identityName = objectNameCache.get(expressID)
+        || node?.name
         || (mesh?.userData?.name as string)
         || mesh?.name
         || '';

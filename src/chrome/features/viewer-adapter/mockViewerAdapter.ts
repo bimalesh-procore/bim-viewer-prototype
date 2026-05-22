@@ -241,7 +241,12 @@ export const mockViewerAdapter: ViewerAdapter = {
     return null;
   },
   subscribeViews(listener) {
-    listener([], null);
+    listener([
+      { id: 'v1', name: 'Entry Lobby',      folderId: 'f1', cameraPosition: { x: 0, y: 0, z: 0 }, cameraTarget: { x: 0, y: 0, z: 0 }, isOrthographic: false, markups: [],            createdAt: 0, isProjectView: false },
+      { id: 'v2', name: 'Level 1 Overview', folderId: 'f1', cameraPosition: { x: 0, y: 0, z: 0 }, cameraTarget: { x: 0, y: 0, z: 0 }, isOrthographic: true,  markups: [{ id: 'm1' } as any], createdAt: 0, isProjectView: true  },
+      { id: 'v3', name: 'Stairwell Detail', folderId: 'f2', cameraPosition: { x: 0, y: 0, z: 0 }, cameraTarget: { x: 0, y: 0, z: 0 }, isOrthographic: false, markups: [],            createdAt: 0, isProjectView: false },
+      { id: 'v4', name: 'Roof Plan',        folderId: null, cameraPosition: { x: 0, y: 0, z: 0 }, cameraTarget: { x: 0, y: 0, z: 0 }, isOrthographic: true,  markups: [],            createdAt: 0, isProjectView: false },
+    ], null);
     return () => { log('unsubscribeViews'); };
   },
   createFolder(name: string, _parentId?: string | null) {
@@ -255,7 +260,10 @@ export const mockViewerAdapter: ViewerAdapter = {
     log('renameFolder', { id, name });
   },
   getFolders() {
-    return [];
+    return [
+      { id: 'f1', name: 'Architecture', parentFolderId: null },
+      { id: 'f2', name: 'Structural',   parentFolderId: null },
+    ];
   },
 
   // ── Markup mode ───────────────────────────────────────────────────

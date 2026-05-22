@@ -11,11 +11,11 @@ import {
   ChevronRight,
   ChevronDown,
   Check,
-  Folder,
   Star,
 } from 'lucide-react';
 import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import type { SearchSet, ViewData, ViewFolder, PropertyGroup, ObjectProperty } from '../viewer-adapter/types';
+import { TreeNode } from '../../shared/TreeNode';
 import type { PanelId } from './useDockStore';
 import searchFieldIcon from '../../assets/icons/panel/searchField.svg';
 import filterButtonIcon from '../../assets/icons/panel/filterButton.svg';
@@ -210,6 +210,16 @@ function collectObjNodeIds(node: ObjNode): string[] {
   return [node.id, ...(node.children ? node.children.flatMap(collectObjNodeIds) : [])];
 }
 
+function collectLeafIds(node: ObjNode): string[] {
+  if (!node.children || node.children.length === 0) return [node.id];
+  return node.children.flatMap(collectLeafIds);
+}
+
+function collectDescendantFolderIds(folderId: string, allFolders: ViewFolder[]): string[] {
+  const children = allFolders.filter((f) => f.parentFolderId === folderId);
+  return [folderId, ...children.flatMap((c) => collectDescendantFolderIds(c.id, allFolders))];
+}
+
 const IFC_TYPE_DISPLAY: Record<string, string> = {
   IFCBEAM: 'Beams',
   IFCBUILDING: 'Building',
@@ -307,50 +317,35 @@ function ObjTreeNode({
   onToggleExpanded,
 }: ObjTreeNodeProps) {
   const expanded = node.children ? expandedIds.has(node.id) : false;
-  const checked = checkedIds.has(node.id);
-  const isFolder = node.type === 'folder';
   const isLoading = loadingIds ? loadingIds.has(node.id) : false;
+  const isFolder = node.type === 'folder';
+
+  const leafIds = isFolder ? collectLeafIds(node) : null;
+  const checkedLeafCount = leafIds ? leafIds.filter((id) => checkedIds.has(id)).length : 0;
+  // A folder with its own ID in checkedIds was explicitly checked via its checkbox —
+  // treat it as fully checked even if streaming later adds new children not yet in checkedIds.
+  const folderExplicitlyChecked = isFolder && checkedIds.has(node.id);
+  const checked = isFolder
+    ? folderExplicitlyChecked || (leafIds!.length > 0 && checkedLeafCount === leafIds!.length)
+    : checkedIds.has(node.id);
+  const indeterminate = isFolder
+    ? !folderExplicitlyChecked && checkedLeafCount > 0 && checkedLeafCount < leafIds!.length
+    : false;
 
   return (
-    <>
-      <div
-        className="flex items-center gap-1 hover:bg-gray-50 cursor-pointer select-none"
-        style={{ paddingLeft: 8 + depth * 20, paddingRight: 8, paddingTop: 6, paddingBottom: 6 }}
-      >
-        <input
-          type="checkbox"
-          checked={checked}
-          disabled={isLoading}
-          onChange={(e) => onToggleChecked(node, e.target.checked)}
-          className={`w-4 h-4 shrink-0 accent-blue-500 ${isLoading ? 'opacity-30 cursor-default' : 'cursor-pointer'}`}
-          onClick={(e) => e.stopPropagation()}
-        />
-
-        {isFolder && (
-          <button
-            type="button"
-            onClick={() => onToggleExpanded(node.id)}
-            className="w-5 h-5 flex items-center justify-center shrink-0 text-gray-500"
-          >
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-        )}
-
-        {isFolder && <Folder size={16} className="text-gray-400 shrink-0" />}
-
-        {isLoading ? (
-          <span className="flex-1 ml-1 h-3.5 rounded bg-gray-200 mv-skeleton-pulse" style={{ maxWidth: 120 }} />
-        ) : (
-          <span
-            className="text-sm text-gray-700 truncate flex-1 ml-1"
-            onClick={() => isFolder && onToggleExpanded(node.id)}
-          >
-            {node.label}
-          </span>
-        )}
-      </div>
-
-      {expanded && node.children?.map((child) => (
+    <TreeNode
+      id={node.id}
+      label={node.label}
+      depth={depth}
+      type={isFolder ? 'folder' : 'leaf'}
+      expanded={expanded}
+      onToggle={onToggleExpanded}
+      checked={checked}
+      indeterminate={indeterminate}
+      onCheckedChange={(_id, c) => onToggleChecked(node, c)}
+      loading={isLoading}
+    >
+      {node.children?.map((child) => (
         <ObjTreeNode
           key={child.id}
           node={child}
@@ -362,7 +357,7 @@ function ObjTreeNode({
           onToggleExpanded={onToggleExpanded}
         />
       ))}
-    </>
+    </TreeNode>
   );
 }
 
@@ -434,6 +429,7 @@ function ObjectTreeContent() {
   const actionsRef = useRef<HTMLDivElement>(null);
   const actionMenuRef = useRef<HTMLDivElement>(null);
   const syncingFromModelSelectionRef = useRef(false);
+  const pendingCheckboxUpdateRef = useRef(false);
   const totalObjects = flatNodes.length;
   const checkedCount = checkedIds.size;
   const hasSelection = checkedCount > 0;
@@ -444,12 +440,18 @@ function ObjectTreeContent() {
         ? 'indeterminate'
         : 'unchecked';
 
+  // Only clear selections when the model fully unloads (entries drop to 0).
+  // Do NOT clear on every streaming batch — that would wipe selections mid-stream.
   useEffect(() => {
-    setCheckedIds(new Set());
-  }, [objectTreeNodes]);
+    if (objectEntries.length === 0) setCheckedIds(new Set());
+  }, [objectEntries]);
 
   useEffect(() => {
     const unsubscribe = adapter.subscribeSelectedObjects?.((selectedExpressIds) => {
+      if (pendingCheckboxUpdateRef.current) {
+        pendingCheckboxUpdateRef.current = false;
+        return;
+      }
       const nextChecked = new Set<string>();
       const parentsToExpand = new Set<string>();
 
@@ -487,22 +489,31 @@ function ObjectTreeContent() {
   }, [adapter, checkedIds, flatNodes]);
 
   const onToggleChecked = useCallback((node: ObjNode, checked: boolean) => {
+    pendingCheckboxUpdateRef.current = true;
     const affectedIds = collectObjNodeIds(node);
     setCheckedIds((prev) => {
       const next = new Set(prev);
       affectedIds.forEach((id) => {
-        if (checked) next.add(id);
-        else next.delete(id);
+        if (checked) {
+          next.add(id);
+        } else {
+          next.delete(id);
+          // When unchecking, remove parent folder's explicit-check marker so
+          // it falls back to derived (indeterminate/unchecked) state.
+          const parentId = parentIdByNodeId.get(id);
+          if (parentId) next.delete(parentId);
+        }
       });
       return next;
     });
-  }, []);
+  }, [parentIdByNodeId]);
 
   // Master checkbox click:
   // - any selection (full or partial) → clear selection
   // - no selection → select all
   // This matches the standard tri-state header behavior on lists like GitHub/Gmail.
   const onToggleRootChecked = useCallback(() => {
+    pendingCheckboxUpdateRef.current = true;
     if (checkedCount > 0) setCheckedIds(new Set());
     else setCheckedIds(new Set(flatNodes.map((node) => node.id)));
   }, [checkedCount, flatNodes]);
@@ -942,6 +953,10 @@ function ViewFolderRow({
   depth,
   expandedFolders,
   toggleFolder,
+  checkedFolderIds,
+  onFolderCheckedChange,
+  checkedViewIds,
+  onViewCheckedChange,
   onSelectView,
   onDoubleClickView,
   onContextMenu,
@@ -958,74 +973,86 @@ function ViewFolderRow({
   depth: number;
   expandedFolders: Set<string>;
   toggleFolder: (id: string) => void;
+  checkedFolderIds: Set<string>;
+  onFolderCheckedChange: (id: string, checked: boolean) => void;
+  checkedViewIds: Set<string>;
+  onViewCheckedChange: (id: string, checked: boolean) => void;
   onSelectView: (id: string) => void;
   onDoubleClickView: (id: string, currentName: string) => void;
   onContextMenu: (e: React.MouseEvent, viewId: string) => void;
 }) {
-  const expanded = expandedFolders.has(folder.id);
   const childFolders = folders.filter((f) => f.parentFolderId === folder.id);
   const childViews = views.filter((v) => v.folderId === folder.id);
 
+  const totalChildren = childFolders.length + childViews.length;
+  const checkedChildCount =
+    childFolders.filter((cf) => checkedFolderIds.has(cf.id)).length +
+    childViews.filter((v) => checkedViewIds.has(v.id)).length;
+  const checked = totalChildren > 0 ? checkedChildCount === totalChildren : checkedFolderIds.has(folder.id);
+  const indeterminate = totalChildren > 0 && checkedChildCount > 0 && checkedChildCount < totalChildren;
+
   return (
-    <>
-      <div
-        data-view-row
-        className="flex items-center gap-1 hover:bg-gray-50 cursor-pointer select-none"
-        style={{ paddingLeft: 8 + depth * 20, paddingRight: 8, paddingTop: 6, paddingBottom: 6 }}
-        onClick={() => toggleFolder(folder.id)}
-      >
-        <button type="button" className="w-5 h-5 flex items-center justify-center shrink-0 text-gray-500">
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </button>
-        <Folder size={16} className="text-gray-400 shrink-0" />
-        <span className="text-sm text-gray-700 truncate flex-1 ml-1">{folder.name}</span>
-      </div>
-      {expanded && (
-        <>
-          {childFolders.map((cf) => (
-            <ViewFolderRow
-              key={cf.id}
-              folder={cf}
-              views={views}
-              folders={folders}
-              selectedViewId={selectedViewId}
-              renamingId={renamingId}
-              renameValue={renameValue}
-              onRenameChange={onRenameChange}
-              onRenameCommit={onRenameCommit}
-              onRenameCancel={onRenameCancel}
-              depth={depth + 1}
-              expandedFolders={expandedFolders}
-              toggleFolder={toggleFolder}
-              onSelectView={onSelectView}
-              onDoubleClickView={onDoubleClickView}
-              onContextMenu={onContextMenu}
-            />
-          ))}
-          {childViews.map((v) => (
-            <ViewRow
-              key={v.id}
-              view={v}
-              selected={v.id === selectedViewId}
-              depth={depth + 1}
-              isRenaming={renamingId === v.id}
-              renameValue={renameValue}
-              onRenameChange={onRenameChange}
-              onRenameCommit={onRenameCommit}
-              onRenameCancel={onRenameCancel}
-              onSelect={onSelectView}
-              onDoubleClick={onDoubleClickView}
-              onContextMenu={onContextMenu}
-            />
-          ))}
-        </>
-      )}
-    </>
+    <TreeNode
+      id={folder.id}
+      label={folder.name}
+      depth={depth}
+      type="folder"
+      expanded={expandedFolders.has(folder.id)}
+      onToggle={toggleFolder}
+      checked={checked}
+      indeterminate={indeterminate}
+      onCheckedChange={onFolderCheckedChange}
+    >
+      {childFolders.map((cf) => (
+        <ViewFolderRow
+          key={cf.id}
+          folder={cf}
+          views={views}
+          folders={folders}
+          selectedViewId={selectedViewId}
+          renamingId={renamingId}
+          renameValue={renameValue}
+          onRenameChange={onRenameChange}
+          onRenameCommit={onRenameCommit}
+          onRenameCancel={onRenameCancel}
+          depth={depth + 1}
+          expandedFolders={expandedFolders}
+          toggleFolder={toggleFolder}
+          checkedFolderIds={checkedFolderIds}
+          onFolderCheckedChange={onFolderCheckedChange}
+          checkedViewIds={checkedViewIds}
+          onViewCheckedChange={onViewCheckedChange}
+          onSelectView={onSelectView}
+          onDoubleClickView={onDoubleClickView}
+          onContextMenu={onContextMenu}
+        />
+      ))}
+      {childViews.map((v) => (
+        <ViewRow
+          key={v.id}
+          view={v}
+          checked={checkedViewIds.has(v.id)}
+          onCheckedChange={onViewCheckedChange}
+          selected={v.id === selectedViewId}
+          depth={depth + 1}
+          isRenaming={renamingId === v.id}
+          renameValue={renameValue}
+          onRenameChange={onRenameChange}
+          onRenameCommit={onRenameCommit}
+          onRenameCancel={onRenameCancel}
+          onSelect={onSelectView}
+          onDoubleClick={onDoubleClickView}
+          onContextMenu={onContextMenu}
+        />
+      ))}
+    </TreeNode>
   );
 }
 
 function ViewRow({
   view,
+  checked,
+  onCheckedChange,
   selected,
   depth,
   isRenaming,
@@ -1038,6 +1065,8 @@ function ViewRow({
   onContextMenu,
 }: {
   view: ViewData;
+  checked?: boolean;
+  onCheckedChange?: (id: string, checked: boolean) => void;
   selected: boolean;
   depth: number;
   isRenaming: boolean;
@@ -1079,24 +1108,28 @@ function ViewRow({
   }
 
   return (
-    <div
-      data-view-row
-      className={`flex items-center gap-1 cursor-pointer select-none ${
-        selected ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50 text-gray-700'
-      }`}
-      style={{ paddingLeft: 28 + depth * 20, paddingRight: 8, paddingTop: 6, paddingBottom: 6 }}
-      onClick={() => onSelect(view.id)}
-      onDoubleClick={() => onDoubleClick(view.id, view.name)}
-      onContextMenu={(e) => onContextMenu(e, view.id)}
-    >
-      <span className="text-sm truncate flex-1">{view.name}</span>
-      {view.markups.length > 0 && (
-        <span className="text-[11px] text-gray-400 shrink-0">{view.markups.length} markup{view.markups.length !== 1 ? 's' : ''}</span>
-      )}
-      {view.isProjectView && (
-        <span className="text-[11px] text-gray-500 border border-gray-300 rounded px-1.5 py-0.5 shrink-0">Project View</span>
-      )}
-    </div>
+    <TreeNode
+      id={view.id}
+      label={view.name}
+      depth={depth}
+      type="leaf"
+      checked={checked}
+      onCheckedChange={onCheckedChange}
+      selected={selected}
+      onClick={onSelect}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
+      actions={
+        <>
+          {view.markups.length > 0 && (
+            <span className="text-[11px] text-gray-400 shrink-0">{view.markups.length} markup{view.markups.length !== 1 ? 's' : ''}</span>
+          )}
+          {view.isProjectView && (
+            <span className="text-[11px] text-gray-500 border border-gray-300 rounded px-1.5 py-0.5 shrink-0">Project View</span>
+          )}
+        </>
+      }
+    />
   );
 }
 
@@ -1106,6 +1139,8 @@ function ViewsContent() {
   const [folders, setFolders] = useState<ViewFolder[]>([]);
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [checkedFolderIds, setCheckedFolderIds] = useState<Set<string>>(new Set());
+  const [checkedViewIds, setCheckedViewIds] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; viewId: string } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -1116,9 +1151,35 @@ function ViewsContent() {
       setViews(v);
       setSelectedViewId(selId);
     });
-    setFolders(adapter.getFolders?.() ?? []);
+    const loadedFolders = adapter.getFolders?.() ?? [];
+    setFolders(loadedFolders);
+    setExpandedFolders(new Set(loadedFolders.map((f) => f.id)));
     return () => unsub?.();
   }, [adapter]);
+
+  const toggleFolderChecked = useCallback((id: string, checked: boolean) => {
+    const allFolderIds = collectDescendantFolderIds(id, folders);
+    const folderIdSet = new Set(allFolderIds);
+    const allViewIds = views.filter((v) => v.folderId !== null && folderIdSet.has(v.folderId)).map((v) => v.id);
+    setCheckedFolderIds((prev) => {
+      const next = new Set(prev);
+      allFolderIds.forEach((fid) => (checked ? next.add(fid) : next.delete(fid)));
+      return next;
+    });
+    setCheckedViewIds((prev) => {
+      const next = new Set(prev);
+      allViewIds.forEach((vid) => (checked ? next.add(vid) : next.delete(vid)));
+      return next;
+    });
+  }, [folders, views]);
+
+  const toggleViewChecked = useCallback((id: string, checked: boolean) => {
+    setCheckedViewIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
 
   const toggleFolder = useCallback((id: string) => {
     setExpandedFolders((prev) => {
@@ -1231,6 +1292,10 @@ function ViewsContent() {
           depth={0}
           expandedFolders={expandedFolders}
           toggleFolder={toggleFolder}
+          checkedFolderIds={checkedFolderIds}
+          onFolderCheckedChange={toggleFolderChecked}
+          checkedViewIds={checkedViewIds}
+          onViewCheckedChange={toggleViewChecked}
           onSelectView={handleSelectView}
           onDoubleClickView={handleDoubleClick}
           onContextMenu={handleContextMenu}
@@ -1241,6 +1306,8 @@ function ViewsContent() {
         <ViewRow
           key={view.id}
           view={view}
+          checked={checkedViewIds.has(view.id)}
+          onCheckedChange={toggleViewChecked}
           selected={view.id === selectedViewId}
           depth={0}
           isRenaming={renamingId === view.id}

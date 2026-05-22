@@ -3,3 +3,7 @@ dist/
 test-results/
 .DS_Store
 *.log
+
+# IFC source files are too large for GitHub (often 100MB+).
+# Convert to .frag.gz with: node scripts/ifc-to-frag.mjs <file>
+*.ifc

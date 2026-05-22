@@ -13,7 +13,8 @@
     "test:selection": "npx playwright test evals/tests/selection.spec.js",
     "test:search-sets": "npx playwright test evals/tests/search-sets.spec.js",
     "test:ui": "npx playwright test --ui",
-    "test:report": "npx playwright show-report evals/report"
+    "test:report": "npx playwright show-report evals/report",
+    "convert": "node scripts/ifc-to-frag.mjs"
   },
   "dependencies": {
     "@thatopen/components": "^2.4.0",

@@ -13,9 +13,11 @@ import { ModelViewer } from '../../index.js';
 // Registered sample models that show up in the header's "Project Model" dropdown.
 // Files live in `public/models/`; spaces in filenames are URL-encoded.
 const MODELS: readonly ModelEntry[] = [
-  { id: 'condos',      label: 'Condos',      url: '/models/Condos.ifc' },
-  { id: 'data-center', label: 'Data Center', url: '/models/Data%20Center.ifc' },
-  { id: 'vortex',      label: 'Vortex Architectural', url: '/models/Vortex_Architectural.ifc' },
+  { id: 'condos',      label: 'Condos',      url: '/models/condos.frag.gz' },
+  { id: 'data-center',   label: 'Data Center',   url: '/models/data-center.frag.gz' },
+  { id: 'tower',          label: 'Tower',          url: '/models/tower.frag.gz' },
+  { id: 'vortex',        label: 'Vortex Architectural', url: '/models/vortex-architectural.frag.gz' },
+  { id: 'mastodon',      label: 'Mastodon',             url: '/models/mastodon.frag.gz' },
 ] as const;
 
 const DEFAULT_MODEL = MODELS[0];
@@ -162,6 +164,7 @@ export function ChromeApp() {
   const [showUploadPage, setShowUploadPage] = useState(false);
   const initialModelRef = useRef<ModelEntry>(getInitialModel());
   const [activeModelId, setActiveModelId] = useState<string | null>(initialModelRef.current.id);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [streamingState, setStreamingState] = useState<ObjectStreamingState>({
     streamingSupported: false,
     parserProgress: 0,
@@ -216,6 +219,7 @@ export function ChromeApp() {
       viewer.loadModel(initial.url, initial.label).catch((err: unknown) => {
         console.error('Failed to auto-load default model:', err);
         setModelLoaded(false);
+        setLoadError('Failed to load model. Please try again.');
       });
     });
 
@@ -233,46 +237,69 @@ export function ChromeApp() {
   const handleLoadUrl = useCallback(async (url: string) => {
     const viewer = viewerInstanceRef.current;
     if (!viewer) return;
+    setLoadError(null);
     setLoadRequested(true);
-    setModelLoaded(true); // Hide overlay immediately
+    setModelLoaded(true);
     setInitialLoadingCamera(viewer);
     try {
       const name = url.split('/').pop();
       await viewer.loadModel(url, name);
     } catch (err) {
       console.error('Failed to load model:', err);
-      setModelLoaded(false); // Show overlay again on error
+      setModelLoaded(false);
+      setLoadError('Failed to load model. Please try again.');
     }
   }, []);
 
   const handleLoadFile = useCallback(async (file: File) => {
     const viewer = viewerInstanceRef.current;
     if (!viewer) return;
+    setLoadError(null);
     setLoadRequested(true);
     setModelLoaded(true);
-    setActiveModelId(null); // user-uploaded file is not in the registry
+    setActiveModelId(null);
     setInitialLoadingCamera(viewer);
     try {
       await viewer.loadModelFromFile(file, file.name);
     } catch (err) {
       console.error('Failed to load model:', err);
       setModelLoaded(false);
+      setLoadError('Failed to load model. Please try again.');
     }
   }, []);
 
   const handleSelectModel = useCallback(
-    (model: ModelEntry) => {
+    async (model: ModelEntry) => {
       if (model.id === activeModelId) return;
 
-      // Switch via URL param + full reload. This is intentional: in-place
-      // unloading hits a bug in @thatopen/components where dispose() iterates
-      // mesh.material as if it were always an array, and it also disposes the
-      // global FragmentsManager rather than just the selected model — both of
-      // which break the next load. A reload gives us a guaranteed clean slate
-      // (object tree, properties, selection, fragments) for the new model.
-      const url = new URL(window.location.href);
-      url.searchParams.set('model', model.id);
-      window.location.href = url.toString();
+      const viewer = viewerInstanceRef.current;
+      if (!viewer) return;
+
+      setActiveModelId(model.id);
+      setLoadError(null);
+      setLoadRequested(true);
+      setModelLoaded(true);
+      // Reset streaming state so the progress bar starts fresh for the new model.
+      setStreamingState({
+        streamingSupported: false,
+        parserProgress: 0,
+        totalObjects: 0,
+        streamComplete: false,
+        hasError: false,
+        phase: 'init',
+        bytesLoaded: 0,
+        bytesTotal: 0,
+      });
+
+      viewer.clearAllModels();
+      setInitialLoadingCamera(viewer);
+
+      try {
+        await viewer.loadModel(model.url, model.label);
+      } catch (err) {
+        console.error('Failed to switch model:', err);
+        setLoadError('Failed to load model. Please try again.');
+      }
     },
     [activeModelId],
   );
@@ -380,6 +407,27 @@ export function ChromeApp() {
         activeModelId={activeModelId}
         onSelectModel={handleSelectModel}
       />
+      {loadError && !showUploadPage && (
+        <div className="absolute bottom-6 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 shadow-md text-sm text-red-700 whitespace-nowrap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          {loadError}
+          <button
+            type="button"
+            onClick={() => setLoadError(null)}
+            aria-label="Dismiss"
+            className="ml-1 text-red-400 hover:text-red-600 transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      )}
       {showUploadPage && (
         <WelcomeOverlay
           onLoadUrl={(url) => {

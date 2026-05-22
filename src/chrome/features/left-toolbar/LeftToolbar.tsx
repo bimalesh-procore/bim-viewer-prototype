@@ -12,7 +12,7 @@ import deviationIcon from '../../assets/icons/left-toolbar/deviation.svg';
 const tools: { src: string; label: string; shortcut: string; panelId: PanelId }[] = [
   { src: viewsMarkupsIcon, label: 'Views',         shortcut: 'Alt V', panelId: 'views' },
   { src: itemsIcon,        label: 'Related Items',  shortcut: 'Alt R', panelId: 'items' },
-  { src: sheetsIcon,       label: 'Sheets',         shortcut: 'Alt H', panelId: 'sheets' },
+  { src: sheetsIcon,       label: '2D Sheets',      shortcut: 'Alt H', panelId: 'sheets' },
   { src: objectTreeIcon,   label: 'Object Tree',    shortcut: 'Alt O', panelId: 'object-tree' },
   { src: propertiesIcon,   label: 'Properties',     shortcut: 'Alt P', panelId: 'properties' },
   { src: searchSetsIcon,   label: 'Search Sets',    shortcut: 'Alt S', panelId: 'search-sets' },

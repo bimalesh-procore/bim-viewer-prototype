@@ -77,26 +77,29 @@ export class IFCLoader {
     await this._initPromise;
 
     const modelId = `model-${++this.modelIdCounter}`;
+    const cleanUrl = url.split('?')[0].toLowerCase();
+    const format = (cleanUrl.endsWith('.frag') || cleanUrl.endsWith('.frag.gz')) ? 'frag' : 'ifc';
 
     try {
       this.emit('load-start', { modelId, url, name });
 
-      // Streamed fetch so the loading bar can show real download progress.
-      // We read the body in chunks and emit a `load-progress` event each
-      // chunk with bytes-received vs Content-Length total.
       const response = await fetch(url);
       if (!response.ok) {
-        throw new Error(`Failed to fetch IFC file: ${response.statusText}`);
+        throw new Error(`Failed to fetch model file: ${response.statusText}`);
       }
 
       const totalHeader = response.headers.get('Content-Length');
-      const total = totalHeader ? parseInt(totalHeader, 10) : 0;
+      // For .frag.gz, Content-Length is the compressed size but the browser
+      // decompresses transparently, so received bytes will exceed total and
+      // show a misleading ratio. Force total=0 for an indeterminate bar.
+      const total = (format === 'frag' || !totalHeader) ? 0 : parseInt(totalHeader, 10);
       const buffer = await this._readBodyWithProgress(response, modelId, total);
 
       return this.loadModelFromBuffer(buffer, {
         modelId,
         name: name || url.split('/').pop(),
         url,
+        format,
       });
     } catch (error) {
       this.objectLoadingState.clearModel(modelId);
@@ -165,6 +168,7 @@ export class IFCLoader {
     await this._initPromise;
 
     const modelId = `model-${++this.modelIdCounter}`;
+    const format = file.name.toLowerCase().endsWith('.frag') ? 'frag' : 'ifc';
 
     try {
       this.emit('load-start', { modelId, fileName: file.name, name });
@@ -176,6 +180,7 @@ export class IFCLoader {
         modelId,
         name: name || file.name,
         fileName: file.name,
+        format,
       });
     } catch (error) {
       this.objectLoadingState.clearModel(modelId);
@@ -185,18 +190,19 @@ export class IFCLoader {
   }
 
   async loadModelFromBuffer(buffer, meta) {
-    const { modelId, name, url, fileName } = meta;
+    const { modelId, name, url, fileName, format = 'ifc' } = meta;
 
     try {
       this.emit('stream-capability', { modelId, streamingSupported: true });
 
-      // Mark the start of the parse phase. web-ifc gives us no progress
-      // signal mid-parse, so the bar's fill rests at 55% from here until
-      // the reveal phase begins below.
+      // Mark the start of the parse phase.
       this.emit('load-progress', { modelId, phase: 'parse' });
 
-      // Load real IFC fragments, then reveal actual geometry progressively.
-      const model = await this.ifcLoader.load(buffer);
+      // Load geometry — IFC requires async parsing via web-ifc; .frag is a
+      // pre-converted binary that FragmentsManager reads synchronously.
+      const model = format === 'frag'
+        ? this.fragmentsManager.load(buffer)
+        : await this.ifcLoader.load(buffer);
       this.sceneManager.add(model);
 
       this.loadedModels.set(modelId, {
@@ -460,9 +466,27 @@ export class IFCLoader {
     this.sceneManager.remove(modelData.model);
     this.objectLoadingState.clearModel(modelId);
 
-    // Dispose fragments
+    // Dispose this model's fragments only — not the global FragmentsManager.
+    // @thatopen/fragments Fragment.dispose() iterates mesh.material assuming
+    // it's always an array, so normalize first to avoid the crash.
     if (this.fragmentsManager) {
-      this.fragmentsManager.dispose();
+      try {
+        modelData.model.traverse((node) => {
+          if (node.isMesh && !Array.isArray(node.material)) {
+            node.material = [node.material];
+          }
+        });
+        this.fragmentsManager.disposeGroup(modelData.model);
+      } catch (err) {
+        console.warn('[IFCLoader] disposeGroup failed, falling back to manual cleanup:', err);
+        modelData.model.traverse((node) => {
+          if (node.isMesh) {
+            node.geometry?.dispose();
+            const mats = Array.isArray(node.material) ? node.material : [node.material];
+            mats.forEach((m) => m?.dispose());
+          }
+        });
+      }
     }
 
     // Remove from map
@@ -471,6 +495,12 @@ export class IFCLoader {
     this.emit('model-unload', { modelId });
 
     return true;
+  }
+
+  clearAllModels() {
+    for (const modelId of [...this.loadedModels.keys()]) {
+      this.unloadModel(modelId);
+    }
   }
 
   getLoadedModels() {

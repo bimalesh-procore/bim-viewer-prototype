@@ -438,6 +438,10 @@ export class ModelViewer {
     return this.ifcLoader.unloadModel(modelId);
   }
 
+  clearAllModels() {
+    return this.ifcLoader.clearAllModels();
+  }
+
   getLoadedModels() {
     return this.ifcLoader.getLoadedModels();
   }

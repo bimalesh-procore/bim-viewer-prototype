@@ -20,12 +20,12 @@ The Chrome UI and 3D engine live in the **same project, same `npm install`, same
 
 | Entry | URL | Theme | Purpose |
 |---|---|---|---|
-| `demo/index.html` | `localhost:3000/` | Dark | Legacy UI, used by all Playwright tests |
-| `demo/chrome.html` | `localhost:3000/chrome.html` | Light (Tailwind) | Chrome UI with real 3D engine |
+| `demo/index.html` | `localhost:3000/` | Light (Tailwind) | Chrome UI — the current default (`npm run dev`) |
+| `demo/old.html` | `localhost:3000/old.html` | Dark | Legacy dark-theme UI used by Playwright tests (`npm run dev:old`) |
 
-- `npm run dev` opens the dark-theme legacy UI
-- `npm run dev:chrome` opens the Chrome UI
-- **Never modify `demo/index.html` or `demo/test-page.html`** — 185 tests depend on them
+- `npm run dev` opens the Chrome UI (default)
+- `npm run dev:old` opens the legacy dark-theme UI
+- **Never modify `demo/old.html` or `demo/test-page.html`** — Playwright tests depend on them
 
 ## The ViewerAdapter Boundary
 
@@ -86,10 +86,12 @@ src/chrome/
 
 1. `ViewerCanvas` provides a `<div ref>` as the mount point
 2. `ChromeApp` creates `ModelViewer(container, { showToolbar: false, showStatusBar: false })` in a `useEffect`
-3. On `ready` event: overrides dark scene background to light gray, creates real adapter via `createModelViewerAdapter(viewer)`, sets adapter state
+3. On `ready` event: overrides dark scene background to light gray, creates real adapter via `createModelViewerAdapter(viewer)`, sets adapter state, auto-loads the default model
 4. `ViewerAdapterProvider` distributes the adapter to all chrome components via React Context
 5. Chrome components call `useViewerAdapter()` to get the adapter
-6. A `WelcomeOverlay` shows until a model is loaded (supports drag-drop and sample model button)
+6. A `WelcomeOverlay` (accessible via the Upload button) supports drag-drop and sample model buttons for loading custom files
+7. **Model switching** is in-place: `handleSelectModel` calls `viewer.clearAllModels()`, resets streaming state, then calls `viewer.loadModel()`. No page reload.
+8. **Load errors** surface as a dismissible toast at the bottom of the viewport (`loadError` state in `ChromeApp`). The toast appears for auto-load, URL load, file upload, and model switch failures.
 
 ## CSS Override Strategy
 
@@ -110,6 +112,8 @@ src/chrome/
 - **Isolation** → `viewer.visibility.isolate()` / `showAll()`
 - **Zoom In/Out** → `viewer.navigation.zoom(±1)` (adapter ready, no button yet)
 - **View Orientations** → `viewer.navigation.setCamera()` with presets (adapter ready, ViewCube not wired)
+- **Model switching** → `viewer.clearAllModels()` + `viewer.loadModel()` (in-place, no page reload)
+- **Load error feedback** → dismissible toast rendered by `ChromeApp` on any load failure
 
 ### Wired to stubs (engine feature not built)
 - Properties, Measure, Undo, Redo — log to console
@@ -127,6 +131,20 @@ React StrictMode double-mounts in dev mode. The `ChromeApp` uses a `viewerInstan
 2. Pull their changes into `model-chrome/` in this repo
 3. Diff `model-chrome/src/` against `src/chrome/` and merge relevant changes
 4. Once colleagues move to this repo, they contribute to `src/chrome/` directly and `model-chrome/` is removed
+
+## Model Files
+
+Sample models live in `public/models/` as **pre-converted `.frag.gz` files**. IFC sources are not committed (too large for GitHub). The `.frag.gz` format is `@thatopen/components`' binary fragment format, gzip-compressed.
+
+| Model | File | Size |
+|---|---|---|
+| Condos | `condos.frag.gz` | ~4 MB |
+| Data Center | `data-center.frag.gz` | ~31 MB |
+| Tower | `tower.frag.gz` | ~6 MB |
+| Vortex Architectural | `vortex-architectural.frag.gz` | ~21 MB |
+| Mastodon | `mastodon.frag.gz` | ~81 MB |
+
+**To add a model:** drop the `.ifc` in `public/models/`, run `npm run convert <path>`, delete the `.ifc`, commit the `.frag.gz`, then register it in the `MODELS` array in `ChromeApp.tsx`. See CLAUDE.md §4b for full details.
 
 ## Tech Stack
 
@@ -149,7 +167,7 @@ React StrictMode double-mounts in dev mode. The `ChromeApp` uses a `viewerInstan
 | IFC Loading | 8 | `evals/tests/ifc-loading.spec.js` |
 | Chrome Compatibility | 43 (15 expected failures) | `evals/tests/chrome-compatibility.spec.js` |
 
-Run all: `npm test`. Tests use `demo/index.html` and `demo/test-page.html` — never `chrome.html`.
+Run all: `npm test`. Tests use `demo/old.html` and `demo/test-page.html` — never the Chrome UI entry.
 
 ## Known Issues / Next Steps
 
@@ -157,7 +175,7 @@ Run all: `npm test`. Tests use `demo/index.html` and `demo/test-page.html` — n
 2. **Right-click context menu** — engine's context menu renders inside the ViewerCanvas stacking context. CSS has been re-themed to light, but z-index layering with Chrome toolbars may need tuning.
 3. **No active state management** — Chrome toolbar buttons don't track active/pressed state. Need state in each toolbar to show which tool is active.
 4. **SearchSets not wired** — the engine has a full SearchSets feature + panel, but the Chrome left toolbar button doesn't toggle it yet.
-5. **File loading** — currently handled by a `WelcomeOverlay` in `ChromeApp.tsx`. May need to be moved to the Chrome Header for better UX (Load IFC button in header).
+5. **Object tree stale on model switch** — when switching models in-place, the object tree and properties panel may show data from the previous model briefly until the new model's events propagate through the adapter. No explicit clear signal is sent to chrome features on `clearAllModels()`.
 6. **Procore Viewer integration** — future work. Write `procoreAdapter.ts` implementing the same `ViewerAdapter` interface. Chrome components don't change.
 
 ## Branch History

@@ -6,6 +6,7 @@
 - **Run Tests:** `npm test`
 - **Smoke Test:** `npm run smoke`
 - **Lint:** `npm run lint`
+- **Convert IFC → .frag.gz:** `npm run convert <path-to-ifc-file>` → outputs to `public/models/` (alias for `node scripts/ifc-to-frag.mjs`)
 
 ## Architecture & Code Style
 
@@ -74,6 +75,22 @@
 - **`demo/test-page.html`** — mock scene test page. Used by regression and selection tests. **Do not modify.**
 - `ChromeApp.tsx` creates `ModelViewer` with `showToolbar: false, showStatusBar: false` (Chrome provides its own UI), overrides the dark scene background to light gray, and provides the real adapter via React Context.
 - `src/chrome/index.css` contains Tailwind directives and CSS overrides that neutralize `dark-theme.css` styles (transparent background, hidden dark toolbar/status bar, light-themed panels).
+
+### 4b. Model Files (`public/models/`)
+- All sample models are stored as **pre-converted `.frag.gz` files** in `public/models/`.
+- IFC source files are **not** committed — they exceed GitHub's 100MB per-file hard limit and are listed in `.gitignore` as `*.ifc`.
+- `.frag.gz` = binary fragment data produced by `@thatopen/components` `IfcLoader` + `FragmentsManager.export()`, then gzip-compressed. Resulting files range from ~4 MB to ~80 MB, well within git limits (e.g., 278 MB IFC → 31 MB `.frag.gz`).
+- Vite (dev) and standard web servers (prod) serve `.gz` files with `Content-Encoding: gzip` automatically — the browser decompresses transparently. `IFCLoader.js` receives the raw `.frag` bytes.
+- **To add a new model:**
+  1. Drop the `.ifc` into `public/models/`
+  2. Run: `npm run convert public/models/MyModel.ifc`
+  3. Delete the `.ifc`; commit only the `.frag.gz`
+  4. Add an entry to the `MODELS` array in `src/chrome/app/ChromeApp.tsx`
+- **File naming:** lowercase kebab-case (e.g., `data-center.frag.gz`). Spaces break Vite's gzip middleware URL resolution.
+- **Format compatibility:** Must use `IfcLoader` + `FragmentsManager.export()` for conversion — not `IfcImporter`. These two use different internal serialization formats; only the Serializer format is readable by `FragmentsManager.load()`.
+- **Download progress:** `.frag.gz` files are served with `Content-Encoding: gzip`; the browser decompresses transparently, so `Content-Length` (compressed size) does not match received byte count. `IFCLoader` forces `total = 0` for fragment downloads, showing an indeterminate bar during download. The reveal phase (80–100%) provides accurate per-mesh progress for both IFC and `.frag.gz`.
+- **Model disposal bug:** `@thatopen/fragments` `Fragment.dispose()` iterates `mesh.material` assuming it is always an array — it is not. `IFCLoader.unloadModel()` normalizes all materials to arrays before calling `fragmentsManager.disposeGroup(model)`, with a manual Three.js cleanup fallback if that still throws. **Never call `fragmentsManager.dispose()` directly** — it destroys the global `FragmentsManager` and breaks all subsequent loads.
+- **Model switching:** `ChromeApp.handleSelectModel` does an in-place switch — calls `viewer.clearAllModels()`, resets streaming state, then loads the new model. No page reload needed.
 
 ### 5. Sync Source (`model-chrome/`)
 - `model-chrome/` is a **read-only reference copy** of the external ModelChrome repository maintained by colleagues.

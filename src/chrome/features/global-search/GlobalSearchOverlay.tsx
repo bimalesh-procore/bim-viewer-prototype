@@ -244,7 +244,7 @@ export function GlobalSearchOverlay() {
     } else if (entity.type === 'item') {
       openPanel('items', 'Related Items');
     } else if (entity.type === 'material') {
-      openPanel('sheets', 'Sheets');
+      openPanel('sheets', '2D Sheets');
     } else if (entity.type === 'group') {
       openPanel('search-sets', 'Search Sets');
     } else if (entity.type === 'setting') {

@@ -1279,6 +1279,19 @@ function ViewsContent() {
 
 // ─── Sheets ──────────────────────────────────────────────────────────────────
 
+function SheetsToolbar() {
+  const [query, setQuery] = useState('');
+  return (
+    <div className="px-4 py-2 border-b border-[#d6dadc]">
+      <PanelSearchBar
+        value={query}
+        onChange={setQuery}
+        placeholder="Search sheets"
+      />
+    </div>
+  );
+}
+
 function SheetsContent() {
   return (
     <p className="px-3 py-6 text-sm text-gray-400 text-center">
@@ -1302,7 +1315,7 @@ function DeviationContent() {
 export const PANEL_REGISTRY: Record<PanelId, { Content: () => JSX.Element; Toolbar?: () => JSX.Element }> = {
   'views':       { Content: ViewsContent, Toolbar: ViewsToolbar },
   'items':       { Content: ItemsContent },
-  'sheets':      { Content: SheetsContent },
+  'sheets':      { Content: SheetsContent, Toolbar: SheetsToolbar },
   'object-tree': { Content: ObjectTreeContent, Toolbar: ObjectTreeToolbar },
   'properties':  { Content: PropertiesContent, Toolbar: PropertiesToolbar },
   'search-sets': { Content: SearchSetsContent },

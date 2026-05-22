@@ -93,7 +93,15 @@ export class IFCLoader {
       // decompresses transparently, so received bytes will exceed total and
       // show a misleading ratio. Force total=0 for an indeterminate bar.
       const total = (format === 'frag' || !totalHeader) ? 0 : parseInt(totalHeader, 10);
-      const buffer = await this._readBodyWithProgress(response, modelId, total);
+      let buffer = await this._readBodyWithProgress(response, modelId, total);
+
+      // Some servers (and browser caches populated before a Content-Encoding
+      // header was added) deliver the raw gzip bytes without decompressing.
+      // Detect by the gzip magic bytes (0x1f 0x8b) and decompress in JS so
+      // FragmentsManager.load() always receives raw .frag data.
+      if (format === 'frag' && buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b) {
+        buffer = await this._decompressGzip(buffer);
+      }
 
       return this.loadModelFromBuffer(buffer, {
         modelId,
@@ -161,6 +169,31 @@ export class IFCLoader {
       offset += chunk.length;
     }
     return buf;
+  }
+
+  async _decompressGzip(compressed) {
+    const ds = new DecompressionStream('gzip');
+    const writer = ds.writable.getWriter();
+    writer.write(compressed);
+    writer.close();
+
+    const reader = ds.readable.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.length;
+    }
+
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return out;
   }
 
   async loadModelFromFile(file, name) {

@@ -945,6 +945,7 @@ function ViewFolderRow({
   views,
   folders,
   selectedViewId,
+  selectedItemId,
   renamingId,
   renameValue,
   onRenameChange,
@@ -958,6 +959,7 @@ function ViewFolderRow({
   checkedViewIds,
   onViewCheckedChange,
   onSelectView,
+  onSelectFolder,
   onDoubleClickView,
   onContextMenu,
 }: {
@@ -965,6 +967,7 @@ function ViewFolderRow({
   views: ViewData[];
   folders: ViewFolder[];
   selectedViewId: string | null;
+  selectedItemId: string | null;
   renamingId: string | null;
   renameValue: string;
   onRenameChange: (val: string) => void;
@@ -978,6 +981,7 @@ function ViewFolderRow({
   checkedViewIds: Set<string>;
   onViewCheckedChange: (id: string, checked: boolean) => void;
   onSelectView: (id: string) => void;
+  onSelectFolder: (id: string) => void;
   onDoubleClickView: (id: string, currentName: string) => void;
   onContextMenu: (e: React.MouseEvent, viewId: string) => void;
 }) {
@@ -1002,6 +1006,8 @@ function ViewFolderRow({
       checked={checked}
       indeterminate={indeterminate}
       onCheckedChange={onFolderCheckedChange}
+      selected={folder.id === selectedItemId}
+      onClick={onSelectFolder}
     >
       {childFolders.map((cf) => (
         <ViewFolderRow
@@ -1010,6 +1016,7 @@ function ViewFolderRow({
           views={views}
           folders={folders}
           selectedViewId={selectedViewId}
+          selectedItemId={selectedItemId}
           renamingId={renamingId}
           renameValue={renameValue}
           onRenameChange={onRenameChange}
@@ -1023,6 +1030,7 @@ function ViewFolderRow({
           checkedViewIds={checkedViewIds}
           onViewCheckedChange={onViewCheckedChange}
           onSelectView={onSelectView}
+          onSelectFolder={onSelectFolder}
           onDoubleClickView={onDoubleClickView}
           onContextMenu={onContextMenu}
         />
@@ -1033,7 +1041,7 @@ function ViewFolderRow({
           view={v}
           checked={checkedViewIds.has(v.id)}
           onCheckedChange={onViewCheckedChange}
-          selected={v.id === selectedViewId}
+          selected={v.id === selectedItemId}
           depth={depth + 1}
           isRenaming={renamingId === v.id}
           renameValue={renameValue}
@@ -1121,10 +1129,7 @@ function ViewRow({
       onContextMenu={onContextMenu}
       actions={
         <>
-          {view.markups.length > 0 && (
-            <span className="text-[11px] text-gray-400 shrink-0">{view.markups.length} markup{view.markups.length !== 1 ? 's' : ''}</span>
-          )}
-          {view.isProjectView && (
+{view.isProjectView && (
             <span className="text-[11px] text-gray-500 border border-gray-300 rounded px-1.5 py-0.5 shrink-0">Project View</span>
           )}
         </>
@@ -1138,6 +1143,7 @@ function ViewsContent() {
   const [views, setViews] = useState<ViewData[]>([]);
   const [folders, setFolders] = useState<ViewFolder[]>([]);
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [checkedFolderIds, setCheckedFolderIds] = useState<Set<string>>(new Set());
   const [checkedViewIds, setCheckedViewIds] = useState<Set<string>>(new Set());
@@ -1195,12 +1201,22 @@ function ViewsContent() {
     clearTimeout(clickTimerRef.current);
     clickTimerRef.current = setTimeout(() => {
       if (id === selectedViewId) {
+        setSelectedViewId(null);
+        setSelectedItemId(null);
         adapter.deselectView?.();
       } else {
+        setSelectedViewId(id);
+        setSelectedItemId(id);
         adapter.selectView?.(id);
       }
     }, 250);
   }, [adapter, selectedViewId]);
+
+  const handleSelectFolder = useCallback((id: string) => {
+    setSelectedItemId((prev) => (prev === id ? null : id));
+    setSelectedViewId(null);
+    adapter.deselectView?.();
+  }, [adapter]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, viewId: string) => {
     e.preventDefault();
@@ -1284,6 +1300,7 @@ function ViewsContent() {
           views={views}
           folders={folders}
           selectedViewId={selectedViewId}
+          selectedItemId={selectedItemId}
           renamingId={renamingId}
           renameValue={renameValue}
           onRenameChange={setRenameValue}
@@ -1297,6 +1314,7 @@ function ViewsContent() {
           checkedViewIds={checkedViewIds}
           onViewCheckedChange={toggleViewChecked}
           onSelectView={handleSelectView}
+          onSelectFolder={handleSelectFolder}
           onDoubleClickView={handleDoubleClick}
           onContextMenu={handleContextMenu}
         />
@@ -1308,7 +1326,7 @@ function ViewsContent() {
           view={view}
           checked={checkedViewIds.has(view.id)}
           onCheckedChange={toggleViewChecked}
-          selected={view.id === selectedViewId}
+          selected={view.id === selectedItemId}
           depth={0}
           isRenaming={renamingId === view.id}
           renameValue={renameValue}

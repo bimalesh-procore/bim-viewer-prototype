@@ -15,9 +15,9 @@ export interface TreeNodeProps {
   checked?: boolean;
   onCheckedChange?: (id: string, checked: boolean) => void;
   loading?: boolean;
-  // leaf
   selected?: boolean;
   onClick?: (id: string) => void;
+  // leaf
   onDoubleClick?: (id: string, label: string) => void;
   onContextMenu?: (e: React.MouseEvent, id: string) => void;
   actions?: React.ReactNode;
@@ -49,10 +49,10 @@ export function TreeNode({
     <>
       <div
         className={`flex items-center gap-2 cursor-pointer select-none ${
-          !isFolder && selected ? 'bg-blue-50' : 'hover:bg-gray-50'
+          selected ? '' : 'hover:bg-gray-50'
         }`}
-        style={{ paddingLeft, paddingRight: 12, paddingTop: 8, paddingBottom: 8 }}
-        onClick={() => (isFolder ? onToggle?.(id) : onClick?.(id))}
+        style={{ paddingLeft, paddingRight: 12, paddingTop: 8, paddingBottom: 8, backgroundColor: selected ? '#EDF2FC' : undefined }}
+        onClick={() => { if (isFolder) onToggle?.(id); onClick?.(id); }}
         onDoubleClick={() => !isFolder && onDoubleClick?.(id, label)}
         onContextMenu={(e) => !isFolder && onContextMenu?.(e, id)}
       >
@@ -81,7 +81,7 @@ export function TreeNode({
         {loading ? (
           <span className="flex-1 ml-1 h-3.5 rounded bg-gray-200 mv-skeleton-pulse" style={{ maxWidth: 120 }} />
         ) : (
-          <span className={`text-sm truncate flex-1 ml-1 ${!isFolder && selected ? 'text-blue-700' : 'text-gray-700'}`}>
+          <span className={`text-sm truncate flex-1 ml-1 ${selected ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : '#374151' }}>
             {label}
           </span>
         )}

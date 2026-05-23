@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight, Folder, Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder } from '@procore/core-icons';
+import { Check } from 'lucide-react';
 
 export interface TreeNodeProps {
   id: string;
@@ -41,16 +42,16 @@ export function TreeNode({
   actions,
 }: TreeNodeProps) {
   const isFolder = type === 'folder';
-  const paddingLeft = 8 + depth * 20;
+  const paddingLeft = (isFolder ? 16 : 24) + depth * 20;
   const checkboxState = indeterminate ? 'indeterminate' : checked ? 'checked' : 'unchecked';
 
   return (
     <>
       <div
-        className={`flex items-center gap-1 cursor-pointer select-none ${
+        className={`flex items-center gap-2 cursor-pointer select-none ${
           !isFolder && selected ? 'bg-blue-50' : 'hover:bg-gray-50'
         }`}
-        style={{ paddingLeft, paddingRight: 8, paddingTop: 6, paddingBottom: 6 }}
+        style={{ paddingLeft, paddingRight: 12, paddingTop: 8, paddingBottom: 8 }}
         onClick={() => (isFolder ? onToggle?.(id) : onClick?.(id))}
         onDoubleClick={() => !isFolder && onDoubleClick?.(id, label)}
         onContextMenu={(e) => !isFolder && onContextMenu?.(e, id)}
@@ -70,12 +71,12 @@ export function TreeNode({
         </button>
 
         {isFolder && (
-          <button type="button" className="w-5 h-5 flex items-center justify-center shrink-0 text-gray-500">
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <button type="button" className="w-6 h-6 flex items-center justify-center shrink-0" style={{ color: '#232729' }}>
+            {expanded ? <ChevronDown /> : <ChevronRight />}
           </button>
         )}
 
-        {isFolder && <Folder size={16} className="text-gray-400 shrink-0" />}
+        {isFolder && <Folder className="shrink-0" style={{ color: '#6A767C' }} />}
 
         {loading ? (
           <span className="flex-1 ml-1 h-3.5 rounded bg-gray-200 mv-skeleton-pulse" style={{ maxWidth: 120 }} />

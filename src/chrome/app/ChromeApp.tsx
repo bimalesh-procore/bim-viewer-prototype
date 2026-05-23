@@ -186,7 +186,7 @@ export function ChromeApp() {
     const viewer = new ModelViewer(container, {
       showToolbar: false,
       showStatusBar: false,
-      showGrid: true,
+      showGrid: false,
       showLoadingOverlay: false,
       autoZoomOnLoad: false,
       autoZoomOnObjectLoadStart: false,

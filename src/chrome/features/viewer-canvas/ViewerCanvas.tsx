@@ -1,7 +1,7 @@
-import type { RefObject } from 'react';
+import type { Ref } from 'react';
 
 interface ViewerCanvasProps {
-  viewerContainerRef?: RefObject<HTMLDivElement | null>;
+  viewerContainerRef?: Ref<HTMLDivElement>;
 }
 
 export function ViewerCanvas({ viewerContainerRef }: ViewerCanvasProps) {

@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback, type RefObject } from 'react';
-import { Header, type ModelEntry } from '../header/Header';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Header } from '../header';
 import { LeftToolbar } from '../left-toolbar/LeftToolbar';
 import { RightToolbar } from '../right-toolbar/RightToolbar';
 import { MiniMap } from '../minimap/MiniMap';
@@ -10,26 +10,11 @@ import { ModeIdentifierOverlay } from '../mode-identifier/ModeIdentifierOverlay'
 import { PlaneContextMenu } from '../plane-context-menu/PlaneContextMenu';
 import { DockManager } from '../dock-manager/DockManager';
 import { useDockStore } from '../dock-manager/useDockStore';
+import type { ChromeLayoutProps } from './types';
 
-interface ChromeLayoutProps {
-  viewerContainerRef?: RefObject<HTMLDivElement | null>;
-  showOverlays?: boolean;
-  onUploadClick?: () => void;
-  /** null = hidden; 0-100 = visible with that fill % */
-  streamingProgress?: number | null;
-  /** Popover headline (e.g. "Downloading model"). */
-  streamingLabel?: string;
-  /** Popover detail line (e.g. "80 MB / 150 MB"). */
-  streamingDetail?: string;
-  models?: readonly ModelEntry[];
-  activeModelId?: string | null;
-  onSelectModel?: (model: ModelEntry) => void;
-}
-
-export function ChromeLayout({
+export function ChromeLayoutDesktop({
   viewerContainerRef,
   showOverlays = true,
-  onUploadClick,
   streamingProgress,
   streamingLabel = 'Loading model',
   streamingDetail = '',
@@ -71,13 +56,12 @@ export function ChromeLayout({
   }, [store]);
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-white">
+    <div className="flex flex-col h-full w-full bg-white">
       <GlobalSearchOverlay />
       {/* z-[60] keeps the header stacking context above the z-50 left/right toolbars
           so the model-picker dropdown always floats on top of any open panel. */}
       <div className="relative flex-shrink-0 z-[60]">
         <Header
-          onUploadClick={onUploadClick}
           models={models}
           activeModelId={activeModelId}
           onSelectModel={onSelectModel}

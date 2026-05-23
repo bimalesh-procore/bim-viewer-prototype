@@ -67,14 +67,20 @@ src/chrome/
 │   ├── App.tsx              ← Standalone mock-mode entry (model-chrome dev)
 │   └── ChromeApp.tsx        ← Blended entry (creates ModelViewer + real adapter)
 ├── features/
-│   ├── chrome-layout/       ← Shell that composes all features (no logic)
-│   ├── header/              ← Back/forward, project dropdown, search, settings
+│   ├── chrome-layout/       ← Shell that composes all features (no logic).
+│   │                          Variant files: ChromeLayout.{desktop,tablet,phone}.tsx
+│   │                          + index.tsx selector + DeviceFrame.tsx (bezelled
+│   │                          tablet/phone shell with rotation button).
+│   ├── header/              ← Back/forward, project dropdown, search, settings cog.
+│   │                          Variant files: Header.{desktop,tablet,phone}.tsx + index.tsx
+│   ├── form-factor/         ← FormFactorContext (desktop/tablet/phone + orientation).
+│   │                          URL-driven via ?form= and ?orient=. Settings cog updates it.
 │   ├── left-toolbar/        ← Object Tree, Search Sets, Views, Items, Properties, Deviation
 │   ├── right-toolbar/       ← View group, Tools group, History group
 │   ├── view-cube/           ← 3D orientation indicator
 │   ├── minimap/             ← Floor plan overview
 │   ├── navigation-wheel/    ← Fit-to-view button
-│   ├── viewer-canvas/       ← Mount point for 3D engine (ref-based)
+│   ├── viewer-canvas/       ← Mount point for 3D engine (callback ref)
 │   └── viewer-adapter/      ← Interface, mock, real adapter, React Context
 ├── shared/                  ← For shared UI primitives (currently empty)
 ├── assets/icons/            ← SVGs for all toolbars and header
@@ -82,16 +88,17 @@ src/chrome/
 └── main.tsx                 ← Entry point (loads ChromeApp)
 ```
 
+See [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) for the tablet/phone variant workstream status and next steps. See [CLAUDE.md §3a–3d](./CLAUDE.md) for the variant file convention, device frame, viewer-container remount migration, and URL-param preservation rules.
+
 ## How ChromeApp Integrates the Engine
 
-1. `ViewerCanvas` provides a `<div ref>` as the mount point
-2. `ChromeApp` creates `ModelViewer(container, { showToolbar: false, showStatusBar: false })` in a `useEffect`
+1. `ViewerCanvas` provides a `<div>` whose ref is a **callback ref backed by state** in `ChromeApp` — this is what allows the viewer to survive form-factor variant switches (see CLAUDE.md §3c)
+2. `ChromeApp` creates `ModelViewer(container, { showToolbar: false, showStatusBar: false })` in a `useEffect` keyed on the container; the effect's first run creates the viewer, subsequent runs (variant remount) migrate `viewer.canvasContainer` to the new container
 3. On `ready` event: overrides dark scene background to light gray, creates real adapter via `createModelViewerAdapter(viewer)`, sets adapter state, auto-loads the default model
 4. `ViewerAdapterProvider` distributes the adapter to all chrome components via React Context
 5. Chrome components call `useViewerAdapter()` to get the adapter
-6. A `WelcomeOverlay` (accessible via the Upload button) supports drag-drop and sample model buttons for loading custom files
-7. **Model switching** is in-place: `handleSelectModel` calls `viewer.clearAllModels()`, resets streaming state, then calls `viewer.loadModel()`. No page reload.
-8. **Load errors** surface as a dismissible toast at the bottom of the viewport (`loadError` state in `ChromeApp`). The toast appears for auto-load, URL load, file upload, and model switch failures.
+6. **Model switching** is in-place: `handleSelectModel` calls `viewer.clearAllModels()`, resets streaming state, then calls `viewer.loadModel()`. No page reload. The header model picker uses native `<a href="?model=…">` navigation whose href is built via `URLSearchParams` so `?form=` and `?orient=` survive
+7. **Load errors** surface as a dismissible toast at the bottom of the viewport (`loadError` state in `ChromeApp`). The toast appears for auto-load and model switch failures
 
 ## CSS Override Strategy
 
@@ -185,6 +192,9 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Selection — hover transparency removed** → `applyHover()` body commented out; re-enable by uncommenting the block
 - **Right-click context menu — objects only** → `openContextMenuAtEvent` no longer fires on empty-space clicks; context menu only appears when the raycast hits an object
 - **Section plane/cut immediate drag** → clicking an object to create a section plane or section cut immediately begins dragging it in the same mousedown–move–mouseup gesture; camera is fully suspended for the duration via `navigation.setControlsEnabled(false)` + `_externalDragActive` guard
+- **Form-factor selector** → settings cog in the header opens a dropdown (Desktop / Tablet / Phone). URL updates via `history.replaceState` to `?form=…`; clean URLs omit the param for desktop. Refresh respects the URL; bare URL defaults to desktop. See [CLAUDE.md §3a](./CLAUDE.md) and [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md)
+- **Device frame** (tablet/phone) → centered, bezelled device shell with rotation button outside top-right. Tablet/phone variant trees are wrapped in `DeviceFrame` from `chrome-layout/index.tsx`. Bezel/notch/home indicator live outside the chrome's scale transform so they stay visually consistent across orientation and viewport size
+- **Orientation toggle** → rotate button on tablet/phone swaps `?orient=portrait`/`?orient=landscape`. Tablet default = landscape; phone default = portrait. URL omits `?orient=` when it matches the default
 
 ### Wired to stubs (engine feature not built)
 - Properties, Measure, Undo, Redo — log to console
@@ -250,6 +260,7 @@ Run all: `npm test`. Tests use `demo/old.html` and `demo/test-page.html` — nev
 6. **Navigation tests sparse** — the REG-NAV suite predates the WASD/right-click/scroll-to-cursor work. Tests for camera-relative movement, right-click mode switching, zoom-to-cursor, and origin dots have not been written yet.
 7. **Procore Viewer integration** — future work. Write `procoreAdapter.ts` implementing the same `ViewerAdapter` interface. Chrome components don't change.
 8. ~~**Section plane/cut camera interference**~~ — **Resolved.** Creating a section plane/cut and immediately dragging in the same gesture no longer moves the camera. Fixed via `_externalDragActive` flag in `Navigation.js` (guards look/fly drag start) and save/restore of `controls.enabled` in `setControlsEnabled` (prevents accidental OrbitControls re-enable in look mode after drag ends).
+9. **Mobile/tablet variant buildout** — form-factor scaffolding (context, DeviceFrame, header + chrome-layout variant files) is in place, but tablet/phone variants currently forward to the desktop layout. The cramped desktop UI inside the phone bezel is the visible motivation for real variant work. See [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) for the next-steps checklist (real header/toolbar variants, movement-joystick visual stub, panel variants).
 
 ## Experiments & Dead Ends
 

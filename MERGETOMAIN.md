@@ -38,6 +38,10 @@ Before running `gh pr merge` (or any equivalent merge-to-main command):
 | `src/chrome/features/items-panel/` | `evals/tests/chrome-object-tree.spec.js` |
 | `src/chrome/features/search-sets/` | `evals/tests/chrome-search-sets-panel.spec.js` + `evals/tests/search-sets.spec.js` |
 | `src/chrome/features/viewer-adapter/` | `evals/tests/chrome-compatibility.spec.js` |
+| `src/chrome/features/form-factor/` | `evals/tests/regression.spec.js` (no dedicated suite yet — see [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) §7) |
+| `src/chrome/features/chrome-layout/` | `evals/tests/regression.spec.js` + `evals/tests/chrome-compatibility.spec.js` (touches viewer mount and variant routing — see [CLAUDE.md §3c](./CLAUDE.md)) |
+| `src/chrome/features/header/` | `evals/tests/regression.spec.js` + `evals/tests/chrome-compatibility.spec.js` |
+| `src/chrome/app/ChromeApp.tsx` | `evals/tests/chrome-compatibility.spec.js` + `evals/tests/chrome-ifc-loading.spec.js` (viewer container migration logic lives here — see [CLAUDE.md §3c](./CLAUDE.md)) |
 | `src/chrome/` (any other) | `evals/tests/chrome-ifc-loading.spec.js` + `evals/tests/chrome-compatibility.spec.js` |
 | `src/features/Selection.js` | `evals/tests/selection.spec.js` |
 | `src/features/SearchSets.js` | `evals/tests/search-sets.spec.js` |

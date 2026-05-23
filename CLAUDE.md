@@ -57,6 +57,50 @@
 - The layout shell (`ChromeLayout`) only composes features — it must not contain feature-specific logic.
 - **CRITICAL — Import Boundary:** Chrome features must **never** import directly from `src/core/`, `src/features/`, or `src/services/`. All viewer communication goes through the ViewerAdapter (see Section 4).
 
+### 3a. Form Factor & Variant File Convention
+
+The chrome supports three form factors — **desktop**, **tablet**, **phone** — selected at runtime. The active form factor is held in `src/chrome/features/form-factor/FormFactorContext.tsx` and driven from the URL (`?form=tablet`, `?form=phone`; absent = desktop). Orientation (`portrait` / `landscape`) lives in the same context, driven by `?orient=` and reset to each form factor's default (tablet → landscape, phone → portrait) when the form factor changes. The settings cog in the header is the user-facing toggle.
+
+**Variant files per feature.** Features that visually diverge between form factors use **variant files** inside the feature dir, with a tiny `index.tsx` selector. The desktop file holds the real implementation; tablet/phone files start as stubs that forward to desktop until real designs land:
+
+```
+src/chrome/features/header/
+├── index.tsx                ← selector: useFormFactor() → picks variant
+├── Header.desktop.tsx       ← real implementation
+├── Header.tablet.tsx        ← stub or real tablet JSX
+├── Header.phone.tsx         ← stub or real phone JSX
+├── HeaderButton.tsx         ← shared atoms used by all variants
+└── types.ts                 ← shared props + domain types
+```
+
+**Rules:**
+- A feature only forks into variants when its design actually differs between form factors. Single-variant features stay as `Feature.tsx` until divergence is real — do not preemptively triplicate.
+- All consumers import the feature through its `index.tsx`: `import { Header } from '../header'`, never `'../header/Header'` or `'../header/Header.desktop'`.
+- Shared state, handlers, and adapter calls go in a sibling `useFeatureName.ts` hook so variants stay JSX-only. Do not duplicate logic across variants.
+- Stub variants forward to the desktop variant with a one-line comment indicating they're stubs.
+- New form-factor-only features (e.g. `movement-joystick` for phone) live in their own feature dir and return `null` for form factors they don't apply to.
+
+### 3b. Device Frame & Orientation (tablet/phone)
+
+For tablet and phone, `chrome-layout/index.tsx` wraps the variant in `DeviceFrame.tsx` — a centered, bezelled device shell with a rotation button outside the top-right corner. The bezel is **scale-independent** (lives outside the chrome's `transform: scale()`), so it stays visually consistent across orientations and viewport sizes. Inner content scales to fit; only the chrome is shrunk to mimic the device viewport size, while the bezel, notch, home indicator, and rounded corners stay at fixed CSS dimensions.
+
+**Concentric corner rule:** the outer device border-radius is computed as `SCREEN_CORNER_VISUAL[ff] + bezel`. Inner and outer curves stay concentric, and the bezel reads as a uniform ring around the corner — adjust either value freely without re-pairing them.
+
+**Desktop** renders fullscreen, no frame, with `<div className="h-screen w-screen"><ChromeLayoutDesktop /></div>`. The `ChromeLayoutDesktop` root uses `h-full w-full` (not `h-screen w-screen`) so it can be wrapped in a device frame without overflowing.
+
+### 3c. Viewer-Container Remount on Variant Switch
+
+Variant switching unmounts the old chrome-layout subtree and mounts a new one. Because the WebGL canvas is appended to a DOM node owned by that subtree, switching would orphan the canvas in a detached element. To handle this, `ChromeApp.tsx` does not use `useRef<HTMLDivElement>` for the viewer container — it uses a **callback ref backed by state** (`useState<HTMLDivElement | null>`) and a `useEffect` that runs whenever the container DOM node changes:
+
+- First container: create the `ModelViewer` instance.
+- Subsequent container changes (variant switch): move `viewer.canvasContainer` to the new node, update `viewer.container` so future cursor/class-list mutations target the right element, and re-add the `model-viewer` class.
+
+This works because all pointer/wheel listeners are attached to `renderer.domElement` (the canvas itself), which lives inside `mv-canvas-container` — so moving that container brings the canvas and all its listeners along. Do not regress this to a plain `useRef`.
+
+### 3d. URL-Param Preservation on Model Switch
+
+The model picker uses native `<a href="?model=…">` navigation (per §3, the comment in `Header.desktop.tsx` explains why this beats JS navigation during web-ifc parse). The href **must** be built with `URLSearchParams` from `window.location.search` so existing params (`?form=`, `?orient=`) survive. Anywhere else the chrome triggers a page navigation, follow the same pattern.
+
 ### 4. ViewerAdapter Boundary
 - The `ViewerAdapter` interface (`src/chrome/features/viewer-adapter/types.ts`) is the **only** bridge between the React chrome and the 3D engine.
 - All button clicks, tool toggles, and view commands in chrome components must route through the adapter — no direct calls to `ModelViewer` or any feature class.

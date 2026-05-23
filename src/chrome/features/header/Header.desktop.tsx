@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { HeaderButton } from './HeaderButton';
 import { HeaderSearch } from './HeaderSearch';
+import type { HeaderProps } from './types';
+import { useFormFactor, FORM_FACTORS, type FormFactor } from '../form-factor';
 import arrowLeftIcon from '../../assets/icons/header/arrow-left.svg';
 import arrowRightIcon from '../../assets/icons/header/arrow-right.svg';
 import caretDownIcon from '../../assets/icons/header/caret-down.svg';
@@ -10,22 +12,18 @@ import infoIcon from '../../assets/icons/header/info.svg';
 import closeIcon from '../../assets/icons/header/close.svg';
 import procoreEmblem from '../../assets/icons/header/procoreEmblem.png';
 
-export interface ModelEntry {
-  id: string;
-  label: string;
-  url: string;
-}
+const FORM_FACTOR_LABELS: Record<FormFactor, string> = {
+  desktop: 'Desktop',
+  tablet: 'Tablet',
+  phone: 'Phone',
+};
 
-interface HeaderProps {
-  onUploadClick?: () => void;
-  models?: readonly ModelEntry[];
-  activeModelId?: string | null;
-  onSelectModel?: (model: ModelEntry) => void;
-}
-
-export function Header({ onUploadClick, models = [], activeModelId = null, onSelectModel }: HeaderProps) {
+export function HeaderDesktop({ models = [], activeModelId = null, onSelectModel }: HeaderProps) {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const settingsMenuRef = useRef<HTMLDivElement>(null);
+  const { formFactor, setFormFactor } = useFormFactor();
 
   useEffect(() => {
     if (!modelMenuOpen) return;
@@ -37,6 +35,17 @@ export function Header({ onUploadClick, models = [], activeModelId = null, onSel
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [modelMenuOpen]);
+
+  useEffect(() => {
+    if (!settingsMenuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!settingsMenuRef.current?.contains(e.target as Node)) {
+        setSettingsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [settingsMenuOpen]);
 
   const activeModel = models.find((m) => m.id === activeModelId) ?? null;
   const buttonLabel = activeModel?.label ?? 'Project Model';
@@ -96,7 +105,11 @@ export function Header({ onUploadClick, models = [], activeModelId = null, onSel
                 // anchor click is queued at the browser level and resolves
                 // as soon as the click is processed, no matter what the
                 // renderer thread is doing.
-                const href = `?model=${encodeURIComponent(model.id)}`;
+                // Preserve other URL params (form, orient, etc.) so the
+                // active form factor isn't lost on model switch.
+                const params = new URLSearchParams(window.location.search);
+                params.set('model', model.id);
+                const href = `?${params.toString()}`;
                 return (
                   <a
                     key={model.id}
@@ -131,15 +144,44 @@ export function Header({ onUploadClick, models = [], activeModelId = null, onSel
 
       {/* Right section */}
       <div className="flex items-center gap-3 pr-3">
-        <button
-          type="button"
-          onClick={onUploadClick}
-          className="px-3 py-1 text-xs font-semibold text-[#232729] bg-[#E3E6E8] hover:bg-[#D6DADC] rounded transition-colors"
-        >
-          Upload
-        </button>
         <div className="flex items-center gap-1.5">
-          <HeaderButton src={settingsIcon} label="Settings" iconSize={24} />
+          <div ref={settingsMenuRef} className="relative">
+            <HeaderButton
+              src={settingsIcon}
+              label="Settings"
+              iconSize={24}
+              onClick={() => setSettingsMenuOpen((v) => !v)}
+            />
+            {settingsMenuOpen && (
+              <div
+                role="menu"
+                className="absolute top-full right-0 mt-1 min-w-[160px] bg-white rounded-md shadow-lg border border-gray-200 py-1 z-40"
+              >
+                <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                  Form factor
+                </div>
+                {FORM_FACTORS.map((ff) => {
+                  const isActive = ff === formFactor;
+                  return (
+                    <button
+                      key={ff}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={isActive}
+                      onClick={() => {
+                        setFormFactor(ff);
+                        setSettingsMenuOpen(false);
+                      }}
+                      className="flex items-center justify-between w-full gap-3 px-3 py-2 text-sm text-[#232729] hover:bg-gray-100 transition-colors text-left"
+                    >
+                      <span className="font-medium">{FORM_FACTOR_LABELS[ff]}</span>
+                      {isActive && <Check size={16} className="text-[#2066DF] flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <HeaderButton src={infoIcon} label="Info" iconSize={24} />
         </div>
         <div className="w-px h-12 bg-[#e3e6e8]" />

@@ -35,8 +35,8 @@ All tests are end-to-end Playwright tests that run against the live Vite dev ser
 | Page | URL | Purpose |
 |---|---|---|
 | `demo/test-page.html` | `/test-page.html` | Mock scene with 5 colored boxes. Used by regression and selection tests for fast, deterministic assertions without loading real IFC files. |
-| `demo/index.html` | `/` | Full demo page with IFC loading (dark theme). Used by `ifc-loading.spec.js` to test real model loading via the sample model button. |
-| `demo/chrome.html` | `/chrome.html` | Chrome UI entry point (React/Tailwind light theme). Used for Chrome UI development and manual testing. Not used by automated Playwright tests yet. |
+| `demo/index.html` | `/` | Chrome UI entry point (React/Tailwind light theme). Form factor selectable via `?form=tablet` / `?form=phone` and orientation via `?orient=portrait` / `?orient=landscape`. Used for Chrome UI development and manual testing. Not used by automated Playwright tests yet. |
+| `demo/old.html` | `/old.html` | Legacy dark-theme entry point with IFC loading. Used by `ifc-loading.spec.js` and `regression.spec.js`. **Do not modify** — Playwright tests depend on this exact page. |
 
 ### Shared Helpers (`evals/tests/test-helpers.js`)
 
@@ -137,7 +137,28 @@ Tests the current 3D engine against every capability that the Chrome UI requires
 
 **Note:** Some tests are expected to fail — they document missing features (undo/redo, measure, markup, etc.). As features are implemented, these tests should turn green.
 
-### 7. Navigation Suite (`navigation.spec.js`) — not yet written
+### 7. Form Factor & Device Variant Suite — not yet written
+
+When the tablet/phone variants gain real divergent content, add `evals/tests/tablet/` and `evals/tests/phone/` directories. Each spec navigates directly to `?form=tablet` or `?form=phone` — no need to click the settings cog unless the cog itself is under test. Don't share assertions across form factors; each gets its own spec.
+
+| Test ID | What to verify |
+|---|---|
+| FF-001 | `?form=tablet` loads the tablet variant; settings cog dropdown shows Tablet checked |
+| FF-002 | `?form=phone` loads the phone variant; cog dropdown shows Phone checked |
+| FF-003 | Bare URL (no `?form=`) defaults to desktop; cog dropdown shows Desktop checked |
+| FF-004 | Cog → switch form factor updates the URL via `history.replaceState` (no page reload) |
+| FF-005 | Switching form factor preserves other URL params (`?model=tower&form=tablet`) |
+| FF-006 | Model picker `<a href>` preserves `?form=` and `?orient=` params |
+| FF-007 | Rotation button toggles `?orient=` between portrait and landscape on tablet/phone |
+| FF-008 | Switching form factors resets orientation to the new form factor's default (tablet → landscape, phone → portrait) |
+| FF-009 | URL omits `?orient=` when orientation matches the form factor's default (clean URLs) |
+| FF-010 | Browser back/forward navigation re-syncs the FormFactorContext state to the URL |
+| FF-011 | DeviceFrame bezel + notch + home indicator render at fixed CSS pixel sizes (independent of viewport scale) |
+| FF-012 | Viewer canvas remains attached and renders after a desktop → tablet switch (variant remount migration — see CLAUDE.md §3c) |
+| FF-013 | Viewer canvas remains attached after a tablet → phone switch |
+| FF-014 | After variant switch, pointer/wheel listeners still fire on the canvas (orbit, scroll-to-cursor still work) |
+
+### 8. Navigation Suite (`navigation.spec.js`) — not yet written
 
 When written, this suite should cover the following behaviors (all use the mock scene for speed):
 
@@ -180,6 +201,7 @@ Chrome component tests live in `src/chrome/__tests__/` and are separate from the
 - They do **not** test the engine itself — that's what `evals/tests/` is for.
 - Mock the ViewerAdapter in chrome tests. The mock should verify the correct method was called with the correct arguments.
 - Each chrome feature in `src/chrome/features/[name]/` should have a corresponding test file in `src/chrome/__tests__/[name].test.tsx`.
+- For features with **variant files** (e.g. `Header.desktop.tsx` / `Header.tablet.tsx` / `Header.phone.tsx`), test each variant in isolation by mocking `FormFactorContext` to return the form factor under test. Variant routing tests (asserting that `?form=tablet` renders `<HeaderTablet>`) belong in the Form Factor Suite (see §7).
 
 ## Writing New Tests
 

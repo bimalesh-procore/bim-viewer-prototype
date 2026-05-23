@@ -1,11 +1,12 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { flushSync } from 'react-dom';
-import { ChromeLayout } from '../features/chrome-layout/ChromeLayout';
+import { ChromeLayout } from '../features/chrome-layout';
 import { ViewerAdapterProvider } from '../features/viewer-adapter/ViewerAdapterContext';
+import { FormFactorProvider } from '../features/form-factor';
 import { createModelViewerAdapter } from '../features/viewer-adapter/modelViewerAdapter';
 import { mockViewerAdapter } from '../features/viewer-adapter/mockViewerAdapter';
 import type { ViewerAdapter, ObjectStreamingState } from '../features/viewer-adapter/types';
-import type { ModelEntry } from '../features/header/Header';
+import type { ModelEntry } from '../features/header';
 // This is the sole engine import — isolated to this entry file.
 // @ts-expect-error -- ModelViewer is vanilla JS with no type declarations
 import { ModelViewer } from '../../index.js';
@@ -39,129 +40,17 @@ function setInitialLoadingCamera(viewer: InstanceType<typeof ModelViewer>) {
   );
 }
 
-function WelcomeOverlay({
-  onLoadUrl,
-  onLoadFile,
-  onBack,
-}: {
-  onLoadUrl: (url: string) => void;
-  onLoadFile: (file: File) => void;
-  onBack?: () => void;
-}) {
-  const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragOver(false);
-      const file = e.dataTransfer.files[0];
-      if (file?.name.endsWith('.ifc')) {
-        onLoadFile(file);
-      }
-    },
-    [onLoadFile],
-  );
-
-  return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center bg-white/95">
-      {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="absolute top-4 left-4 flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-          Back
-        </button>
-      )}
-      <div className="text-center max-w-md px-10">
-        <svg
-          className="mx-auto mb-6 text-blue-500"
-          width="64"
-          height="64"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-        >
-          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-          <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-          <line x1="12" y1="22.08" x2="12" y2="12" />
-        </svg>
-
-        <h2 className="text-2xl font-semibold text-gray-800 mb-2">
-          3D IFC Model Viewer
-        </h2>
-        <p className="text-sm text-gray-500 leading-relaxed mb-8">
-          Load and explore IFC building models in 3D. Navigate with orbit
-          controls, select elements, control visibility, and more.
-        </p>
-
-        <div
-          className={`border-2 border-dashed rounded-xl p-10 cursor-pointer transition-colors ${
-            dragOver
-              ? 'border-blue-500 bg-blue-50'
-              : 'border-gray-300 hover:border-gray-400'
-          }`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <p className="text-sm text-gray-500">
-            <span className="font-semibold text-blue-600">
-              Drop IFC file here
-            </span>{' '}
-            or click to browse
-          </p>
-        </div>
-
-        <div className="mt-6 pt-6 border-t border-gray-200">
-          <p className="text-xs uppercase tracking-wider text-gray-400 mb-3">
-            Or try a sample model
-          </p>
-          <div className="flex flex-wrap justify-center gap-2">
-            {MODELS.map((model) => (
-              <button
-                key={model.id}
-                type="button"
-                onClick={() => onLoadUrl(model.url)}
-                className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-md transition-colors"
-              >
-                {model.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".ifc"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) onLoadFile(file);
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
 export function ChromeApp() {
-  const viewerContainerRef = useRef<HTMLDivElement>(null);
+  // Callback ref backed by state so the effect re-runs when the variant
+  // tree remounts the viewer container with a different DOM node.
+  const [viewerContainer, setViewerContainerState] = useState<HTMLDivElement | null>(null);
+  const setViewerContainer = useCallback((node: HTMLDivElement | null) => {
+    setViewerContainerState(node);
+  }, []);
   const viewerInstanceRef = useRef<InstanceType<typeof ModelViewer> | null>(null);
   const [adapter, setAdapter] = useState<ViewerAdapter>(mockViewerAdapter);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [loadRequested, setLoadRequested] = useState(false);
-  const [showUploadPage, setShowUploadPage] = useState(false);
   const initialModelRef = useRef<ModelEntry>(getInitialModel());
   const [activeModelId, setActiveModelId] = useState<string | null>(initialModelRef.current.id);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -177,11 +66,23 @@ export function ChromeApp() {
   });
 
   useEffect(() => {
-    const container = viewerContainerRef.current;
+    const container = viewerContainer;
     if (!container) return;
 
-    // Guard against React StrictMode double-mount
-    if (viewerInstanceRef.current) return;
+    // If the viewer already exists, this is a variant-tree remount — React unmounted
+    // the previous container div, which detached `mv-canvas-container` (the parent
+    // of the WebGL canvas). Move it to the new container so the canvas (and the
+    // pointer/wheel listeners attached to it) re-appears. Update `viewer.container`
+    // so future cursor/class-list mutations target the right element.
+    if (viewerInstanceRef.current) {
+      const viewer = viewerInstanceRef.current;
+      if (viewer.canvasContainer && viewer.canvasContainer.parentNode !== container) {
+        container.classList.add('model-viewer');
+        container.appendChild(viewer.canvasContainer);
+        viewer.container = container;
+      }
+      return;
+    }
 
     const viewer = new ModelViewer(container, {
       showToolbar: false,
@@ -232,41 +133,7 @@ export function ChromeApp() {
     });
 
     (window as unknown as Record<string, unknown>).viewer = viewer;
-  }, []);
-
-  const handleLoadUrl = useCallback(async (url: string) => {
-    const viewer = viewerInstanceRef.current;
-    if (!viewer) return;
-    setLoadError(null);
-    setLoadRequested(true);
-    setModelLoaded(true);
-    setInitialLoadingCamera(viewer);
-    try {
-      const name = url.split('/').pop();
-      await viewer.loadModel(url, name);
-    } catch (err) {
-      console.error('Failed to load model:', err);
-      setModelLoaded(false);
-      setLoadError('Failed to load model. Please try again.');
-    }
-  }, []);
-
-  const handleLoadFile = useCallback(async (file: File) => {
-    const viewer = viewerInstanceRef.current;
-    if (!viewer) return;
-    setLoadError(null);
-    setLoadRequested(true);
-    setModelLoaded(true);
-    setActiveModelId(null);
-    setInitialLoadingCamera(viewer);
-    try {
-      await viewer.loadModelFromFile(file, file.name);
-    } catch (err) {
-      console.error('Failed to load model:', err);
-      setModelLoaded(false);
-      setLoadError('Failed to load model. Please try again.');
-    }
-  }, []);
+  }, [viewerContainer]);
 
   const handleSelectModel = useCallback(
     async (model: ModelEntry) => {
@@ -399,11 +266,11 @@ export function ChromeApp() {
   }
 
   return (
+    <FormFactorProvider>
     <ViewerAdapterProvider adapter={adapter}>
       <ChromeLayout
-        viewerContainerRef={viewerContainerRef}
-        showOverlays={loadRequested && !showUploadPage}
-        onUploadClick={() => setShowUploadPage(true)}
+        viewerContainerRef={setViewerContainer}
+        showOverlays={loadRequested}
         streamingProgress={showStreamingIndicator ? phaseProgressPercent : null}
         streamingLabel={phaseLabel}
         streamingDetail={phaseDetail}
@@ -411,7 +278,7 @@ export function ChromeApp() {
         activeModelId={activeModelId}
         onSelectModel={handleSelectModel}
       />
-      {loadError && !showUploadPage && (
+      {loadError && (
         <div className="absolute bottom-6 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 shadow-md text-sm text-red-700 whitespace-nowrap">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
             <circle cx="12" cy="12" r="10" />
@@ -432,19 +299,7 @@ export function ChromeApp() {
           </button>
         </div>
       )}
-      {showUploadPage && (
-        <WelcomeOverlay
-          onLoadUrl={(url) => {
-            handleLoadUrl(url);
-            setShowUploadPage(false);
-          }}
-          onLoadFile={(file) => {
-            handleLoadFile(file);
-            setShowUploadPage(false);
-          }}
-          onBack={() => setShowUploadPage(false)}
-        />
-      )}
     </ViewerAdapterProvider>
+    </FormFactorProvider>
   );
 }

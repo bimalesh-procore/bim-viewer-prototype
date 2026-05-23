@@ -114,7 +114,7 @@ The navigation system has three modes with distinct behaviors:
 | Q / Shift | Down |
 | Escape | Return to Default mode |
 
-**Right-click temporary mode switching** is handled entirely within `Navigation.js` via a `pointerdown` capture listener. The Chrome layer does not need to manage this — it happens transparently to the adapter.
+**Right-click temporary mode switching** is handled entirely within `Navigation.js` via a `pointerdown` capture listener. Navigation only activates after the pointer moves **more than 4 px** while the right button is held — a clean right-click (no movement) lets the browser show the context menu normally. The Chrome layer does not need to manage any of this — it happens transparently to the adapter.
 
 **Scroll wheel** zooms toward the 3D point under the cursor (raycasted). Acceleration formula: `Math.pow(|deltaY| / 100, 1.5)`.
 
@@ -135,6 +135,7 @@ The navigation system has three modes with distinct behaviors:
 - **Do not edit files in `model-chrome/` directly.** All edits go in `src/chrome/`.
 - When `model-chrome/` is updated, diff against `src/chrome/` and merge relevant changes into `src/chrome/`.
 - Once colleagues move to this repo, they will contribute directly to `src/chrome/` via their own branches. At that point, `model-chrome/` can be removed.
+- **⚠️ Check for `@procore/*` imports before merging any synced file.** The colleague repo uses Procore-internal packages (`@procore/core-icons`, etc.) that are not installed here. Replace any such imports with the `lucide-react` equivalent before committing. All standard UI icons (`ChevronDown`, `ChevronRight`, `Folder`, `Check`, etc.) are available in `lucide-react` under the same names.
 
 ### 6. Testing
 - **Full test plan:** See [`test_plan.md`](./test_plan.md) for test infrastructure, suites, helpers, and guidelines.

@@ -1,5 +1,4 @@
-import { ChevronDown, ChevronRight, Folder } from '@procore/core-icons';
-import { Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Folder } from 'lucide-react';
 
 export interface TreeNodeProps {
   id: string;

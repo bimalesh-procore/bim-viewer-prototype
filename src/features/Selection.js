@@ -56,8 +56,8 @@ export class Selection {
       color: this.highlightColor,
       emissive: this.highlightColor,
       emissiveIntensity: 0.3,
-      transparent: true,
-      opacity: 0.9
+      // transparent: true, // Removed: selection highlight should be fully opaque.
+      // opacity: 0.9,      // Re-enable both lines if partial transparency is desired.
     });
 
     this.hoverLightnessBoost = 0.105;
@@ -113,6 +113,9 @@ export class Selection {
       // Handle multi-select with Ctrl/Cmd key
       if (event.ctrlKey || event.metaKey) {
         this.toggleSelect(elementId, mesh);
+      } else if (this.selectedElements.has(elementId)) {
+        // Clicking an already-selected object deselects everything.
+        this.deselect();
       } else {
         this.deselect();
         this.select([elementId], [mesh]);
@@ -210,19 +213,8 @@ export class Selection {
       };
 
       this.emit('context-menu', this.lastIntersection);
-    } else {
-      // Right-clicked on empty space
-      this.lastIntersection = null;
-      this.emit('context-menu', {
-        elementId: null,
-        mesh: null,
-        point: null,
-        face: null,
-        normal: null,
-        screenX: event.clientX,
-        screenY: event.clientY
-      });
     }
+    // No intersection — right-click on empty space does nothing.
   }
 
   onMouseDown(event) {
@@ -477,31 +469,31 @@ export class Selection {
   applyHover(mesh) {
     if (!mesh || !mesh.material) return;
 
-    if (!this.originalMaterials.has(mesh.uuid)) {
-      this.originalMaterials.set(mesh.uuid, mesh.material);
-    }
-
-    const origColor = mesh.material.color || new THREE.Color(0xcccccc);
-    const hsl = {};
-    origColor.getHSL(hsl);
-
-    const lightenedColor = new THREE.Color().setHSL(
-      hsl.h,
-      hsl.s,
-      Math.min(hsl.l + this.hoverLightnessBoost, 0.95)
-    );
-
-    const hoverMat = new THREE.MeshStandardMaterial({
-      color: lightenedColor,
-      emissive: lightenedColor,
-      emissiveIntensity: 0.3,
-      transparent: true,
-      opacity: 0.9,
-    });
-
-    mesh.material = hoverMat;
-    this._hoverMesh = mesh;
-    this._hoverMat = hoverMat;
+    // HOVER VISUAL EFFECT DISABLED.
+    // To re-enable: uncomment the block below. It lightens the object's color
+    // and applies slight transparency (opacity 0.9) while the cursor is over it.
+    //
+    // if (!this.originalMaterials.has(mesh.uuid)) {
+    //   this.originalMaterials.set(mesh.uuid, mesh.material);
+    // }
+    // const origColor = mesh.material.color || new THREE.Color(0xcccccc);
+    // const hsl = {};
+    // origColor.getHSL(hsl);
+    // const lightenedColor = new THREE.Color().setHSL(
+    //   hsl.h,
+    //   hsl.s,
+    //   Math.min(hsl.l + this.hoverLightnessBoost, 0.95)
+    // );
+    // const hoverMat = new THREE.MeshStandardMaterial({
+    //   color: lightenedColor,
+    //   emissive: lightenedColor,
+    //   emissiveIntensity: 0.3,
+    //   transparent: true,
+    //   opacity: 0.9,
+    // });
+    // mesh.material = hoverMat;
+    // this._hoverMesh = mesh;
+    // this._hoverMat = hoverMat;
   }
 
   removeHover(mesh) {

@@ -122,6 +122,13 @@ The navigation system has three modes with distinct behaviors:
 - `navigation.emit('right-drag-orbit-start')` → `modelViewerAdapter.ts` sets orbit SVG cursor
 - `navigation.emit('right-drag-orbit-end')` → adapter clears custom cursor
 
+**Suspending navigation for external drags** (e.g. section-plane creation):
+Call `navigation.setControlsEnabled(false)` to freeze all camera input. This is wired in `ModelViewer.js` via `sectioning.on('drag-start', ...)` / `sectioning.on('drag-end', ...)`. The method:
+1. Sets `_externalDragActive = true` — guards `onLookMouseDown` and `onFlyMouseDown` so they ignore the next `mousedown`
+2. Cancels any in-progress look/fly drag (`isLookDragging = false`, `isFlyDragging = false`)
+3. Snapshots `controls.enabled` into `_controlsEnabledBeforeDrag` and sets `controls.enabled = false`
+On `setControlsEnabled(true)`, the snapshot is **restored** (not force-set to `true`). This is critical: in look mode `enableLook()` keeps `controls.enabled = false`; force-setting `true` would re-enable OrbitControls and cause jank orbit on the next left-drag.
+
 **Critical implementation gotchas** (do not break these):
 - **Use `pointerdown` (not `mousedown`) for capture.** Three.js r175 OrbitControls listens on `pointerdown`. A `mousedown` capture listener will not intercept it.
 - **After `preventDefault()` on `pointerdown`, never listen for `mouseup`.** It won't fire. Always use `pointerup` for the corresponding release.

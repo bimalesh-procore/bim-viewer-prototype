@@ -68,6 +68,16 @@ export class Navigation {
     // Orbit mode state
     this.isOrbitDragging = false;
     this._orbitCircle = null;
+
+    // Set to true by setControlsEnabled(false) to freeze all direct-camera
+    // mouse handlers (look/fly drag) while an external system (e.g. section-
+    // plane drag) owns the mouse. OrbitControls is frozen via controls.enabled;
+    // look and fly modes need this separate flag since they bypass OrbitControls.
+    this._externalDragActive = false;
+    // Saved snapshot of controls.enabled taken just before an external drag
+    // starts, so setControlsEnabled(true) can restore it exactly instead of
+    // unconditionally setting true (which breaks look mode).
+    this._controlsEnabledBeforeDrag = null;
     this.boundOrbitMouseDown = this.onOrbitMouseDown.bind(this);
     this.boundOrbitMouseUp = this.onOrbitMouseUp.bind(this);
 
@@ -382,11 +392,34 @@ export class Navigation {
   }
 
   /**
-   * Enable or disable orbit controls (used when dragging section planes, etc.)
+   * Enable or disable all camera input (used when dragging section planes, etc.)
+   * Freezes OrbitControls AND the direct-camera look/fly drag handlers so that
+   * external systems can own the mouse without the camera moving simultaneously.
+   *
+   * Important: we save and RESTORE controls.enabled rather than force-setting it
+   * to true on re-enable. In look mode (default), enableLook() sets
+   * controls.enabled = false as its correct resting state. Force-setting it to
+   * true after a section drag would accidentally re-enable OrbitControls in look
+   * mode, causing left-drag to produce jank orbit instead of smooth look-around.
    */
   setControlsEnabled(enabled) {
-    if (this.controls) {
-      this.controls.enabled = enabled;
+    this._externalDragActive = !enabled;
+    if (!enabled) {
+      // Cancel any camera drag that may already be in progress
+      this.isLookDragging = false;
+      this.isFlyDragging = false;
+      this.flyDeltaX = 0;
+      this.flyDeltaY = 0;
+      // Save the current controls.enabled state so we can restore it exactly.
+      // (In look mode it is false; in orbit mode it is true.)
+      this._controlsEnabledBeforeDrag = this.controls ? this.controls.enabled : false;
+      if (this.controls) this.controls.enabled = false;
+    } else {
+      // Restore to whatever state it was in before the external drag started.
+      if (this.controls) {
+        this.controls.enabled = this._controlsEnabledBeforeDrag ?? false;
+      }
+      this._controlsEnabledBeforeDrag = null;
     }
   }
 
@@ -540,6 +573,7 @@ export class Navigation {
 
   onLookMouseDown(event) {
     if (event.button !== 0) return;
+    if (this._externalDragActive) return;
     this.isLookDragging = true;
     this.lookLastX = event.clientX;
     this.lookLastY = event.clientY;
@@ -655,6 +689,7 @@ export class Navigation {
 
   onFlyMouseDown(event) {
     if (event.button === 0) {
+      if (this._externalDragActive) return;
       event.preventDefault();
       this.isFlyDragging = true;
       this.flyOriginX = event.clientX;

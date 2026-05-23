@@ -42,6 +42,20 @@ export function Header({ onUploadClick, models = [], activeModelId = null, onSel
   const buttonLabel = activeModel?.label ?? 'Project Model';
   const hasMenu = models.length > 0 && !!onSelectModel;
 
+  const currentIndex = models.findIndex((m) => m.id === activeModelId);
+
+  const handlePrev = () => {
+    if (!hasMenu) return;
+    const prevIndex = currentIndex <= 0 ? models.length - 1 : currentIndex - 1;
+    onSelectModel?.(models[prevIndex]);
+  };
+
+  const handleNext = () => {
+    if (!hasMenu) return;
+    const nextIndex = currentIndex >= models.length - 1 ? 0 : currentIndex + 1;
+    onSelectModel?.(models[nextIndex]);
+  };
+
   return (
     <header className="flex items-center justify-between h-12 pl-1.5 bg-white shadow-[0_2px_6px_0_rgba(0,0,0,0.1)] flex-shrink-0 z-30">
       {/* Left section: Procore logo + nav buttons + project dropdown in a shared pill */}
@@ -50,8 +64,8 @@ export function Header({ onUploadClick, models = [], activeModelId = null, onSel
         <div ref={modelMenuRef} className="relative">
           <div className="flex items-center gap-0.5 bg-[#f6f6f6] rounded overflow-hidden">
             <div className="flex items-center gap-1 px-1.5">
-              <HeaderButton src={arrowLeftIcon} label="Back" variant="secondary" />
-              <HeaderButton src={arrowRightIcon} label="Forward" variant="secondary" />
+              <HeaderButton src={arrowLeftIcon} label="Back" variant="secondary" onClick={handlePrev} />
+              <HeaderButton src={arrowRightIcon} label="Forward" variant="secondary" onClick={handleNext} />
             </div>
             <button
               type="button"

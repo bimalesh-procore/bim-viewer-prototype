@@ -73,7 +73,9 @@ export function ChromeLayout({
   return (
     <div className="flex flex-col h-screen w-screen bg-white">
       <GlobalSearchOverlay />
-      <div className="relative flex-shrink-0 z-30">
+      {/* z-[60] keeps the header stacking context above the z-50 left/right toolbars
+          so the model-picker dropdown always floats on top of any open panel. */}
+      <div className="relative flex-shrink-0 z-[60]">
         <Header
           onUploadClick={onUploadClick}
           models={models}

@@ -154,6 +154,7 @@ Scroll zooms toward/away from the 3D point directly under the mouse cursor (rayc
 - **`controls.update()` owns the camera in orbit mode.** To apply direct camera rotations, skip `controls.update()` during the drag (guard: `if (!this._rightDragging) this.controls.update()`). Re-anchor `controls.target` on drag end so orbit resumes cleanly.
 - **Camera-relative vectors**: `new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion)` for forward, `(1,0,0)` for right, `(0,1,0)` for up. Never project onto world XZ.
 - **`camera.updateMatrixWorld()`** must be called before `Vector3.project(camera)` when computing screen-space dot positions (do this in the animate loop, not in event handlers).
+- **External drag suspension (`_externalDragActive` + `_controlsEnabledBeforeDrag`)**: When an external system (e.g. section-plane drag) needs to own the mouse, call `navigation.setControlsEnabled(false)`. This sets `_externalDragActive = true` (guards `onLookMouseDown` / `onFlyMouseDown`), snapshots `controls.enabled` into `_controlsEnabledBeforeDrag`, and cancels any in-progress look/fly drag. On `setControlsEnabled(true)`, the snapshot is **restored** rather than force-set to `true` — critical because look mode keeps `controls.enabled = false` as its resting state, so force-`true` would accidentally re-enable OrbitControls and cause jank orbit on next left-drag.
 
 ---
 
@@ -174,6 +175,13 @@ Scroll zooms toward/away from the 3D point directly under the mouse cursor (rayc
 - **View Orientations** → `viewer.navigation.setCamera()` with presets (adapter ready, ViewCube not wired)
 - **Model switching** → `viewer.clearAllModels()` + `viewer.loadModel()` (in-place, no page reload)
 - **Load error feedback** → dismissible toast rendered by `ChromeApp` on any load failure
+- **Model prev/next navigation** → Back/Forward arrow buttons in header cycle through models list with wrapping (`Header.tsx` `handlePrev` / `handleNext`)
+- **Header dropdown z-index** → wrapper raised to `z-[60]` in `ChromeLayout.tsx` so the model picker always floats above left/right toolbar panels (`z-50`)
+- **Selection — click-to-deselect** → clicking a selected object a second time deselects it (`Selection.js` `onClick`)
+- **Selection — opaque highlight** → selection highlight material has no transparency; selected objects render fully opaque with tint only
+- **Selection — hover transparency removed** → `applyHover()` body commented out; re-enable by uncommenting the block
+- **Right-click context menu — objects only** → `openContextMenuAtEvent` no longer fires on empty-space clicks; context menu only appears when the raycast hits an object
+- **Section plane/cut immediate drag** → clicking an object to create a section plane or section cut immediately begins dragging it in the same mousedown–move–mouseup gesture; camera is fully suspended for the duration via `navigation.setControlsEnabled(false)` + `_externalDragActive` guard
 
 ### Wired to stubs (engine feature not built)
 - Properties, Measure, Undo, Redo — log to console
@@ -232,12 +240,13 @@ Run all: `npm test`. Tests use `demo/old.html` and `demo/test-page.html` — nev
 ## Known Issues / Next Steps
 
 1. **Toolbar buttons feel disconnected** — many Chrome buttons aren't wired to the adapter yet. Each "not wired" button needs: adapter method added to `types.ts`, implemented in `modelViewerAdapter.ts` and `mockViewerAdapter.ts`, and called from the Chrome component.
-2. ~~**Right-click context menu**~~ — **Resolved.** Right-click now only activates navigation after the pointer moves >4 px; a clean right-click shows the context menu as normal. z-index layering with Chrome toolbars may still need tuning if the menu appears behind toolbar panels.
+2. ~~**Right-click context menu**~~ — **Resolved.** Right-click now only activates navigation after the pointer moves >4 px; a clean right-click shows the context menu as normal. Context menu is suppressed on empty-space clicks (no object hit).
 3. **No active state management (most toolbars)** — most Chrome toolbar buttons don't track active/pressed state. NavigationWheel mode buttons are the exception — they do track active state. Other toolbars still need this.
 4. **SearchSets not wired** — the engine has a full SearchSets feature + panel, but the Chrome left toolbar button doesn't toggle it yet.
 5. ~~**Object tree stale on model switch**~~ — **Resolved.** `ChromeApp.handleSelectModel` now calls `viewer.objectTree.buildTree()` + `viewer.treePanel.refresh()` immediately after `clearAllModels()`, so the tree goes blank at the start of the load rather than showing stale data throughout.
 6. **Navigation tests sparse** — the REG-NAV suite predates the WASD/right-click/scroll-to-cursor work. Tests for camera-relative movement, right-click mode switching, zoom-to-cursor, and origin dots have not been written yet.
 7. **Procore Viewer integration** — future work. Write `procoreAdapter.ts` implementing the same `ViewerAdapter` interface. Chrome components don't change.
+8. ~~**Section plane/cut camera interference**~~ — **Resolved.** Creating a section plane/cut and immediately dragging in the same gesture no longer moves the camera. Fixed via `_externalDragActive` flag in `Navigation.js` (guards look/fly drag start) and save/restore of `controls.enabled` in `setControlsEnabled` (prevents accidental OrbitControls re-enable in look mode after drag ends).
 
 ## Branch History
 

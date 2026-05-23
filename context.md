@@ -134,7 +134,7 @@ Movement is **camera-relative** — forward is always along the camera's look di
 | Fly | Orbits around a point in front of the camera | Returns to Fly |
 | Orbit | Look-around (yaw/pitch, no camera translation) | Returns to Orbit |
 
-An orbit origin dot tracks the orbit center during right-drag in Default/Fly mode. The cursor switches to the orbit cursor via `right-drag-orbit-start` / `right-drag-orbit-end` events emitted from `Navigation.js` and consumed by `modelViewerAdapter.ts`.
+Navigation only activates if the pointer moves more than **4 px** while the right button is held. A clean right-click (no movement) lets the browser fire the `contextmenu` event as normal. An orbit origin dot tracks the orbit center once drag is active. The cursor switches to the orbit cursor via `right-drag-orbit-start` / `right-drag-orbit-end` events emitted from `Navigation.js` and consumed by `modelViewerAdapter.ts`.
 
 ### Scroll Wheel
 
@@ -232,10 +232,10 @@ Run all: `npm test`. Tests use `demo/old.html` and `demo/test-page.html` — nev
 ## Known Issues / Next Steps
 
 1. **Toolbar buttons feel disconnected** — many Chrome buttons aren't wired to the adapter yet. Each "not wired" button needs: adapter method added to `types.ts`, implemented in `modelViewerAdapter.ts` and `mockViewerAdapter.ts`, and called from the Chrome component.
-2. **Right-click context menu** — engine's context menu renders inside the ViewerCanvas stacking context. CSS has been re-themed to light, but z-index layering with Chrome toolbars may need tuning.
+2. ~~**Right-click context menu**~~ — **Resolved.** Right-click now only activates navigation after the pointer moves >4 px; a clean right-click shows the context menu as normal. z-index layering with Chrome toolbars may still need tuning if the menu appears behind toolbar panels.
 3. **No active state management (most toolbars)** — most Chrome toolbar buttons don't track active/pressed state. NavigationWheel mode buttons are the exception — they do track active state. Other toolbars still need this.
 4. **SearchSets not wired** — the engine has a full SearchSets feature + panel, but the Chrome left toolbar button doesn't toggle it yet.
-5. **Object tree stale on model switch** — when switching models in-place, the object tree and properties panel may show data from the previous model briefly until the new model's events propagate through the adapter. No explicit clear signal is sent to chrome features on `clearAllModels()`.
+5. ~~**Object tree stale on model switch**~~ — **Resolved.** `ChromeApp.handleSelectModel` now calls `viewer.objectTree.buildTree()` + `viewer.treePanel.refresh()` immediately after `clearAllModels()`, so the tree goes blank at the start of the load rather than showing stale data throughout.
 6. **Navigation tests sparse** — the REG-NAV suite predates the WASD/right-click/scroll-to-cursor work. Tests for camera-relative movement, right-click mode switching, zoom-to-cursor, and origin dots have not been written yet.
 7. **Procore Viewer integration** — future work. Write `procoreAdapter.ts` implementing the same `ViewerAdapter` interface. Chrome components don't change.
 

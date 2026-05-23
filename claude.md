@@ -116,7 +116,7 @@ The navigation system has three modes with distinct behaviors:
 
 **Right-click temporary mode switching** is handled entirely within `Navigation.js` via a `pointerdown` capture listener. Navigation only activates after the pointer moves **more than 4 px** while the right button is held — a clean right-click (no movement) lets the browser show the context menu normally. The Chrome layer does not need to manage any of this — it happens transparently to the adapter.
 
-**Scroll wheel** zooms toward the 3D point under the cursor (raycasted). Acceleration formula: `Math.pow(|deltaY| / 100, 1.5)`.
+**Scroll wheel** zooms toward the 3D point under the cursor (raycasted). Acceleration formula: `Math.pow(|deltaY| / 100, 1.5)`. The step is bounded by `Math.min(baseStep * speed, Math.max(dist * 0.9, MIN_STEP))` where `MIN_STEP = 0.5` — the overshoot cap can never go below 0.5 units, so the camera always punches through walls at close range instead of asymptotically approaching them. Zoom-out uses the same MIN_STEP floor. When the cursor points at empty space, `_getRaycastTarget` returns a point along the ray at `_lastRaycastDist` (the distance of the most recent successful hit, clamped to 2–150 units), so the fallback stays proportional to nearby geometry.
 
 **Cursor feedback** is communicated via engine events:
 - `navigation.emit('right-drag-orbit-start')` → `modelViewerAdapter.ts` sets orbit SVG cursor
@@ -134,6 +134,9 @@ On `setControlsEnabled(true)`, the snapshot is **restored** (not force-set to `t
 - **After `preventDefault()` on `pointerdown`, never listen for `mouseup`.** It won't fire. Always use `pointerup` for the corresponding release.
 - **Never call `controls.update()` while right-drag is active in orbit mode.** It will overwrite any direct camera rotation. Guard the update call: `if (!this._rightDragging) this.controls.update()`.
 - **Always call `camera.updateMatrixWorld()` before projecting 3D points to screen.** Do this in the animate loop, not in event handlers, to avoid stale matrix bugs.
+- **Force `THREE.DoubleSide` on finalized BIM materials.** Some `@thatopen/fragments` materials default to `FrontSide`; back-face culling makes interior surfaces invisible when the camera navigates inside, so the model "disappears." `IFCLoader.finalizeMeshAfterReveal` explicitly sets `material.side = THREE.DoubleSide` for every material.
+- **Floor the scroll overshoot cap at `MIN_STEP = 0.5` in `onLookWheel` / `onOrbitWheel`.** The raw `dist * 0.9` cap is correct for distant approaches but creates an asymptotic-approach freeze near surfaces — the camera gets infinitely closer to a wall but never passes through. The MIN_STEP floor lets each scroll move at least 0.5 units, which is enough to punch through any architectural-detail surface.
+- **Guard scroll handlers against `dist < 1e-4` / non-finite `dist`.** `toPoint.divideScalar(0)` produces a NaN unit vector that permanently corrupts `camera.position`, requiring a home-reset to recover. Return early before the divide if `!isFinite(dist) || dist < 1e-4`.
 - **Do not modify `src/core/ModelViewer.js`** to accommodate navigation changes — all logic stays in `Navigation.js`.
 
 ### 5. Sync Source (`model-chrome/`)

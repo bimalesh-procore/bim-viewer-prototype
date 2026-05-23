@@ -248,6 +248,12 @@ Run all: `npm test`. Tests use `demo/old.html` and `demo/test-page.html` — nev
 7. **Procore Viewer integration** — future work. Write `procoreAdapter.ts` implementing the same `ViewerAdapter` interface. Chrome components don't change.
 8. ~~**Section plane/cut camera interference**~~ — **Resolved.** Creating a section plane/cut and immediately dragging in the same gesture no longer moves the camera. Fixed via `_externalDragActive` flag in `Navigation.js` (guards look/fly drag start) and save/restore of `controls.enabled` in `setControlsEnabled` (prevents accidental OrbitControls re-enable in look mode after drag ends).
 
+## Experiments & Dead Ends
+
+See [`EXPERIMENTS.md`](./EXPERIMENTS.md) for a log of approaches that were researched or
+prototyped but ultimately reverted — including the `MeshCullerRenderer` frustum-culling
+attempt and the lessons learned from it.
+
 ## Branch History
 
 | Branch | Purpose |

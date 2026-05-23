@@ -405,7 +405,9 @@ export class IFCLoader {
         material.alphaTest = 0;
       }
       // Stabilize final shading for IFC surfaces that often overlap/coplanar.
-      material.side = THREE.FrontSide;
+      // Do NOT force FrontSide here — IFC/frag materials are DoubleSide by
+      // default so geometry is visible during interior navigation. Polygon
+      // offset alone is sufficient to tame coplanar z-fighting.
       material.polygonOffset = true;
       material.polygonOffsetFactor = -1;
       material.polygonOffsetUnits = (revealIndex % 7) * 0.35;

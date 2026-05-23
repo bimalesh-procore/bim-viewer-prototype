@@ -292,6 +292,10 @@ export function ChromeApp() {
       });
 
       viewer.clearAllModels();
+      // Immediately rebuild the object tree from the now-empty model list so the
+      // previous model's tree isn't visible during the new model's load.
+      if (viewer.objectTree) viewer.objectTree.buildTree();
+      if (viewer.treePanel?.isOpen) viewer.treePanel.refresh();
       setInitialLoadingCamera(viewer);
 
       try {

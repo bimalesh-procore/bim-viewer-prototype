@@ -72,14 +72,18 @@ export class Navigation {
     this.boundOrbitMouseUp = this.onOrbitMouseUp.bind(this);
 
     // Right-click drag state (always-on, mode-aware camera manipulation)
-    this._rightDragging = false;
+    // Drag only activates after the pointer moves past a small threshold — a clean
+    // right-click (no movement) lets the context menu show as normal.
+    this._rightDragPending = false; // right button is down but hasn't moved yet
+    this._rightDragging = false;    // threshold crossed — navigation is active
+    this._rightDragStartX = 0;
+    this._rightDragStartY = 0;
     this._rightDragLastX = 0;
     this._rightDragLastY = 0;
     this._rightDragDot = null;
     this.boundRightDragDown = this.onRightDragDown.bind(this);
     this.boundRightDragMove = this.onRightDragMove.bind(this);
     this.boundRightDragUp   = this.onRightDragUp.bind(this);
-    this.boundPreventContextMenu = (e) => e.preventDefault();
 
     this.init();
   }
@@ -104,10 +108,10 @@ export class Navigation {
       });
     });
 
-    // Suppress browser context menu on the viewer canvas (right-click drives camera)
-    this.domElement.addEventListener('contextmenu', this.boundPreventContextMenu);
     // Capture phase, pointerdown — Three.js r150+ OrbitControls uses pointer events,
     // so intercepting mousedown does nothing. Capturing pointerdown stops it at source.
+    // Note: we do NOT suppress contextmenu globally here. It is suppressed only after
+    // the drag threshold is crossed (see onRightDragUp / _activateRightDrag).
     this.domElement.addEventListener('pointerdown', this.boundRightDragDown, { capture: true });
 
     // Global key listeners — active in all modes so WASD+QE always work
@@ -801,21 +805,38 @@ export class Navigation {
 
   onRightDragDown(event) {
     if (event.button !== 2) return;
-    event.preventDefault();
-    event.stopPropagation(); // prevent OrbitControls from starting a pan
+    // stopPropagation blocks OrbitControls from starting a pan, but we do NOT call
+    // preventDefault here — that would suppress the contextmenu event even on a clean
+    // click with no movement. Context menu suppression happens in onRightDragUp only
+    // when the drag threshold was actually crossed.
+    event.stopPropagation();
+
+    this._rightDragPending = true;
+    this._rightDragStartX = event.clientX;
+    this._rightDragStartY = event.clientY;
+    this._rightDragLastX  = event.clientX;
+    this._rightDragLastY  = event.clientY;
+
+    window.addEventListener('pointermove', this.boundRightDragMove);
+    window.addEventListener('pointerup',   this.boundRightDragUp);
+  }
+
+  /**
+   * Called once the pointer has moved past the drag threshold.
+   * Sets up orbit target anchoring, origin dot, and cursor feedback.
+   */
+  _activateRightDrag() {
+    this._rightDragPending = false;
     this._rightDragging = true;
-    this._rightDragLastX = event.clientX;
-    this._rightDragLastY = event.clientY;
 
     if (this.mode !== 'orbit' && this.controls) {
-      // Anchor the orbit target directly in front of the camera at its current
-      // look direction so the first camera.lookAt() call in _orbitAroundTarget
-      // doesn't snap the view to a stale target position.
+      // Anchor the orbit target directly in front of the camera so the first
+      // camera.lookAt() in _orbitAroundTarget doesn't snap the view.
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
       const dist = Math.max(this.camera.position.distanceTo(this.controls.target), 5);
       this.controls.target.copy(this.camera.position).addScaledVector(fwd, dist);
 
-      // Create the orbit dot indicator (same style as the orbit mode dot)
+      // Create the orbit dot indicator
       this._rightDragDot = document.createElement('div');
       this._rightDragDot.style.cssText = [
         'position:fixed',
@@ -834,13 +855,20 @@ export class Navigation {
       // Signal the adapter to switch to the orbit cursor
       this.emit('right-drag-orbit-start', {});
     }
-
-    window.addEventListener('pointermove', this.boundRightDragMove);
-    window.addEventListener('pointerup',   this.boundRightDragUp);
   }
 
   onRightDragMove(event) {
+    // Check threshold while in pending state
+    if (this._rightDragPending) {
+      const dx = event.clientX - this._rightDragStartX;
+      const dy = event.clientY - this._rightDragStartY;
+      if (Math.sqrt(dx * dx + dy * dy) > 4) {
+        this._activateRightDrag();
+      }
+    }
+
     if (!this._rightDragging) return;
+
     const dx = event.clientX - this._rightDragLastX;
     const dy = event.clientY - this._rightDragLastY;
     this._rightDragLastX = event.clientX;
@@ -862,9 +890,22 @@ export class Navigation {
 
   onRightDragUp(event) {
     if (event.button !== 2) return;
-    this._rightDragging = false;
+
     window.removeEventListener('pointermove', this.boundRightDragMove);
     window.removeEventListener('pointerup',   this.boundRightDragUp);
+
+    if (this._rightDragPending) {
+      // Clean right-click with no movement — let the context menu fire naturally.
+      this._rightDragPending = false;
+      return;
+    }
+
+    if (!this._rightDragging) return;
+    this._rightDragging = false;
+
+    // Suppress the contextmenu event that browsers fire after right-mouseup.
+    // The { once: true } flag auto-removes this listener after it fires once.
+    window.addEventListener('contextmenu', (e) => e.preventDefault(), { once: true, capture: true });
 
     // Remove the orbit dot and restore cursor (only created for non-orbit modes)
     if (this._rightDragDot) {
@@ -1038,10 +1079,11 @@ export class Navigation {
     window.removeEventListener('blur', this.boundWindowBlur);
     window.removeEventListener('pointermove', this.boundRightDragMove);
     window.removeEventListener('pointerup',   this.boundRightDragUp);
+    this._rightDragPending = false;
+    this._rightDragging = false;
     if (this._rightDragDot) { this._rightDragDot.remove(); this._rightDragDot = null; }
     if (this.domElement) {
       this.domElement.removeEventListener('pointerdown', this.boundRightDragDown, { capture: true });
-      this.domElement.removeEventListener('contextmenu', this.boundPreventContextMenu);
     }
 
     if (this.controls) {

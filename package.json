@@ -17,7 +17,6 @@
     "convert": "node scripts/ifc-to-frag.mjs"
   },
   "dependencies": {
-    "@procore/core-icons": "^12.17.0",
     "@thatopen/components": "^2.4.0",
     "@thatopen/fragments": "^3.0.0",
     "lucide-react": "^0.468.0",

@@ -404,10 +404,13 @@ export class IFCLoader {
         material.polygonOffset = false;
         material.alphaTest = 0;
       }
-      // Stabilize final shading for IFC surfaces that often overlap/coplanar.
-      // Do NOT force FrontSide here — IFC/frag materials are DoubleSide by
-      // default so geometry is visible during interior navigation. Polygon
-      // offset alone is sufficient to tame coplanar z-fighting.
+      // BIM geometry must be visible from inside. Some IFC/frag materials
+      // default to FrontSide, which back-face-culls interior surfaces and
+      // causes the model to disappear when the camera navigates inside.
+      // Force DoubleSide so every surface renders regardless of which side
+      // the camera is on. This also ensures the raycaster always hits geometry
+      // from inside the model, preventing scroll-zoom fallback runaway.
+      material.side = THREE.DoubleSide;
       material.polygonOffset = true;
       material.polygonOffsetFactor = -1;
       material.polygonOffsetUnits = (revealIndex % 7) * 0.35;

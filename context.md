@@ -138,7 +138,9 @@ Navigation only activates if the pointer moves more than **4 px** while the righ
 
 ### Scroll Wheel
 
-Scroll zooms toward/away from the 3D point directly under the mouse cursor (raycasted). Acceleration curve: `Math.pow(|deltaY| / 100, 1.5)` — gentle at low speed, aggressive at high speed. Forward movement is capped at 90% of distance-to-cursor to prevent overshooting.
+Scroll zooms toward/away from the 3D point directly under the mouse cursor (raycasted). Acceleration curve: `Math.pow(|deltaY| / 100, 1.5)` — gentle at low speed, aggressive at high speed. Forward movement is capped at 90% of distance-to-cursor to prevent overshooting distant objects, but the cap is floored at `MIN_STEP = 0.5` so the camera can always punch through walls at architectural-detail distances (otherwise it asymptotically approaches surfaces and feels frozen). Zoom-out has the same MIN_STEP floor so slow scrolls still make meaningful progress.
+
+When the cursor points at empty space (sky / open atrium / past the model edge), the raycast miss falls back to `_lastRaycastDist` — the distance of the most recent successful hit, clamped to 2–150 units. This keeps the scroll step proportional to nearby geometry instead of using a fixed value, which previously caused the camera to teleport far outside the model on rapid scrolls in open areas.
 
 ### Origin Dots
 
@@ -168,7 +170,8 @@ Scroll zooms toward/away from the 3D point directly under the mouse cursor (rayc
 - **Navigation modes** → `viewer.navigation.setMode('look'|'orbit'|'fly')` via NavigationWheel buttons (with active state)
 - **WASD/QE keyboard movement** → `Navigation.js` (all modes, camera-relative, always active)
 - **Right-click temporary mode** → `Navigation.js` (Default/Fly→orbit, Orbit→look-around)
-- **Scroll zoom-to-cursor** → `Navigation.js` raycasts to cursor point with acceleration curve
+- **Scroll zoom-to-cursor** → `Navigation.js` raycasts to cursor point with acceleration curve; `MIN_STEP = 0.5` floor lets the camera punch through walls at close range; empty-space fallback uses `_lastRaycastDist` (last successful hit, clamped to 2–150) instead of `controls.target` distance
+- **Interior navigation** → `IFCLoader.finalizeMeshAfterReveal` forces all materials to `THREE.DoubleSide` so geometry is visible from inside the model (some `@thatopen/fragments` materials default to `FrontSide` and would otherwise back-face-cull on interior crossing); scroll handlers also guard against `dist < 1e-4` / non-finite to prevent NaN camera corruption
 - **Navigation orbit cursor** → `right-drag-orbit-start` / `right-drag-orbit-end` events → `modelViewerAdapter.ts`
 - **Isolation** → `viewer.visibility.isolate()` / `showAll()`
 - **Zoom In/Out** → `viewer.navigation.zoom(±1)` (adapter ready, no button yet)

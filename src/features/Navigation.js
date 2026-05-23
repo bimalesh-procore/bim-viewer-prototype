@@ -46,6 +46,10 @@ export class Navigation {
     // Reusable objects for raycasting — avoids GC pressure on every scroll event
     this._raycaster = new THREE.Raycaster();
     this._ndcVec = new THREE.Vector2();
+    // Last successful raycast hit distance — used as a contextually-correct
+    // fallback when the cursor points at empty space (sky, open atrium, etc.)
+    // so the scroll step stays proportional to the camera's nearby geometry.
+    this._lastRaycastDist = 10;
     this.boundWindowBlur = () => { Object.keys(this.keys).forEach(k => { this.keys[k] = false; }); };
 
     // Fly mode state
@@ -622,13 +626,18 @@ export class Navigation {
     });
 
     const hits = this._raycaster.intersectObjects(meshes, false);
-    if (hits.length > 0) return hits[0].point.clone();
+    if (hits.length > 0) {
+      // Remember the hit distance so the fallback path stays contextually correct
+      // (i.e. proportional to the geometry the camera is actually near).
+      this._lastRaycastDist = Math.min(Math.max(hits[0].distance, 2), 150);
+      return hits[0].point.clone();
+    }
 
-    // Fallback: pick a point along the ray at the current camera-to-target distance
-    const fallback = this.controls
-      ? this.camera.position.distanceTo(this.controls.target)
-      : this.camera.position.length();
-    return this._raycaster.ray.at(Math.max(fallback, 5), new THREE.Vector3());
+    // Fallback: cursor is pointing at sky / empty space.  Use the last known
+    // hit distance rather than a fixed value — this keeps the scroll step
+    // proportional to where the camera was a moment ago and prevents teleporting
+    // the camera far outside the model when no geometry is under the cursor.
+    return this._raycaster.ray.at(this._lastRaycastDist, new THREE.Vector3());
   }
 
   /**
@@ -653,12 +662,21 @@ export class Navigation {
     const cursorPt = this._getRaycastTarget(event);
     const toPoint  = cursorPt.clone().sub(this.camera.position);
     const dist     = toPoint.length();
+    // Guard against NaN / zero-distance — divideScalar(0) would silently corrupt
+    // camera.position and require a home-reset to recover.
+    if (!isFinite(dist) || dist < 1e-4) return;
     const moveDir  = toPoint.divideScalar(dist); // normalize in-place
 
-    const baseStep = Math.max(dist * 0.1, 0.5);
+    // MIN_STEP keeps the scroll responsive at any distance.  Without it, the
+    // `dist * 0.9` overshoot cap makes the camera asymptotically approach a
+    // surface but never pass through — feels frozen when navigating inside
+    // BIM models where the user explicitly wants to scroll past walls.
+    const MIN_STEP = 0.5;
+    const baseStep = Math.max(dist * 0.1, MIN_STEP);
+    const speed    = this._scrollSpeed(event);
     const step     = dir > 0
-      ? Math.min(baseStep * this._scrollSpeed(event), dist * 0.9) // cap: don't overshoot
-      : baseStep * this._scrollSpeed(event);
+      ? Math.min(baseStep * speed, Math.max(dist * 0.9, MIN_STEP)) // cap, but never below MIN_STEP
+      : Math.max(baseStep * speed, MIN_STEP);                       // zoom-out: always make progress
 
     this.camera.position.addScaledVector(moveDir, dir * step);
     this.emit('camera-change', { position: this.camera.position.clone() });
@@ -671,12 +689,17 @@ export class Navigation {
     const cursorPt = this._getRaycastTarget(event);
     const toPoint  = cursorPt.clone().sub(this.camera.position);
     const dist     = toPoint.length();
+    if (!isFinite(dist) || dist < 1e-4) return;
     const moveDir  = toPoint.divideScalar(dist);
 
-    const baseStep = Math.max(dist * 0.1, 0.5);
+    // Same MIN_STEP floor as look mode — prevents the asymptotic-approach
+    // freeze when the camera gets close to an orbit target / interior surface.
+    const MIN_STEP = 0.5;
+    const baseStep = Math.max(dist * 0.1, MIN_STEP);
+    const speed    = this._scrollSpeed(event);
     const step     = dir > 0
-      ? Math.min(baseStep * this._scrollSpeed(event), dist * 0.9)
-      : baseStep * this._scrollSpeed(event);
+      ? Math.min(baseStep * speed, Math.max(dist * 0.9, MIN_STEP))
+      : Math.max(baseStep * speed, MIN_STEP);
 
     const delta = moveDir.multiplyScalar(dir * step);
     this.camera.position.add(delta);

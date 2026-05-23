@@ -20,7 +20,7 @@ export function NavigationWheel() {
   const actions = [
     // Even 40deg spacing on a shared radius (radial arc).
     { id: 'home' as const, icon: homeIcon, label: 'Home', angleDeg: 150 },
-    { id: 'select' as const, icon: cursorIcon, label: 'Select', angleDeg: 110 },
+    { id: 'select' as const, icon: cursorIcon, label: 'Default', angleDeg: 110 },
     { id: 'fly' as const, icon: flyIcon, label: 'Fly', angleDeg: 70 },
     { id: 'orbit' as const, icon: orbitIcon, label: 'Orbit', angleDeg: 30 },
   ].map((action) => {

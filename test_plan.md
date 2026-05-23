@@ -65,7 +65,7 @@ Comprehensive regression coverage across all features. Uses the mock scene (`tes
 | Category | ID Prefix | Tests | What It Covers |
 |---|---|---|---|
 | Viewer Initialization | `REG-INIT` | 5 | DOM structure, subsystem references, mock meshes, canvas dimensions, grid helper |
-| Navigation | `REG-NAV` | 13 | Orbit/pan modes, zoom, camera get/set, controls enable/disable, walk speed, zoomToFit/zoomToSelection |
+| Navigation | `REG-NAV` | 13 | Orbit/pan modes, zoom, camera get/set, controls enable/disable, walk speed, zoomToFit/zoomToSelection. **Note:** WASD/QE camera-relative movement, right-click temporary mode switching, scroll zoom-to-cursor, and origin dots are not yet covered by automated tests — see Known Issues in `context.md`. |
 | Visibility | `REG-VIS` | 14 | hide/show/toggle single and multiple, hideAll/showAll, isolate, opacity, hideByType/showByType, destroy cleanup |
 | Object Tree | `REG-TREE` | 9 | buildTree, expand/collapse, toggleNode, selectNode, selectNodesByElementIds, filterTree, destroy, icon/type formatting |
 | Sectioning | `REG-SEC` | 9 | addClipPlane, removeClipPlane, clearClipPlanes, movePlane, flipPlane, setPlaneEnabled, setPlaneVisible, state round-trip, destroy |
@@ -136,6 +136,31 @@ Tests the current 3D engine against every capability that the Chrome UI requires
 | New UI tracking | CHROME-NEW-001 to 005 | Confirms Chrome elements that don't exist yet (Header, Right Toolbar, ViewCube, MiniMap, NavigationWheel) |
 
 **Note:** Some tests are expected to fail — they document missing features (undo/redo, measure, markup, etc.). As features are implemented, these tests should turn green.
+
+### 7. Navigation Suite (`navigation.spec.js`) — not yet written
+
+When written, this suite should cover the following behaviors (all use the mock scene for speed):
+
+| Test ID | What to verify |
+|---|---|
+| NAV-001 | Default mode: left-drag rotates camera orientation without moving camera position |
+| NAV-002 | Orbit mode: left-drag orbits camera around `controls.target` |
+| NAV-003 | Fly mode: camera mode is set to `'fly'` |
+| NAV-004 | WASD keys move camera in world space when model is loaded |
+| NAV-005 | Movement direction is camera-relative (not world-axis-aligned) |
+| NAV-006 | Q/E keys move camera up/down |
+| NAV-007 | Escape key returns to Default (look) mode from any mode |
+| NAV-008 | Right-click drag in Default mode orbits (camera position changes) |
+| NAV-009 | Right-click drag in Orbit mode performs look-around (camera position unchanged) |
+| NAV-010 | `right-drag-orbit-start` event fires on right-mousedown in Default/Fly mode |
+| NAV-011 | `right-drag-orbit-end` event fires on right-mouseup |
+| NAV-012 | Scroll wheel moves camera toward cursor point (not toward screen center) |
+| NAV-013 | Fast scroll moves farther than slow scroll (acceleration curve) |
+| NAV-014 | Forward scroll does not overshoot the cursor hit point |
+| NAV-015 | Keyboard shortcuts are suppressed when an INPUT or TEXTAREA is focused |
+| NAV-016 | `destroy()` removes all listeners (no leaks after destroy) |
+
+**Note:** Tests NAV-008 through NAV-011 require simulating pointer events (`page.mouse` with `button: 'right'`), not mouse events. Use Playwright's `page.mouse.down({ button: 'right' })` / `page.mouse.up({ button: 'right' })`.
 
 ## Chrome UI Testing
 

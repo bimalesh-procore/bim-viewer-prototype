@@ -1,3 +1,4 @@
+import orbitCursor from '../../assets/cursors/orbit-cursor.svg';
 import type {
   ViewerAdapter,
   ViewOrientation,
@@ -30,6 +31,7 @@ interface ModelViewerInstance {
     setOrthographic(enabled: boolean): void;
     getIsOrthographic(): boolean;
     setControlsEnabled?(enabled: boolean): void;
+    on(event: string, callback: (data: unknown) => void): void;
   };
   selection: {
     getSelected(): string[];
@@ -505,6 +507,10 @@ export function createModelViewerAdapter(
     body.style.setProperty('--mv-selected-cursor', `url("${iconUrl}") 10 10`);
     root.classList.add('mv-force-selected-cursor');
   };
+
+  // Right-click orbit in Default/Fly modes: mirror the orbit cursor
+  viewer.navigation.on('right-drag-orbit-start', () => setViewerCursor(orbitCursor));
+  viewer.navigation.on('right-drag-orbit-end',   () => setViewerCursor(null));
 
   return {
     zoomIn() {

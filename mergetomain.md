@@ -32,6 +32,8 @@ Before running `gh pr merge` (or any equivalent merge-to-main command):
 
 | Changed path | Tests to run |
 |---|---|
+| `src/features/Navigation.js` | `evals/tests/navigation.spec.js` + `evals/tests/regression.spec.js` |
+| `src/chrome/features/navigation-wheel/` | `evals/tests/navigation.spec.js` + `evals/tests/chrome-compatibility.spec.js` |
 | `src/chrome/features/left-toolbar/` | `evals/tests/left-sidebar.spec.js` |
 | `src/chrome/features/items-panel/` | `evals/tests/chrome-object-tree.spec.js` |
 | `src/chrome/features/search-sets/` | `evals/tests/chrome-search-sets-panel.spec.js` + `evals/tests/search-sets.spec.js` |

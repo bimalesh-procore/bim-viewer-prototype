@@ -487,12 +487,11 @@ export class ModelViewer {
         this.navigation.setMode('orbit');
         break;
       case 'fly':
-        // Keep camera controls stable in chrome mode while still signaling fly cursor intent.
-        this.navigation.setMode('orbit');
+        this.navigation.setMode('fly');
         break;
       case 'select':
       default:
-        this.navigation.setMode('orbit');
+        this.navigation.setMode('look');
         break;
     }
 

@@ -92,6 +92,43 @@
 - **Model disposal bug:** `@thatopen/fragments` `Fragment.dispose()` iterates `mesh.material` assuming it is always an array — it is not. `IFCLoader.unloadModel()` normalizes all materials to arrays before calling `fragmentsManager.disposeGroup(model)`, with a manual Three.js cleanup fallback if that still throws. **Never call `fragmentsManager.dispose()` directly** — it destroys the global `FragmentsManager` and breaks all subsequent loads.
 - **Model switching:** `ChromeApp.handleSelectModel` does an in-place switch — calls `viewer.clearAllModels()`, resets streaming state, then loads the new model. No page reload needed.
 
+### 4c. Navigation System (`src/features/Navigation.js`)
+
+The navigation system has three modes with distinct behaviors:
+
+| Mode | Engine call | Left-drag | Right-drag |
+|---|---|---|---|
+| Default (look-around) | `navigation.setMode('look')` | Look around (camera fixed) | Temporary orbit |
+| Orbit | `navigation.setMode('orbit')` | Orbit around target | Temporary look-around |
+| Fly | `navigation.setMode('fly')` | Look around | Temporary orbit |
+
+**Keyboard movement** (WASD + Q/E) is active in **all modes simultaneously**. Movement is always camera-relative — forward follows the camera's look direction, not the world XZ plane.
+
+| Key | Action |
+|---|---|
+| W / ↑ | Forward |
+| S / ↓ | Backward |
+| A / ← | Strafe left |
+| D / → | Strafe right |
+| E / Space | Up |
+| Q / Shift | Down |
+| Escape | Return to Default mode |
+
+**Right-click temporary mode switching** is handled entirely within `Navigation.js` via a `pointerdown` capture listener. The Chrome layer does not need to manage this — it happens transparently to the adapter.
+
+**Scroll wheel** zooms toward the 3D point under the cursor (raycasted). Acceleration formula: `Math.pow(|deltaY| / 100, 1.5)`.
+
+**Cursor feedback** is communicated via engine events:
+- `navigation.emit('right-drag-orbit-start')` → `modelViewerAdapter.ts` sets orbit SVG cursor
+- `navigation.emit('right-drag-orbit-end')` → adapter clears custom cursor
+
+**Critical implementation gotchas** (do not break these):
+- **Use `pointerdown` (not `mousedown`) for capture.** Three.js r175 OrbitControls listens on `pointerdown`. A `mousedown` capture listener will not intercept it.
+- **After `preventDefault()` on `pointerdown`, never listen for `mouseup`.** It won't fire. Always use `pointerup` for the corresponding release.
+- **Never call `controls.update()` while right-drag is active in orbit mode.** It will overwrite any direct camera rotation. Guard the update call: `if (!this._rightDragging) this.controls.update()`.
+- **Always call `camera.updateMatrixWorld()` before projecting 3D points to screen.** Do this in the animate loop, not in event handlers, to avoid stale matrix bugs.
+- **Do not modify `src/core/ModelViewer.js`** to accommodate navigation changes — all logic stays in `Navigation.js`.
+
 ### 5. Sync Source (`model-chrome/`)
 - `model-chrome/` is a **read-only reference copy** of the external ModelChrome repository maintained by colleagues.
 - It is periodically updated by pulling from their repo.

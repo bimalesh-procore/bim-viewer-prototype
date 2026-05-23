@@ -102,13 +102,73 @@ src/chrome/
 - `.mv-context-menu, .mv-tree-panel, .mv-panel { background: white; color: gray }` — re-themes engine panels to light
 - `.mv-loading { background: white }` — light loading overlay
 
+## Navigation System
+
+`src/features/Navigation.js` implements all camera controls. Three modes are available:
+
+| Mode | Activation | Left-drag behavior |
+|---|---|---|
+| Default (look-around) | NavigationWheel "Default" button or Escape | Look around (yaw/pitch). Camera stays fixed. |
+| Orbit | NavigationWheel "Orbit" button | Orbit around a center target point. Origin dot shown at target. |
+| Fly | NavigationWheel "Fly" button | Look around. WASD/QE + scroll propels camera freely. |
+
+### Keyboard Shortcuts (active in all modes simultaneously)
+
+| Key | Action |
+|---|---|
+| W / ↑ | Move forward (camera-relative) |
+| S / ↓ | Move backward (camera-relative) |
+| A / ← | Strafe left (camera-relative) |
+| D / → | Strafe right (camera-relative) |
+| E / Space | Move up (camera-relative) |
+| Q / Shift | Move down (camera-relative) |
+| Escape | Switch to Default (look) mode |
+
+Movement is **camera-relative** — forward is always along the camera's look direction, not projected onto the world XZ plane.
+
+### Right-Click Temporary Mode Switching
+
+| Active mode | Right-click + drag | On release |
+|---|---|---|
+| Default | Orbits around a point in front of the camera | Returns to Default |
+| Fly | Orbits around a point in front of the camera | Returns to Fly |
+| Orbit | Look-around (yaw/pitch, no camera translation) | Returns to Orbit |
+
+An orbit origin dot tracks the orbit center during right-drag in Default/Fly mode. The cursor switches to the orbit cursor via `right-drag-orbit-start` / `right-drag-orbit-end` events emitted from `Navigation.js` and consumed by `modelViewerAdapter.ts`.
+
+### Scroll Wheel
+
+Scroll zooms toward/away from the 3D point directly under the mouse cursor (raycasted). Acceleration curve: `Math.pow(|deltaY| / 100, 1.5)` — gentle at low speed, aggressive at high speed. Forward movement is capped at 90% of distance-to-cursor to prevent overshooting.
+
+### Origin Dots
+
+- **Fly mode click** — dot at the world point clicked, showing the camera's look target
+- **Orbit mode drag** — dot projected from the orbit center target onto the screen
+- **Right-drag orbit (Default/Fly)** — dot projected from the temporary orbit target
+- All dots: `box-shadow: 0 0 0 2px white` for a 2 px white outline without affecting element size
+
+### Key Implementation Gotchas
+
+- **Three.js r175 OrbitControls uses `pointerdown`**, not `mousedown`. Intercepting right-clicks requires a `pointerdown` capture listener (`{ capture: true }`).
+- **`event.preventDefault()` on `pointerdown` suppresses synthesis of `mouseup`**. Always use `pointermove` / `pointerup` for right-drag tracking — never `mousemove` / `mouseup`.
+- **`controls.update()` owns the camera in orbit mode.** To apply direct camera rotations, skip `controls.update()` during the drag (guard: `if (!this._rightDragging) this.controls.update()`). Re-anchor `controls.target` on drag end so orbit resumes cleanly.
+- **Camera-relative vectors**: `new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion)` for forward, `(1,0,0)` for right, `(0,1,0)` for up. Never project onto world XZ.
+- **`camera.updateMatrixWorld()`** must be called before `Vector3.project(camera)` when computing screen-space dot positions (do this in the animate loop, not in event handlers).
+
+---
+
 ## Current Wiring Status
 
 ### Wired and working
 - **Reset** → `viewer.resetView()`
 - **Object Tree** → `viewer.treePanel.toggle()`
 - **Sectioning** → `viewer.sectioning.clearClipPlanes()`
-- **NavigationWheel** → `viewer.navigation.zoomToFit()`
+- **NavigationWheel fit-to-view** → `viewer.navigation.zoomToFit()`
+- **Navigation modes** → `viewer.navigation.setMode('look'|'orbit'|'fly')` via NavigationWheel buttons (with active state)
+- **WASD/QE keyboard movement** → `Navigation.js` (all modes, camera-relative, always active)
+- **Right-click temporary mode** → `Navigation.js` (Default/Fly→orbit, Orbit→look-around)
+- **Scroll zoom-to-cursor** → `Navigation.js` raycasts to cursor point with acceleration curve
+- **Navigation orbit cursor** → `right-drag-orbit-start` / `right-drag-orbit-end` events → `modelViewerAdapter.ts`
 - **Isolation** → `viewer.visibility.isolate()` / `showAll()`
 - **Zoom In/Out** → `viewer.navigation.zoom(±1)` (adapter ready, no button yet)
 - **View Orientations** → `viewer.navigation.setCamera()` with presets (adapter ready, ViewCube not wired)
@@ -173,10 +233,11 @@ Run all: `npm test`. Tests use `demo/old.html` and `demo/test-page.html` — nev
 
 1. **Toolbar buttons feel disconnected** — many Chrome buttons aren't wired to the adapter yet. Each "not wired" button needs: adapter method added to `types.ts`, implemented in `modelViewerAdapter.ts` and `mockViewerAdapter.ts`, and called from the Chrome component.
 2. **Right-click context menu** — engine's context menu renders inside the ViewerCanvas stacking context. CSS has been re-themed to light, but z-index layering with Chrome toolbars may need tuning.
-3. **No active state management** — Chrome toolbar buttons don't track active/pressed state. Need state in each toolbar to show which tool is active.
+3. **No active state management (most toolbars)** — most Chrome toolbar buttons don't track active/pressed state. NavigationWheel mode buttons are the exception — they do track active state. Other toolbars still need this.
 4. **SearchSets not wired** — the engine has a full SearchSets feature + panel, but the Chrome left toolbar button doesn't toggle it yet.
 5. **Object tree stale on model switch** — when switching models in-place, the object tree and properties panel may show data from the previous model briefly until the new model's events propagate through the adapter. No explicit clear signal is sent to chrome features on `clearAllModels()`.
-6. **Procore Viewer integration** — future work. Write `procoreAdapter.ts` implementing the same `ViewerAdapter` interface. Chrome components don't change.
+6. **Navigation tests sparse** — the REG-NAV suite predates the WASD/right-click/scroll-to-cursor work. Tests for camera-relative movement, right-click mode switching, zoom-to-cursor, and origin dots have not been written yet.
+7. **Procore Viewer integration** — future work. Write `procoreAdapter.ts` implementing the same `ViewerAdapter` interface. Chrome components don't change.
 
 ## Branch History
 

@@ -65,7 +65,7 @@ Comprehensive regression coverage across all features. Uses the mock scene (`tes
 | Category | ID Prefix | Tests | What It Covers |
 |---|---|---|---|
 | Viewer Initialization | `REG-INIT` | 5 | DOM structure, subsystem references, mock meshes, canvas dimensions, grid helper |
-| Navigation | `REG-NAV` | 13 | Orbit/pan modes, zoom, camera get/set, controls enable/disable, walk speed, zoomToFit/zoomToSelection. **Note:** WASD/QE camera-relative movement, right-click temporary mode switching, scroll zoom-to-cursor, and origin dots are not yet covered by automated tests — see Known Issues in `context.md`. |
+| Navigation | `REG-NAV` | 13 | Orbit/pan modes, zoom, camera get/set, controls enable/disable, walk speed, zoomToFit/zoomToSelection. **Note:** WASD/QE camera-relative movement, right-click temporary mode switching, scroll zoom-to-cursor, and origin dots are not yet covered by automated tests — see Known Issues in `CONTEXT.md`. |
 | Visibility | `REG-VIS` | 14 | hide/show/toggle single and multiple, hideAll/showAll, isolate, opacity, hideByType/showByType, destroy cleanup |
 | Object Tree | `REG-TREE` | 9 | buildTree, expand/collapse, toggleNode, selectNode, selectNodesByElementIds, filterTree, destroy, icon/type formatting |
 | Sectioning | `REG-SEC` | 9 | addClipPlane, removeClipPlane, clearClipPlanes, movePlane, flipPlane, setPlaneEnabled, setPlaneVisible, state round-trip, destroy |

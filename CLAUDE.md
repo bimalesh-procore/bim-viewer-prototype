@@ -148,7 +148,7 @@ On `setControlsEnabled(true)`, the snapshot is **restored** (not force-set to `t
 - **⚠️ Check for `@procore/*` imports before merging any synced file.** The colleague repo uses Procore-internal packages (`@procore/core-icons`, etc.) that are not installed here. Replace any such imports with the `lucide-react` equivalent before committing. All standard UI icons (`ChevronDown`, `ChevronRight`, `Folder`, `Check`, etc.) are available in `lucide-react` under the same names.
 
 ### 6. Testing
-- **Full test plan:** See [`test_plan.md`](./test_plan.md) for test infrastructure, suites, helpers, and guidelines.
+- **Full test plan:** See [`TEST_PLAN.md`](./TEST_PLAN.md) for test infrastructure, suites, helpers, and guidelines.
 - **Run all tests:** `npm test`
 - **Run regression only:** `npx playwright test evals/tests/regression.spec.js`
 - **Run IFC loading only:** `npx playwright test evals/tests/ifc-loading.spec.js`
@@ -166,7 +166,7 @@ On `setControlsEnabled(true)`, the snapshot is **restored** (not force-set to `t
 
 Tests run **when merging to main**, not on every push to a feature branch.
 
-See **[`mergetomain.md`](./mergetomain.md)** for:
+See **[`MERGETOMAIN.md`](./MERGETOMAIN.md)** for:
 - The feature → test suite mapping table
 - Agent instructions (run targeted tests before `gh pr merge`)
 - Human instructions (run tests manually before merging)

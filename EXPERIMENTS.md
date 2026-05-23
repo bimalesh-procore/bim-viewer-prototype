@@ -103,7 +103,7 @@ Despite getting the plumbing right, the culler's behavior was unacceptable in pr
 ### Files touched (all reverted)
 
 - `src/core/IFCLoader.js` — world shims, culler init, mesh registration, unload cleanup
-- `context.md` — wiring status entry, known issue entry
+- `CONTEXT.md` — wiring status entry, known issue entry
 - `CLAUDE.md` — §4b frustum culling note
 
 ---

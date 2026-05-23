@@ -2,6 +2,7 @@
   "name": "3d-model-viewer",
   "version": "1.0.0",
   "description": "Reusable, batteries-included 3D IFC Model Viewer as an embeddable JavaScript component",
+  "private": true,
   "main": "dist/model-viewer.js",
   "type": "module",
   "scripts": {
@@ -45,5 +46,5 @@
     "three.js",
     "building"
   ],
-  "license": "MIT"
+  "license": "UNLICENSED"
 }

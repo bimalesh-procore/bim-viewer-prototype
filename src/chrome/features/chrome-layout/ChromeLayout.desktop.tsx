@@ -3,7 +3,7 @@ import { Header } from '../header';
 import { LeftToolbar } from '../left-toolbar/LeftToolbar';
 import { RightToolbar } from '../right-toolbar/RightToolbar';
 import { MiniMap } from '../minimap/MiniMap';
-import { NavigationWheel } from '../navigation-wheel/NavigationWheel';
+import { BottomToolbar } from '../bottom-toolbar/BottomToolbar';
 import { ViewerCanvas } from '../viewer-canvas/ViewerCanvas';
 import { GlobalSearchOverlay } from '../global-search/GlobalSearchOverlay';
 import { ModeIdentifierOverlay } from '../mode-identifier/ModeIdentifierOverlay';
@@ -117,7 +117,7 @@ export function ChromeLayoutDesktop({
 
             <RightToolbar />
             <MiniMap />
-            <NavigationWheel />
+            <BottomToolbar />
             <PlaneContextMenu />
           </>
         )}

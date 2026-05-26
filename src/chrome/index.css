@@ -49,6 +49,13 @@ body,
   right: calc(100% + 12px);
 }
 
+.mv-toolbar-tooltip-top {
+  top: auto;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 .mv-toolbar-tooltip-label {
   font-size: 14px;
   font-weight: 500;
@@ -425,135 +432,6 @@ body,
 
 .mv-top-loading-popover-btn:hover {
   background: #D6DADC;
-}
-
-.mv-nav-wheel {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
-  width: 320px;
-  height: 220px;
-  z-index: 140;
-  --wheel-cx: 50%;
-  /* Center the orbit on the center of the blue docked semicircle. */
-  --wheel-cy: calc(100% - 3px);
-}
-
-.mv-nav-wheel-tooltip {
-  position: absolute;
-  left: 50%;
-  /* 24px above the top edge of orbit buttons, fixed centered spot */
-  top: calc(var(--wheel-cy) - 126px);
-  transform: translate(-50%, -100%);
-  min-width: 78px;
-  padding: 6px 10px;
-  border-radius: 10px;
-  border: 1px solid #d1d5db;
-  background: #ffffff;
-  color: #111827;
-  font-size: 14px;
-  font-weight: 600;
-  text-align: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.096);
-}
-
-.mv-nav-wheel-center {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
-  width: 94px;
-  height: 50px;
-  border: none;
-  border-radius: 999px 999px 0 0;
-  background: #2563eb;
-  color: #fff;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: inherit;
-  z-index: 3;
-}
-
-.mv-nav-wheel-center:hover {
-  background: #1d4ed8;
-}
-
-.mv-nav-wheel-center-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.mv-nav-wheel-center-icon-image {
-  width: 24px;
-  height: 24px;
-  display: block;
-  object-fit: contain;
-  filter: brightness(0) invert(1);
-  transform: translateY(8px);
-}
-
-.mv-nav-wheel-action {
-  position: absolute;
-  left: var(--wheel-cx);
-  top: var(--wheel-cy);
-  width: 48px;
-  height: 48px;
-  border-radius: 999px;
-  border: 1px solid #d1d5db;
-  background: #ffffff;
-  color: #111827;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: inherit;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  transform: translate(-50%, -50%) scale(0.65);
-  opacity: 0;
-  pointer-events: none;
-  transition: transform 180ms ease, opacity 140ms ease;
-  z-index: 1;
-}
-
-.mv-nav-wheel-action.is-open {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translate(
-      calc(-50% + var(--orbit-x, 0px)),
-      calc(-50% + var(--orbit-y, 0px))
-    )
-    scale(1);
-}
-
-.mv-nav-wheel-action:hover {
-  border-color: #d1d5db;
-  background: #f3f4f6;
-}
-
-.mv-nav-wheel-action.is-active {
-  background: #2563eb;
-  color: #ffffff;
-  border-color: #2563eb;
-}
-
-.mv-nav-wheel-action.is-active:hover {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
-}
-
-.mv-nav-wheel-action-icon {
-  width: 22px;
-  height: 22px;
-  display: block;
-  object-fit: contain;
-  pointer-events: none;
-}
-
-.mv-nav-wheel-action.is-active .mv-nav-wheel-action-icon {
-  filter: brightness(0) invert(1);
 }
 
 .model-viewer.mv-cursor-select,

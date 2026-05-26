@@ -21,9 +21,12 @@ export interface ToolbarButtonProps {
    * Which side the tooltip appears on.
    * 'right' (default) — tooltip floats right; order: label → shortcut.
    * 'left'            — tooltip floats left;  order: shortcut → label.
+   * 'top'             — tooltip floats above; order: label → shortcut.
    */
-  tooltipSide?: 'left' | 'right';
+  tooltipSide?: 'left' | 'right' | 'top';
   onClick?: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }
 
 export function ToolbarButton({
@@ -37,11 +40,15 @@ export function ToolbarButton({
   hasFlyout = false,
   tooltipSide = 'right',
   onClick,
+  onMouseEnter,
+  onMouseLeave,
 }: ToolbarButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       disabled={disabled}
       aria-label={label}
       aria-disabled={disabled || undefined}
@@ -70,7 +77,7 @@ export function ToolbarButton({
             <span className="mv-toolbar-tooltip-shortcut">{shortcut}</span>
           )}
           <span className="mv-toolbar-tooltip-label">{tooltipLabel ?? label}</span>
-          {tooltipSide === 'right' && shortcut && (
+          {(tooltipSide === 'right' || tooltipSide === 'top') && shortcut && (
             <span className="mv-toolbar-tooltip-shortcut">{shortcut}</span>
           )}
         </div>

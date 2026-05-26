@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { ChromeLayout } from '../features/chrome-layout';
 import { ViewerAdapterProvider } from '../features/viewer-adapter/ViewerAdapterContext';
+import { ViewerSettingsProvider } from '../features/viewer-settings/ViewerSettingsContext';
 import { FormFactorProvider } from '../features/form-factor';
 import { createModelViewerAdapter } from '../features/viewer-adapter/modelViewerAdapter';
 import { mockViewerAdapter } from '../features/viewer-adapter/mockViewerAdapter';
@@ -268,6 +269,7 @@ export function ChromeApp() {
   return (
     <FormFactorProvider>
     <ViewerAdapterProvider adapter={adapter}>
+      <ViewerSettingsProvider>
       <ChromeLayout
         viewerContainerRef={setViewerContainer}
         showOverlays={loadRequested}
@@ -299,6 +301,7 @@ export function ChromeApp() {
           </button>
         </div>
       )}
+      </ViewerSettingsProvider>
     </ViewerAdapterProvider>
     </FormFactorProvider>
   );

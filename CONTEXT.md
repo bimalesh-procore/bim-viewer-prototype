@@ -79,7 +79,11 @@ src/chrome/
 │   ├── right-toolbar/       ← View group, Tools group, History group
 │   ├── view-cube/           ← 3D orientation indicator
 │   ├── minimap/             ← Floor plan overview
-│   ├── navigation-wheel/    ← Fit-to-view button
+│   ├── bottom-toolbar/      ← Home, nav-mode picker, ortho/render/x-ray (synced
+│   │                          with right toolbar), render-style picker
+│   ├── viewer-settings/     ← Shared React context for isOrthographic,
+│   │                          isXRayActive, renderToggles — single source of
+│   │                          truth so right & bottom toolbars stay in sync
 │   ├── viewer-canvas/       ← Mount point for 3D engine (callback ref)
 │   └── viewer-adapter/      ← Interface, mock, real adapter, React Context
 ├── shared/                  ← For shared UI primitives (currently empty)
@@ -115,9 +119,9 @@ See [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) for the tablet/phone variant wo
 
 | Mode | Activation | Left-drag behavior |
 |---|---|---|
-| Default (look-around) | NavigationWheel "Default" button or Escape | Look around (yaw/pitch). Camera stays fixed. |
-| Orbit | NavigationWheel "Orbit" button | Orbit around a center target point. Origin dot shown at target. |
-| Fly | NavigationWheel "Fly" button | Look around. WASD/QE + scroll propels camera freely. |
+| Default (look-around) | Bottom toolbar nav-mode menu "Default" button or Escape | Look around (yaw/pitch). Camera stays fixed. |
+| Orbit | Bottom toolbar nav-mode menu "Orbit" button | Orbit around a center target point. Origin dot shown at target. |
+| Fly | Bottom toolbar nav-mode menu "Fly" button | Look around. WASD/QE + scroll propels camera freely. |
 
 ### Keyboard Shortcuts (active in all modes simultaneously)
 
@@ -173,8 +177,8 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Reset** → `viewer.resetView()`
 - **Object Tree** → `viewer.treePanel.toggle()`
 - **Sectioning** → `viewer.sectioning.clearClipPlanes()`
-- **NavigationWheel fit-to-view** → `viewer.navigation.zoomToFit()`
-- **Navigation modes** → `viewer.navigation.setMode('look'|'orbit'|'fly')` via NavigationWheel buttons (with active state)
+- **Bottom toolbar Home button** → `viewer.navigation.zoomToFit()` (fit-to-view)
+- **Navigation modes** → `viewer.navigation.setMode('look'|'orbit'|'fly')` via the bottom toolbar nav-mode menu (active state shown on the picker button)
 - **WASD/QE keyboard movement** → `Navigation.js` (all modes, camera-relative, always active)
 - **Right-click temporary mode** → `Navigation.js` (Default/Fly→orbit, Orbit→look-around)
 - **Scroll zoom-to-cursor** → `Navigation.js` raycasts to cursor point with acceleration curve; `MIN_STEP = 0.5` floor lets the camera punch through walls at close range; empty-space fallback uses `_lastRaycastDist` (last successful hit, clamped to 2–150) instead of `controls.target` distance
@@ -195,12 +199,14 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Form-factor selector** → settings cog in the header opens a dropdown (Desktop / Tablet / Phone). URL updates via `history.replaceState` to `?form=…`; clean URLs omit the param for desktop. Refresh respects the URL; bare URL defaults to desktop. See [CLAUDE.md §3a](./CLAUDE.md) and [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md)
 - **Device frame** (tablet/phone) → centered, bezelled device shell with rotation button outside top-right. Tablet/phone variant trees are wrapped in `DeviceFrame` from `chrome-layout/index.tsx`. Bezel/notch/home indicator live outside the chrome's scale transform so they stay visually consistent across orientation and viewport size
 - **Orientation toggle** → rotate button on tablet/phone swaps `?orient=portrait`/`?orient=landscape`. Tablet default = landscape; phone default = portrait. URL omits `?orient=` when it matches the default
+- **Bottom toolbar ↔ right toolbar sync (Ortho / Render Settings / X-Ray)** → `ViewerSettingsContext` owns `isOrthographic`, `isXRayActive`, and `renderToggles`; both toolbars read/write through `useViewerSettings()`. Ortho/X-Ray delegate to the adapter; render-settings state is context-only until the engine has a concept for it
+- **Render style picker** → bottom toolbar dropdown (Default / Realism). Selection persists in URL via `?style=realism` (URL omitted when Default) using `URLSearchParams` + `history.replaceState` — preserves `?model=`, `?form=`, `?orient=` per [CLAUDE.md §3d](./CLAUDE.md). Visual-only — no adapter call yet
 
 ### Wired to stubs (engine feature not built)
 - Properties, Measure, Undo, Redo — log to console
 
 ### Not wired yet
-- Search Sets, Views & Markups, Items, Deviation, Orthographic, Render Modes, X-Ray, Markup, Quick Create, ViewCube faces, Header Search, MiniMap
+- Search Sets, Views & Markups, Items, Deviation, Render Modes (mesh/lines/terrain/point-cloud toggles — context-only, no engine concept), Markup, Quick Create, ViewCube faces, Header Search, MiniMap
 
 ## React StrictMode Consideration
 
@@ -254,7 +260,7 @@ Run all: `npm test`. Tests use `demo/old.html` and `demo/test-page.html` — nev
 
 1. **Toolbar buttons feel disconnected** — many Chrome buttons aren't wired to the adapter yet. Each "not wired" button needs: adapter method added to `types.ts`, implemented in `modelViewerAdapter.ts` and `mockViewerAdapter.ts`, and called from the Chrome component.
 2. ~~**Right-click context menu**~~ — **Resolved.** Right-click now only activates navigation after the pointer moves >4 px; a clean right-click shows the context menu as normal. Context menu is suppressed on empty-space clicks (no object hit).
-3. **No active state management (most toolbars)** — most Chrome toolbar buttons don't track active/pressed state. NavigationWheel mode buttons are the exception — they do track active state. Other toolbars still need this.
+3. **No active state management (most toolbars)** — most Chrome toolbar buttons don't track active/pressed state. The bottom toolbar nav-mode picker is the exception — it tracks the selected mode and reflects it on the button icon. Other toolbars still need this.
 4. **SearchSets not wired** — the engine has a full SearchSets feature + panel, but the Chrome left toolbar button doesn't toggle it yet.
 5. ~~**Object tree stale on model switch**~~ — **Resolved.** `ChromeApp.handleSelectModel` now calls `viewer.objectTree.buildTree()` + `viewer.treePanel.refresh()` immediately after `clearAllModels()`, so the tree goes blank at the start of the load rather than showing stale data throughout.
 6. **Navigation tests sparse** — the REG-NAV suite predates the WASD/right-click/scroll-to-cursor work. Tests for camera-relative movement, right-click mode switching, zoom-to-cursor, and origin dots have not been written yet.

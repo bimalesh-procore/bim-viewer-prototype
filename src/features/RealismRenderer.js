@@ -23,6 +23,9 @@ export class RealismRenderer {
     this._savedColorSpace = null;
     this._savedToneMapping = null;
     this._savedToneMappingExposure = null;
+    // Phase 2 — cast shadows on/off. Default mode keeps shadows disabled per
+    // ChromeApp; Realism flips them on.
+    this._savedShadowMapEnabled = null;
     this._onCameraChange = null;
   }
 
@@ -52,10 +55,17 @@ export class RealismRenderer {
     };
 
     this.postproduction = new Postproduction(this.components, renderer, this._world);
-    // ao: GTAO ambient occlusion. custom: edge detection + outlines. gamma:
-    // linear→sRGB final conversion (replaces the renderer's own sRGB output
-    // path while postproduction is active).
-    this.postproduction.setPasses({ ao: true, custom: true, gamma: true });
+    // Pre-set _settings.ao = true BEFORE triggering initialize. Postproduction
+    // defaults to ao=false; calling setPasses() AFTER initialize hits an
+    // iteration bug in updatePasses (it mutates composer.passes while iterating
+    // with for...of), so passes get duplicated. Setting `_settings.ao` directly
+    // means initialize's own updatePasses constructs the pass list correctly on
+    // the first try. (custom + gamma default to true; no other tweaks needed.)
+    this.postproduction._settings.ao = true;
+    // Triggers Postproduction.initialize(). We leave `enabled = true` permanently
+    // and gate "is realism on" via SceneManager.setRenderOverride() — the
+    // composer only runs when the override is installed.
+    this.postproduction.enabled = true;
 
     // Re-point the post-processing camera when the user swaps ortho/perspective.
     this._onCameraChange = () => {
@@ -74,13 +84,21 @@ export class RealismRenderer {
     this._savedColorSpace = sm.renderer.outputColorSpace;
     this._savedToneMapping = sm.renderer.toneMapping;
     this._savedToneMappingExposure = sm.renderer.toneMappingExposure;
+    this._savedShadowMapEnabled = sm.renderer.shadowMap.enabled;
 
-    this.postproduction.enabled = true;
     // Sync passes to current viewport size (the renderer may have resized
     // between _build and enable, especially if Realism is the URL default).
     const size = new THREE.Vector2();
     sm.renderer.getSize(size);
-    this.postproduction.setSize(size.x, size.y);
+    this._resizePostproduction(size.x, size.y);
+
+    // Enable cast shadows. SceneManager already has a directional light
+    // configured with `castShadow = true` and a shadow map; ChromeApp disables
+    // the renderer-level flag for Default mode (see ChromeApp.tsx). Flipping it
+    // back on here makes the existing infrastructure render shadows. Mesh
+    // castShadow/receiveShadow flags are set by IFCLoader.finalizeMeshAfterReveal.
+    sm.renderer.shadowMap.enabled = true;
+    sm.renderer.shadowMap.needsUpdate = true;
 
     sm.setRenderOverride(() => this.postproduction.composer.render());
     this.enabled = true;
@@ -90,18 +108,39 @@ export class RealismRenderer {
     if (!this.enabled) return;
     const sm = this.viewer.sceneManager;
     sm.setRenderOverride(null);
-    if (this.postproduction) this.postproduction.enabled = false;
+    // Leave postproduction.enabled = true permanently — see _build(). The
+    // composer simply isn't called because setRenderOverride(null) makes
+    // SceneManager.animate() fall back to the default renderer.render().
 
     // Restore the renderer settings that Postproduction.initialize() overrode.
     sm.renderer.outputColorSpace = this._savedColorSpace ?? THREE.SRGBColorSpace;
     sm.renderer.toneMapping = this._savedToneMapping ?? THREE.ACESFilmicToneMapping;
     sm.renderer.toneMappingExposure = this._savedToneMappingExposure ?? 1.0;
 
+    // Restore the shadow-map enabled flag (Default mode has it off).
+    sm.renderer.shadowMap.enabled = this._savedShadowMapEnabled ?? false;
+    sm.renderer.shadowMap.needsUpdate = true;
+
     this.enabled = false;
   }
 
   resize(width, height) {
-    if (this.postproduction) this.postproduction.setSize(width, height);
+    if (this.postproduction) this._resizePostproduction(width, height);
+  }
+
+  // Bypass the broken Postproduction.setSize, which toggles custom on/off
+  // around the resize and triggers updatePasses each time — that method has a
+  // bug in @thatopen/components-front@2.4.12 where it removes passes from
+  // composer.passes while iterating with for...of, so passes get duplicated.
+  // Resize the individual passes directly instead.
+  _resizePostproduction(width, height) {
+    const pp = this.postproduction;
+    if (!pp || !pp.composer) return;
+    pp.composer.setSize(width, height);
+    pp.basePass?.setSize?.(width, height);
+    pp.n8ao?.setSize?.(width, height);
+    pp.customEffects?.setSize?.(width, height);
+    pp.gammaPass?.setSize?.(width, height);
   }
 
   dispose() {

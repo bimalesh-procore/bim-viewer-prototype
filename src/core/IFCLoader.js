@@ -420,6 +420,12 @@ export class IFCLoader {
     // Deterministic render ordering reduces tie flicker on coplanar surfaces.
     mesh.renderOrder = 1000 + (revealIndex % 4000);
 
+    // Shadow flags are inert when renderer.shadowMap.enabled is false (Default
+    // mode), so setting them unconditionally is free in Default and lights up
+    // automatically when RealismRenderer flips shadows on.
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+
     if (Array.isArray(mesh.material)) {
       mesh.material.forEach(finalizeMaterial);
       return;

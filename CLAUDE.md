@@ -183,6 +183,29 @@ On `setControlsEnabled(true)`, the snapshot is **restored** (not force-set to `t
 - **Guard scroll handlers against `dist < 1e-4` / non-finite `dist`.** `toPoint.divideScalar(0)` produces a NaN unit vector that permanently corrupts `camera.position`, requiring a home-reset to recover. Return early before the divide if `!isFinite(dist) || dist < 1e-4`.
 - **Do not modify `src/core/ModelViewer.js`** to accommodate navigation changes — all logic stays in `Navigation.js`.
 
+### 4d. Realism Render Mode (`src/features/RealismRenderer.js`)
+
+The bottom-toolbar **Default ↔ Realism** picker switches between the plain
+`WebGLRenderer` and a post-processed render chain (N8AO + edge detection +
+gamma + cast shadows) from `@thatopen/components-front`. The same canvas
+serves both modes — no canvas swap, no listener rebinding.
+
+**Full engineering notes** (architecture, package-internal bugs we work around,
+things we tried and dropped, future tuning knobs): see [`REALISM.md`](./REALISM.md).
+
+The short version:
+
+- We use the inner `Postproduction` class, **not** the `PostproductionRenderer`
+  wrapper. The wrapper brings its own canvas; the inner class wraps our existing
+  `WebGLRenderer`.
+- `@thatopen/components-front@2.4.12` has multiple footguns (iteration bug in
+  `updatePasses`, getters that throw before `initialize`, `setSize` corrupts
+  the pass list). The workarounds in `RealismRenderer.js` look odd in isolation
+  — read `REALISM.md` before refactoring.
+- Realism enables `renderer.shadowMap.enabled = true` and restores on disable.
+  The directional light + shadow map are already set up in `SceneManager.js`.
+  Mesh `castShadow`/`receiveShadow` flags are set in `IFCLoader.finalizeMeshAfterReveal`.
+
 ### 5. Sync Source (`model-chrome/`)
 - `model-chrome/` is a **read-only reference copy** of the external ModelChrome repository maintained by colleagues.
 - It is periodically updated by pulling from their repo.

@@ -281,6 +281,16 @@ See "Key architectural decision" above. Brings its own canvas, requires
 rebind work in 3 engine classes, larger change for no functional gain.
 **Never adopted.**
 
+## Deploy gotcha (resolved)
+
+Installing `@thatopen/components-front` locally resolved 5 packages through
+Procore's Artifactory mirror and baked Artifactory URLs into
+`package-lock.json` as `"resolved": "https://artifacts.procoretech.com/..."`.
+Vercel's build machine has no Artifactory token, so the first deploy hit
+401 on `npm install`. Fixed by rewriting those 5 URLs to `registry.npmjs.org`
+and adding a repo-level `.npmrc` (`registry=https://registry.npmjs.org/`) so
+the same thing can't recur. See [`CLAUDE.md`](./CLAUDE.md) → "NPM registry".
+
 ## Known limitations of what shipped
 
 - **No UI for tuning AO/edges/gloss.** Single toggle is the entire surface.

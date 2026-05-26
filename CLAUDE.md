@@ -8,6 +8,31 @@
 - **Lint:** `npm run lint`
 - **Convert IFC → .frag.gz:** `npm run convert <path-to-ifc-file>` → outputs to `public/models/` (alias for `node scripts/ifc-to-frag.mjs`)
 
+## NPM registry (`.npmrc`)
+
+A repo-level `.npmrc` pins this project to the **public npm registry**
+(`https://registry.npmjs.org/`). It overrides any global `~/.npmrc` so:
+
+- Future `npm install` runs resolve from public npm even if your machine is
+  set up to use a corporate mirror (e.g. Procore Artifactory at
+  `artifacts.procoretech.com`).
+- `package-lock.json` entries land with `registry.npmjs.org` URLs, which
+  means **Vercel deploys work without any auth tokens**.
+
+**Why this matters:** without the file, packages installed through a private
+mirror get their mirror URLs baked into `package-lock.json` as `"resolved":
+"https://artifacts.procoretech.com/..."`. Vercel's build then hits 401 on
+those packages because its build machine has no Artifactory credentials.
+This bit the first Realism-mode deploy — see [`REALISM.md`](./REALISM.md)
+and the `Repoint package-lock URLs from Procore Artifactory to public npm`
+commit for the historical fix.
+
+This project uses only public packages (no `@procore/*` deps), so the public
+registry is sufficient. If a private package ever does become a real need,
+that's the moment to either drop the `.npmrc` (and configure Vercel with an
+Artifactory token via env var) or add a `@procore:registry=...` line
+scoped to just the private namespace.
+
 ## Architecture & Code Style
 
 ### 1. The "God Object" Protection

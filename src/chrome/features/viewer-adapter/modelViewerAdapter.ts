@@ -132,6 +132,7 @@ interface ModelViewerInstance {
   };
   resetView(): void;
   setInteractionMode(mode: InteractionMode): void;
+  setRenderStyle(style: 'default' | 'realism'): void;
   on(event: string, callback: (data: unknown) => void): ModelViewerInstance;
   off(event: string, callback: (data: unknown) => void): ModelViewerInstance;
 }
@@ -814,6 +815,9 @@ export function createModelViewerAdapter(
     },
     isXRayActive() {
       return viewer.xray.isEnabled;
+    },
+    setRenderStyle(style: 'default' | 'realism') {
+      viewer.setRenderStyle(style);
     },
     setHoverEffect(mode: 'gradient' | 'edgeTrace') {
       viewer.selection.setHoverEffectMode(mode);

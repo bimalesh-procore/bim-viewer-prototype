@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@thatopen/components": "^2.4.0",
+    "@thatopen/components-front": "^2.4.12",
     "@thatopen/fragments": "^3.0.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",

@@ -9,6 +9,7 @@ import { SearchSets } from '../features/SearchSets.js';
 import { ViewsManager } from '../features/ViewsManager.js';
 import { MarkupTool } from '../features/MarkupTool.js';
 import { XRay } from '../features/XRay.js';
+import { RealismRenderer } from '../features/RealismRenderer.js';
 import { TreePanel } from '../ui/TreePanel.js';
 import { ContextMenu } from '../ui/ContextMenu.js';
 import '../styles/dark-theme.css';
@@ -88,6 +89,8 @@ export class ModelViewer {
       this.visibility = new Visibility(this.sceneManager);
       this.sectioning = new Sectioning(this.sceneManager);
       this.xray = new XRay(this.sceneManager);
+      this.realism = new RealismRenderer(this);
+      this.sceneManager.setResizeHook((w, h) => this.realism.resize(w, h));
 
       // Initialize Object Tree
       this.objectTree = new ObjectTree(this.sceneManager, this.ifcLoader);
@@ -477,6 +480,11 @@ export class ModelViewer {
     this.updateToolbarState();
 
     this.emit('view-reset');
+  }
+
+  setRenderStyle(style) {
+    if (style === 'realism') this.realism.enable();
+    else this.realism.disable();
   }
 
   setInteractionMode(mode) {

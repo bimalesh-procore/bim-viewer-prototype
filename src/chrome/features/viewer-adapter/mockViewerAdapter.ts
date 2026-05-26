@@ -58,6 +58,9 @@ export const mockViewerAdapter: ViewerAdapter = {
     log('toggleSectionTool', sectioningActive);
     emitSectioning();
   },
+  setRenderStyle(style: 'default' | 'realism') {
+    log('setRenderStyle', style);
+  },
   setActiveSectioningTool(tool) {
     log('setActiveSectioningTool', tool);
   },

@@ -49,9 +49,19 @@ export function BottomToolbar() {
 
   const handleSelectStyle = (style: RenderStyle) => {
     setRenderStyle(style);
+    adapter.setRenderStyle?.(style);
     writeRenderStyleToUrl(style);
     setOpenFlyout(null);
   };
+
+  // Apply the URL-derived style whenever the adapter changes. BottomToolbar
+  // mounts with the mock adapter and switches to the real one once the viewer
+  // is ready — depending on `adapter` (not []) ensures Realism actually gets
+  // applied to the real adapter, not just logged by the mock.
+  useEffect(() => {
+    adapter.setRenderStyle?.(renderStyle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adapter]);
 
   const activeStyleOption =
     RENDER_STYLE_OPTIONS().find((o) => o.id === renderStyle) ?? RENDER_STYLE_OPTIONS()[0];

@@ -1,14 +1,40 @@
 # CLAUDE.md
 
-## Commands
-- **Start Server (Chrome UI):** `npm run dev` → opens `http://localhost:3000` (`demo/index.html`)
-- **Start Server (legacy dark theme):** `npm run dev:old` → opens `http://localhost:3000/old.html`
-- **Run Tests:** `npm test`
-- **Smoke Test:** `npm run smoke`
-- **Lint:** `npm run lint`
-- **Convert IFC → .frag.gz:** `npm run convert <path-to-ifc-file>` → outputs to `public/models/` (alias for `node scripts/ifc-to-frag.mjs`)
+## Before Every Commit/Push
 
-## Post-Push Slack Notification
+Both steps below are **required** every time the agent runs `git commit` or `git push`. Do not skip either.
+
+### 1. Documentation Sweep
+
+**Before committing, update all relevant `.md` files.** The goal is to keep them honest — they're the only durable record of *why* the code does what it does, and they rot fast if nobody minds them.
+
+**Skip this sweep** if the user has just walked through documentation updates manually with the agent in the same session **and** no further file changes have happened since the last doc edit. The point of the sweep is to catch agents committing undocumented changes, not to repeat work already done.
+
+**The sweep:**
+
+1. **Identify which `.md` files describe what just changed.** Map by topic:
+
+   | What changed | File to update |
+   |---|---|
+   | Architectural rules, new patterns, new chrome features | [`CLAUDE.md`](./CLAUDE.md) |
+   | "What's wired and working", structure trees, status | [`CONTEXT.md`](./CONTEXT.md) |
+   | Test suite mapping for changed features | [`MERGETOMAIN.md`](./MERGETOMAIN.md) |
+   | Tablet / phone variant work | [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) |
+   | Realism render mode internals | [`REALISM.md`](./REALISM.md) |
+   | Z-fighting fix history / follow-ups | [`Z_FIGHTING.md`](./Z_FIGHTING.md) |
+   | Test infrastructure / suites / fixtures | [`TEST_PLAN.md`](./TEST_PLAN.md) |
+   | Dead-end experiments worth remembering | [`EXPERIMENTS.md`](./EXPERIMENTS.md) |
+   | Anything surfaced but not built | [`BACKLOG.md`](./BACKLOG.md) — see §10 |
+
+2. **Update each relevant file.** Write the *behavior* and the *reason*, not the line-by-line diff. Future readers want to know what to expect and why decisions were made, not what got renamed.
+
+3. **Consider whether the work warrants a new top-level `.md`.** If a single area accumulated enough engineering nuance that it would overwhelm `CLAUDE.md` (like Realism or Z-Fighting did), create a new `<TOPIC>.md` at the repo root **and add a short summary section in `CLAUDE.md` that links to it**. The new file should not be findable only by `ls` — it has to be discoverable from `CLAUDE.md`.
+
+4. **Cross things off [`BACKLOG.md`](./BACKLOG.md)** if they shipped this session. **Add new entries** for anything that surfaced but didn't get built. See §10 for the workflow.
+
+5. **Then commit.** The doc updates can be part of the same commit as the code change they describe — that's preferred over a separate "docs: …" commit, because the change and its rationale travel together.
+
+### 2. Post-Push Slack Notification
 
 After every `git push` to main, send a message to `#bim-designers` (channel ID: `C0ACL0MGBTN`) using the Slack MCP tool. Format:
 
@@ -26,6 +52,14 @@ After every `git push` to main, send a message to `#bim-designers` (channel ID: 
 - Get the SHA from `git rev-parse HEAD`
 - The repo URL is `https://github.com/taylorklundt/BIM_design_viewer_prototype`
 - Write the one-sentence recap yourself from the commit body — do not paste the full body
+
+## Commands
+- **Start Server (Chrome UI):** `npm run dev` → opens `http://localhost:3000` (`demo/index.html`)
+- **Start Server (legacy dark theme):** `npm run dev:old` → opens `http://localhost:3000/old.html`
+- **Run Tests:** `npm test`
+- **Smoke Test:** `npm run smoke`
+- **Lint:** `npm run lint`
+- **Convert IFC → .frag.gz:** `npm run convert <path-to-ifc-file>` → outputs to `public/models/` (alias for `node scripts/ifc-to-frag.mjs`)
 
 ## NPM registry (`.npmrc`)
 
@@ -446,56 +480,7 @@ See **[`MERGETOMAIN.md`](./MERGETOMAIN.md)** for:
 - Agent instructions (run targeted tests before `gh pr merge`)
 - Human instructions (run tests manually before merging)
 
-### 9. Documentation Sweep Before Commit/Push
-
-**Before any `git commit` or `git push` initiated by the agent, run a
-documentation sweep.** The goal is to keep the `.md` files in this repo
-honest — they're the only durable record of *why* the code does what it
-does, and they rot fast if nobody minds them.
-
-**Skip this sweep** if the user has just walked through documentation
-updates manually with the agent in the same session **and** no further
-file changes have happened since the last doc edit. The point of the
-sweep is to catch agents committing undocumented changes, not to repeat
-work already done.
-
-**The sweep:**
-
-1. **Identify which `.md` files describe what just changed.** Map by topic:
-
-   | What changed | File to update |
-   |---|---|
-   | Architectural rules, new patterns, new chrome features | [`CLAUDE.md`](./CLAUDE.md) |
-   | "What's wired and working", structure trees, status | [`CONTEXT.md`](./CONTEXT.md) |
-   | Test suite mapping for changed features | [`MERGETOMAIN.md`](./MERGETOMAIN.md) |
-   | Tablet / phone variant work | [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) |
-   | Realism render mode internals | [`REALISM.md`](./REALISM.md) |
-   | Z-fighting fix history / follow-ups | [`Z_FIGHTING.md`](./Z_FIGHTING.md) |
-   | Test infrastructure / suites / fixtures | [`TEST_PLAN.md`](./TEST_PLAN.md) |
-   | Dead-end experiments worth remembering | [`EXPERIMENTS.md`](./EXPERIMENTS.md) |
-   | Anything surfaced but not built | [`BACKLOG.md`](./BACKLOG.md) — see §10 |
-
-2. **Update each relevant file.** Write the *behavior* and the *reason*,
-   not the line-by-line diff. Future readers want to know what to expect
-   and why decisions were made, not what got renamed.
-
-3. **Consider whether the work warrants a new top-level `.md`.** If a
-   single area accumulated enough engineering nuance that it would
-   overwhelm `CLAUDE.md` (like Realism or Z-Fighting did), create a new
-   `<TOPIC>.md` at the repo root **and add a short summary section in
-   `CLAUDE.md` that links to it**. The new file should not be findable
-   only by `ls` — it has to be discoverable from `CLAUDE.md`.
-
-4. **Cross things off [`BACKLOG.md`](./BACKLOG.md)** if they shipped this
-   session. **Add new entries** for anything that surfaced but didn't get
-   built. See §10 for the workflow.
-
-5. **Then commit.** The doc updates can be part of the same commit as
-   the code change they describe — that's preferred over a separate
-   "docs: …" commit, because the change and its rationale travel
-   together.
-
-### 10. Backlog Workflow (`BACKLOG.md`)
+### 9. Backlog Workflow (`BACKLOG.md`)
 
 Future work that's been discussed but not yet implemented lives in
 [`BACKLOG.md`](./BACKLOG.md) at the repo root. The point is to capture the

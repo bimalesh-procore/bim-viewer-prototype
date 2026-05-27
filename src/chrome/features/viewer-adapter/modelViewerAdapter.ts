@@ -618,7 +618,12 @@ export function createModelViewerAdapter(
       viewer.resetView();
     },
     getCameraSnapshot() {
-      const cam = viewer.navigation.getCamera();
+      // Use getEffectiveCamera (not getCamera) so the saved target matches
+      // where the camera is actually pointing. In look/fly mode controls.target
+      // is a stale orbit pivot that can differ from the real look direction;
+      // getEffectiveCamera derives the target from camera.getWorldDirection()
+      // so restore → setCamera → controls.update() lands on the exact same view.
+      const cam = viewer.navigation.getEffectiveCamera();
       return {
         position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },
         target:   { x: cam.target.x,   y: cam.target.y,   z: cam.target.z },
@@ -629,7 +634,7 @@ export function createModelViewerAdapter(
       applyCameraSnapshot(snapshot, options);
     },
     getViewpointState() {
-      const cam = viewer.navigation.getCamera();
+      const cam = viewer.navigation.getEffectiveCamera();
       return {
         camera: {
           position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },

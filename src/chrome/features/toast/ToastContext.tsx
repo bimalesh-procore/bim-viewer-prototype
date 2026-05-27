@@ -1,61 +1,54 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { ToastViewport } from './ToastViewport';
 import type { ShowToastOptions, Toast, ToastApi } from './types';
 
 const ToastContext = createContext<ToastApi | null>(null);
 
-const DEFAULT_DURATION_MS = 3500;
-
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const timersRef = useRef<Map<string, number>>(new Map());
 
+  // Starts the exit animation. Toast component calls remove() when done.
   const dismiss = useCallback((id: string) => {
-    const timer = timersRef.current.get(id);
-    if (timer !== undefined) {
-      window.clearTimeout(timer);
-      timersRef.current.delete(id);
-    }
+    setToasts((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, dismissing: true } : t)),
+    );
+  }, []);
+
+  // Called by Toast after its exit animation completes.
+  const remove = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const show = useCallback((opts: ShowToastOptions): string => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const toast: Toast = {
-      id,
-      kind: opts.kind ?? 'info',
-      message: opts.message,
-      duration: opts.duration ?? DEFAULT_DURATION_MS,
-    };
-    setToasts((prev) => [...prev, toast]);
-    if (toast.duration > 0) {
-      const timer = window.setTimeout(() => dismiss(id), toast.duration);
-      timersRef.current.set(id, timer);
-    }
-    return id;
-  }, [dismiss]);
-
-  useEffect(() => {
-    return () => {
-      timersRef.current.forEach((timer) => window.clearTimeout(timer));
-      timersRef.current.clear();
-    };
-  }, []);
+  const show = useCallback(
+    (opts: ShowToastOptions): string => {
+      const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const toast: Toast = {
+        id,
+        kind: opts.kind ?? 'info',
+        message: opts.message,
+        // -1 signals the Toast component to auto-calculate from word count.
+        duration: opts.duration !== undefined ? opts.duration : -1,
+        action: opts.action,
+        dismissing: false,
+      };
+      setToasts((prev) => [...prev, toast]);
+      return id;
+    },
+    [],
+  );
 
   const api = useMemo<ToastApi>(() => ({ show, dismiss }), [show, dismiss]);
 
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <ToastViewport toasts={toasts} onDismiss={dismiss} />
+      <ToastViewport toasts={toasts} onDismiss={dismiss} onRemove={remove} />
     </ToastContext.Provider>
   );
 }
 
 export function useToast(): ToastApi {
   const ctx = useContext(ToastContext);
-  if (!ctx) {
-    throw new Error('useToast must be used within a ToastProvider');
-  }
+  if (!ctx) throw new Error('useToast must be used within a ToastProvider');
   return ctx;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Smartphone } from 'lucide-react';
+import { Check } from 'lucide-react';
+import phoneIcon from '../../assets/icons/header/phone.svg';
 import { HeaderButton } from './HeaderButton';
 import { HeaderSearch } from './HeaderSearch';
 import type { HeaderProps } from './types';
@@ -202,7 +203,7 @@ export function HeaderDesktop({ models = [], activeModelId = null, onSelectModel
               aria-expanded={formFactorMenuOpen}
               className="flex items-center justify-center rounded p-1 transition-colors hover:bg-gray-200 active:bg-gray-300"
             >
-              <Smartphone size={24} className="text-[#232729]" strokeWidth={1.5} />
+              <img src={phoneIcon} alt="" className="w-6 h-6" />
             </button>
             {formFactorMenuOpen && (
               <div ref={formFactorMenuRef} className="absolute top-full right-0 mt-1 z-40">

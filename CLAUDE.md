@@ -359,9 +359,14 @@ queue-and-apply fix that would mirror what sectioning already does.
 - `Navigation.getEffectiveCamera()` — like `getCamera()` but derives the
   target from `camera.getWorldDirection()` × current orbit distance instead
   of `controls.target`. Used as the **start** state of any animated camera
-  restore, because in look/fly mode `controls.target` can be stale, and the
-  first `controls.update()` in the animation would otherwise snap the
-  lookAt direction visibly before the easing begins.
+  restore, and also as the **capture** state when saving a viewpoint
+  (`getViewpointState()` / `getCameraSnapshot()` in `modelViewerAdapter.ts`
+  both call `getEffectiveCamera()` rather than `getCamera()`). In look/fly
+  mode `controls.target` is a stale orbit pivot that can differ from the
+  real look direction — saving it and then restoring with `setCamera` +
+  `controls.update()` produces a different angle than the original view.
+  Using `getEffectiveCamera()` for both capture and animation-start makes
+  save → navigate → home a perfect round-trip regardless of navigation mode.
 - `Sectioning.serializeState()` / `restoreState(snapshot)` — capture and
   re-apply the clip planes + box state. Plane IDs are not preserved across
   restore (planes are recreated); anything pinned to plane IDs externally
@@ -402,19 +407,46 @@ component, not inside FloatingWindow itself. The right toolbar carries
 ### 4g. Toast Notifications (`src/chrome/features/toast/`)
 
 Reusable toast surface for transient, non-modal feedback. Variants:
-`success`, `error`, `info`, `warning`. Auto-dismiss default 3.5s
-(`duration: 0` for sticky). Position: bottom-center, above the bottom
-toolbar but below modals (`z-40`). Multiple stack.
+`success`, `error`, `info`, `warning`. Position: bottom-center, 48px from
+the viewport bottom, above the bottom toolbar, below modals (`z-40`).
+Multiple toasts stack.
+
+**Visual design** — Procore-style solid-color backgrounds (no tinted bg +
+border). White icon, white text, white close button. `#26732D` for success,
+`#D92626` for error. Warning/info use placeholder amber/blue until fully
+designed. 550px wide, 56px tall, `rounded-xl`, drop shadow. Max 65
+characters per message (soft limit — enforced by design, not code).
+
+**Auto-dismiss timer** — Each `Toast` component owns its own timer. Default
+duration is calculated from word count: `3000ms + (wordCount × 500ms)`,
+minimum 3.5s. Pass `duration: 0` for a sticky toast. Timer pauses on hover
+and keyboard focus, resumes with remaining time on leave/blur.
+
+**Animations** — Enters at 100ms ease-out (fade in + slide up 16px).
+Exits at 150ms ease-in (fade out + slide back down). Exit is triggered by
+`dismiss(id)` which sets `dismissing: true` on the toast; the `Toast`
+component detects this, runs the CSS transition, then calls `onRemove` via
+`onTransitionEnd` to remove it from state. Do not remove toasts directly
+from state — the two-phase dismiss keeps the animation clean.
+
+**Optional action** — Pass `action: { label, onClick }` to replace the X
+button with underlined action text on the right (e.g. "Undo").
 
 ```tsx
 const toast = useToast();
-toast.show({ kind: 'success', message: 'Saved.' });
-toast.show({ kind: 'error', message: 'Save failed.', duration: 5000 });
+toast.show({ kind: 'success', message: 'Home view saved.' });
+toast.show({ kind: 'error', message: 'Save failed. Try again.' });
+toast.show({ kind: 'success', message: 'Item deleted.', action: { label: 'Undo', onClick: handleUndo } });
+toast.show({ kind: 'info', message: 'Syncing…', duration: 0 }); // sticky
 ```
 
-The provider lives in `ChromeApp.tsx` so any feature can call
-`useToast()`. New toast triggers should always go through this surface —
-don't roll your own.
+The provider lives in `ChromeApp.tsx` so any feature can call `useToast()`.
+New toast triggers must always go through this surface — don't roll your own.
+
+**Custom icons** — `success` and `error` use SVG files from
+`src/chrome/assets/icons/toast/`. The X close button reuses
+`src/chrome/assets/icons/header/close.svg` filtered white via
+`brightness-0 invert`.
 
 ### 4h. Z-Fighting Mitigation (`IFCLoader.finalizeMeshAfterReveal`)
 

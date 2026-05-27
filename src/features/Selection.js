@@ -220,6 +220,14 @@ export class Selection {
         screenY: event.clientY
       };
 
+      // Select the right-clicked element if it isn't already selected,
+      // mirroring left-click behaviour so the highlighted object matches
+      // what the context menu acts on.
+      if (!this.selectedElements.has(elementId)) {
+        this.deselect();
+        this.select([elementId], [mesh]);
+      }
+
       this.emit('context-menu', this.lastIntersection);
     }
     // No intersection — right-click on empty space does nothing.

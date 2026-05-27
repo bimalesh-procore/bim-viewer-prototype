@@ -2,8 +2,23 @@
  * IFC Model Loading - Automated Test Suite
  * Tests the full IFC model loading pipeline including WASM initialization,
  * file fetching, parsing, and scene rendering.
+ *
+ * All load-path tests use `public/models/test-fixture.frag.gz` — a synthetic
+ * 1-mesh cube (~600 bytes) generated from evals/fixtures/test-fixture.ifc.
+ * Loads in ~100ms vs ~3min for any real model, so the whole suite finishes
+ * in seconds and never times out under parallel worker pressure. The fixture
+ * is not surfaced in the chrome's model picker — it only lives at this URL.
+ *
+ * If you need to regenerate it (e.g. after a fragments format change):
+ *   npm run convert evals/fixtures/test-fixture.ifc
+ *
+ * See CLAUDE.md §4b for the conversion pipeline and §6 for the test plan.
  */
 import { test, expect } from '@playwright/test';
+
+const FIXTURE_URL = '/models/test-fixture.frag.gz';
+const FIXTURE_NAME = 'TestFixture';
+const LOAD_TIMEOUT = 15000; // 15s — fixture loads in ~100ms, ample headroom for slow CI
 
 test.describe('IFC Model Loading', () => {
 
@@ -71,16 +86,17 @@ test.describe('IFC Model Loading', () => {
   });
 
   test('Sample IFC model file is accessible', async ({ page }) => {
-    // Verify the condos.frag.gz file can be fetched. IFC source files are not
-    // committed (see CLAUDE.md §4b); pre-converted .frag.gz files ship instead.
-    const modelResponse = await page.evaluate(async () => {
-      const res = await fetch('/models/condos.frag.gz');
+    // Verify the test fixture .frag.gz can be fetched. Real-world models are
+    // also served from /models/ — this test just confirms vite serves the
+    // gzipped fragment file with the right headers.
+    const modelResponse = await page.evaluate(async (url) => {
+      const res = await fetch(url);
       return {
         status: res.status,
         ok: res.ok,
         size: parseInt(res.headers.get('content-length') || '0', 10)
       };
-    });
+    }, FIXTURE_URL);
     expect(modelResponse.ok).toBe(true);
     expect(modelResponse.status).toBe(200);
   });
@@ -107,19 +123,18 @@ test.describe('IFC Model Loading', () => {
     });
 
     // Fire-and-forget: the page.evaluate must return immediately so the
-    // surrounding waitForFunction can poll the load-complete event. Awaiting
-    // the inner loadModel promise would block past Playwright's default 180s
-    // test timeout on slow headless software-WebGL runs.
-    await page.evaluate(() => { window.viewer.loadModel('/models/condos.frag.gz', 'Condos'); });
+    // surrounding waitForFunction can poll the load-complete event. Even with
+    // the tiny fixture (~100ms load) this pattern is preserved so the
+    // listeners attached above never miss the load-start emission.
+    await page.evaluate(({ url, name }) => { window.viewer.loadModel(url, name); }, { url: FIXTURE_URL, name: FIXTURE_NAME });
 
-    // Wait for either load-complete or load-error (up to 120 seconds for large model)
     const result = await page.waitForFunction(
       () => {
         return window.__loadEvents.some(
           e => e.type === 'load-complete' || e.type === 'load-error'
         );
       },
-      { timeout: 120000 }
+      { timeout: LOAD_TIMEOUT }
     );
 
     // Check results
@@ -146,16 +161,12 @@ test.describe('IFC Model Loading', () => {
       window.viewer.on('load-error', (data) => { window.__loadError = data.error; });
     });
 
-    // Fire-and-forget: the page.evaluate must return immediately so the
-    // surrounding waitForFunction can poll the load-complete event. Awaiting
-    // the inner loadModel promise would block past Playwright's default 180s
-    // test timeout on slow headless software-WebGL runs.
-    await page.evaluate(() => { window.viewer.loadModel('/models/condos.frag.gz', 'Condos'); });
+    // Fire-and-forget so waitForFunction below can observe the events.
+    await page.evaluate(({ url, name }) => { window.viewer.loadModel(url, name); }, { url: FIXTURE_URL, name: FIXTURE_NAME });
 
-    // Wait for load to finish
     await page.waitForFunction(
       () => window.__modelLoaded || window.__loadError,
-      { timeout: 120000 }
+      { timeout: LOAD_TIMEOUT }
     );
 
     // Verify no error and meshes exist in scene
@@ -198,16 +209,12 @@ test.describe('IFC Model Loading', () => {
       window.viewer.on('load-error', (data) => { window.__loadError = data.error; });
     });
 
-    // Fire-and-forget: the page.evaluate must return immediately so the
-    // surrounding waitForFunction can poll the load-complete event. Awaiting
-    // the inner loadModel promise would block past Playwright's default 180s
-    // test timeout on slow headless software-WebGL runs.
-    await page.evaluate(() => { window.viewer.loadModel('/models/condos.frag.gz', 'Condos'); });
+    // Fire-and-forget so waitForFunction below can observe the events.
+    await page.evaluate(({ url, name }) => { window.viewer.loadModel(url, name); }, { url: FIXTURE_URL, name: FIXTURE_NAME });
 
-    // Wait for load to finish
     await page.waitForFunction(
       () => window.__modelLoaded || window.__loadError,
-      { timeout: 120000 }
+      { timeout: LOAD_TIMEOUT }
     );
 
     // Filter out non-critical console errors (e.g. favicon, source maps)
@@ -227,16 +234,16 @@ test.describe('IFC Model Loading', () => {
   });
 
   test('loadModel API works programmatically', async ({ page }) => {
-    // Test the programmatic API directly. Use the pre-converted .frag.gz file
-    // that actually ships (CLAUDE.md §4b: .ifc sources are gitignored).
-    const result = await page.evaluate(async () => {
+    // Test the programmatic API directly. Uses the tiny synthetic fixture so
+    // we can await the inner promise without breaching the test timeout.
+    const result = await page.evaluate(async (url) => {
       try {
-        const modelId = await window.viewer.loadModel('/models/condos.frag.gz', 'Test Model');
+        const modelId = await window.viewer.loadModel(url, 'Test Model');
         return { success: true, modelId, error: null };
       } catch (error) {
         return { success: false, modelId: null, error: error.message };
       }
-    });
+    }, FIXTURE_URL);
 
     expect(result.success).toBe(true);
     expect(result.modelId).toBeTruthy();
@@ -269,15 +276,12 @@ test.describe('IFC Model Loading', () => {
       });
     });
 
-    // Fire-and-forget: the page.evaluate must return immediately so the
-    // surrounding waitForFunction can poll the load-complete event. Awaiting
-    // the inner loadModel promise would block past Playwright's default 180s
-    // test timeout on slow headless software-WebGL runs.
-    await page.evaluate(() => { window.viewer.loadModel('/models/condos.frag.gz', 'Condos'); });
+    // Fire-and-forget so waitForFunction below can observe the events.
+    await page.evaluate(({ url, name }) => { window.viewer.loadModel(url, name); }, { url: FIXTURE_URL, name: FIXTURE_NAME });
 
     await page.waitForFunction(
       () => window.__streamDone || window.__streamFailed,
-      { timeout: 120000 }
+      { timeout: LOAD_TIMEOUT }
     );
 
     const result = await page.evaluate(() => ({

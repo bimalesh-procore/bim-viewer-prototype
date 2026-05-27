@@ -8,9 +8,9 @@ All tests are end-to-end Playwright tests that run against the live Vite dev ser
 
 | Command | Purpose |
 |---|---|
-| `npm test` | Run **all** test suites |
-| `npx playwright test evals/tests/regression.spec.js` | Regression suite only (80 tests) |
-| `npx playwright test evals/tests/ifc-loading.spec.js` | IFC model loading suite only (8 tests) |
+| `npm test` | Run **all** test suites (runs in parallel across 4 workers locally, 2 in CI) |
+| `npx playwright test evals/tests/regression.spec.js` | Regression suite only (81 tests, ~1.6 min) |
+| `npx playwright test evals/tests/ifc-loading.spec.js` | IFC model loading suite only (9 tests, ~16 sec) |
 | `npx playwright test evals/tests/selection.spec.js` | Selection suite only |
 | `npx playwright test -g "test name"` | Run a single test by name |
 | `npx playwright test evals/tests/left-sidebar.spec.js` | Left sidebar suite only |
@@ -24,7 +24,8 @@ All tests are end-to-end Playwright tests that run against the live Vite dev ser
 ### Playwright Configuration (`playwright.config.js`)
 
 - **Test directory:** `./evals/tests`
-- **Timeout:** 180 seconds (accommodates large IFC model loading)
+- **Timeout:** 30 seconds per test. (Was 180s when IFC tests loaded the real Condos model — see §2 for why that's now ~100ms via a synthetic fixture.)
+- **Parallelism:** 4 workers locally, 2 in CI, with `fullyParallel: true`. Tests across files run concurrently. Safe because the synthetic test fixture's ~100ms load doesn't starve parallel workers the way a real-model load did.
 - **Browser:** Chromium (headless)
 - **Web server:** Vite dev server auto-started on port 3001 (`npm run dev -- --port 3001`)
 - **Reporters:** HTML (`evals/report/`), JSON (`evals/results.json`), list (console)
@@ -56,7 +57,7 @@ All tests are end-to-end Playwright tests that run against the live Vite dev ser
 
 ## Test Suites
 
-### 1. Regression Suite (`regression.spec.js`) — 80 tests
+### 1. Regression Suite (`regression.spec.js`) — 81 tests
 
 Comprehensive regression coverage across all features. Uses the mock scene (`test-page.html`) for speed and determinism.
 
@@ -75,20 +76,25 @@ Comprehensive regression coverage across all features. Uses the mock scene (`tes
 | Scene Manager | `REG-SCENE` | 7 | getScene, getCamera, getRenderer, getDomElement, showGrid toggle, add/remove objects, resize |
 | Integration & Edge Cases | `REG-INT` | 8 | Cross-feature workflows, rapid toggles, destroy cleanup, status bar, event emission |
 
-### 2. IFC Model Loading Suite (`ifc-loading.spec.js`) — 8 tests
+### 2. IFC Model Loading Suite (`ifc-loading.spec.js`) — 9 tests
 
-Tests the full IFC loading pipeline against the real 25 MB Condos.ifc model. Uses the demo page (`/`).
+Tests the full IFC loading pipeline against a **synthetic 1-cube test fixture** (~600 bytes, loads in ~100ms). Uses the test page (`/test-page.html`), not the chrome UI, because ChromeApp auto-loads a default model on mount which races with the test's listener setup.
+
+The fixture (`public/models/test-fixture.frag.gz`) is generated once from `evals/fixtures/test-fixture.ifc` via the standard converter (`npm run convert evals/fixtures/test-fixture.ifc`). Both the source `.ifc` and the output `.frag.gz` are committed. The fixture is **not** listed in the chrome's model picker — it only exists at this URL for tests. Whole suite runs in **~16 seconds** instead of the ~15 minutes a real-model load would take.
 
 | Test | What It Verifies |
 |---|---|
 | WASM files are accessible | `/web-ifc.wasm` returns HTTP 200 |
 | IFC loader initializes without errors | `ifcLoader`, `components`, and inner `IfcLoader` are all instantiated |
 | WASM settings are correctly configured | `wasm.path` is `'/'`, `wasm.absolute` is `true`, `autoSetWasm` is `false` |
-| Sample IFC model file is accessible | `/models/Condos.ifc` returns HTTP 200 |
-| Sample IFC model loads via button click | `load-start` and `load-complete` events fire, no `load-error` |
+| Sample IFC model file is accessible | `/models/test-fixture.frag.gz` returns HTTP 200 |
+| Sample IFC model loads successfully via API | `load-start` and `load-complete` events fire, no `load-error`, model count > 0 |
 | Model adds meshes to the scene | Scene contains mesh objects after loading |
 | No console errors during loading | No critical `console.error` or uncaught page errors |
-| loadModel API works programmatically | `viewer.loadModel('/models/Condos.ifc')` resolves with a model ID |
+| loadModel API works programmatically | `viewer.loadModel(...)` resolves with a model ID |
+| Object streaming lifecycle events are emitted | `stream-capability`, `object-load-progress` (with numeric `parserProgress`), and `object-load-complete` events fire during load |
+
+**On not having a real-world load test.** This suite exercises the loading *pipeline* — events, error paths, WASM wiring, mesh creation. It does NOT cover regressions that only manifest at thousands-of-meshes scale (e.g. the documented `Fragment.dispose()` materials bug in CLAUDE.md §4b). Such bugs would only get caught by manual verification with a real model. If we ever take a regression of that kind, the fix is to add **one** opt-in real-model smoke test gated behind an env flag (e.g. `RUN_BIG_LOAD=1`) so CI doesn't pay the cost on every run.
 
 ### 3. Selection Suite (`selection.spec.js`) — 23 tests
 

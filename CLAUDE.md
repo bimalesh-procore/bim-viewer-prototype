@@ -279,6 +279,7 @@ want to fully eliminate the residual speckle): see
 - **Run IFC loading only:** `npx playwright test evals/tests/ifc-loading.spec.js`
 - Every new **engine feature** must have a corresponding test file in `evals/tests/`.
 - Every new **chrome component** must have a corresponding test. Chrome tests live in `src/chrome/__tests__/`.
+- **Test fixture for the load pipeline:** `public/models/test-fixture.frag.gz` is a synthetic 1-cube model (~600 bytes, loads in ~100ms) generated from `evals/fixtures/test-fixture.ifc`. It is NOT in the chrome model picker — it only exists at this URL for tests. Use it for any new test that needs to exercise `viewer.loadModel(...)` end-to-end without paying the multi-minute cost of a real IFC. To regenerate after a fragments format change: `npm run convert evals/fixtures/test-fixture.ifc`. Both source `.ifc` and output `.frag.gz` are committed (the `.ifc` via a `.gitignore` exception).
 
 ### 7. Adding New Features
 - **IMPORTANT:** When a user asks to add a new feature, **do not start coding immediately**.

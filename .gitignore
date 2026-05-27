@@ -8,3 +8,8 @@ test-results/
 # IFC source files are too large for GitHub (often 100MB+).
 # Convert to .frag.gz with: node scripts/ifc-to-frag.mjs <file>
 *.ifc
+
+# Exception: the tiny synthetic test fixture IS committed so the
+# corresponding public/models/test-fixture.frag.gz can be regenerated.
+# See evals/fixtures/test-fixture.ifc and CLAUDE.md §6.
+!evals/fixtures/test-fixture.ifc

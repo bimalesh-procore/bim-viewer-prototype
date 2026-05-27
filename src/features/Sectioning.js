@@ -112,6 +112,35 @@ export class Sectioning {
     this._springTargetD  = 0;   // target projection onto plane normal (world)
     this._springVelocity = 0;
 
+    // ── Section-box state ─────────────────────────────────────────────
+    // Sub-tool controls which mouse interaction is active.
+    this._boxSubTool = 'drag-face'; // 'drag-face' | 'move' | 'rotate'
+    // Logical box: center + half-extents + orientation quaternion.
+    this._boxState = null;
+    // Visual meshes — a BoxGeometry face mesh (multi-material for per-face
+    // hover highlight) and a LineSegments edges mesh.
+    this._boxFaceMesh = null;
+    this._boxEdgeMesh = null;
+    this._boxFaceMaterials = null; // Array<MeshBasicMaterial>[6]
+    this._boxFacePlanes    = null; // unused — cleared for safety
+    this._boxHoveredFace = -1;     // 0-5 or -1
+    // Set of planeIds that belong to the current section box — used for O(1)
+    // lookup in movePlane so the box mesh stays in sync during face drags.
+    this._sectionBoxPlaneSet = new Set();
+    // Move / rotate drag state (separate from the per-plane isDragging flag).
+    this._isBoxDragging = false;
+    this._boxDragType = null;      // 'move' | 'rotate'
+    this._boxDragStartPoint = new THREE.Vector3();
+    this._boxDragPlane = new THREE.Plane();
+    this._boxDragStartClientX    = 0;
+    this._boxDragStartClientY    = 0;
+    this._boxRotateStartQuat     = null; // quaternion snapshot at drag start (for undo)
+    this._boxMoveCumulative = new THREE.Vector3();
+    this._boxRotateCumulative = 0;
+    this._rotatePinnedCornerSigns = null; // {sX, sZ} locked while dragging, null otherwise
+    this._rotateGizmos         = [];   // {el, planeId, mesh3D} per box face, shown in rotate mode
+    this._rotateGizmoTextures  = null; // [texTopBottom, texSide] — shared, disposed on clear
+
     // Section-cut placement preview line.
     // Shows a green line on the hovered surface indicating where the cut
     // will slice. The user can press 'r' to rotate the cut by 45° around
@@ -246,12 +275,21 @@ export class Sectioning {
       }
       for (const [, gizmoData] of this._planeGizmos) {
         if (gizmoData.el) gizmoData.el.style.display = 'none';
+        if (gizmoData.overflowBtn) gizmoData.overflowBtn.style.display = 'none';
         if (gizmoData.ring3D) gizmoData.ring3D.visible = false;
+      }
+      // Hide rotate gizmo DOM overlays — they live outside helpersGroup so they
+      // are not automatically hidden when helpersGroup.visible = false.
+      for (const gizmo of this._rotateGizmos) {
+        gizmo.el.style.display = 'none';
+        if (gizmo.mesh3D) gizmo.mesh3D.visible = false;
       }
     } else {
       // Entering (or switching within) sectioning mode — ensure all planes
-      // and their gizmos are visible.
+      // and their gizmos are visible. Skip box planes — they manage their own
+      // gizmos independently via _showPlaneGizmo in _buildBoxClipPlanes.
       for (const [planeId, pd] of this.clipPlanes) {
+        if (pd.isBoxPlane) continue;
         if (pd.helper) pd.helper.visible = true;
         if (!this._planeGizmos.has(planeId)) {
           const centroid = this._computeCrossSectionCentroid(pd.plane) || pd.point.clone();
@@ -384,6 +422,11 @@ export class Sectioning {
       if (this._planeGizmos.size > 0) {
         this._updatePlaneGizmoPositions();
       }
+      if (this._rotateGizmos.length > 0
+          && this.activeTool === 'section-box'
+          && this._boxSubTool === 'rotate') {
+        this._updateRotateGizmoPositions();
+      }
       // Safety net: if the cursor is over a gizmo, ensure the placement cursor
       // is never visible — even if the canvas mousemove listener missed the event
       // because the cursor was over the overlay div instead.
@@ -467,6 +510,15 @@ export class Sectioning {
     } finally { this._skipRecord = false; }
     this._redoStack = [];
     this.updateRendererClipPlanes();
+
+    // If still in section-box mode, recreate the box — the undo loop
+    // cleared it via clearSectionBox() but the tool is still active so
+    // the user should always see the box in move/rotate sub-tools.
+    if (this.activeTool === 'section-box') {
+      this.activateSectionBox();
+      // Restore visibility state to match the current sub-tool.
+      this.setBoxSubTool(this._boxSubTool || 'move');
+    }
   }
 
   clearHistory() {
@@ -723,75 +775,787 @@ export class Sectioning {
     }
   }
 
-  activateSectionBox() {
+  activateSectionBox(opts) {
     this.clearSectionBox();
 
-    const bounds = this.getSceneBounds();
-    const min = bounds.min.clone();
-    const max = bounds.max.clone();
-    const center = bounds.getCenter(new THREE.Vector3());
-    const size = bounds.getSize(new THREE.Vector3());
+    let center, halfExtents;
+    const quaternion = new THREE.Quaternion(); // always axis-aligned
 
-    const epsilon = 0.001;
-    const halfExtents = size.clone().multiplyScalar(0.5).addScalar(epsilon);
+    if (opts?.center && opts?.halfExtents) {
+      // Caller-supplied bounds (e.g. "Isolate in section box")
+      center      = opts.center.clone();
+      halfExtents = opts.halfExtents.clone();
+    } else {
+      const bounds = this.getSceneBounds();
+      const groundY = bounds.min.y;
+      const size = bounds.getSize(new THREE.Vector3());
 
-    const planesData = [
-      { normal: new THREE.Vector3(1, 0, 0), point: new THREE.Vector3(center.x + halfExtents.x, center.y, center.z) },
-      { normal: new THREE.Vector3(-1, 0, 0), point: new THREE.Vector3(center.x - halfExtents.x, center.y, center.z) },
-      { normal: new THREE.Vector3(0, 1, 0), point: new THREE.Vector3(center.x, center.y + halfExtents.y, center.z) },
-      { normal: new THREE.Vector3(0, -1, 0), point: new THREE.Vector3(center.x, center.y - halfExtents.y, center.z) },
-      { normal: new THREE.Vector3(0, 0, 1), point: new THREE.Vector3(center.x, center.y, center.z + halfExtents.z) },
-      { normal: new THREE.Vector3(0, 0, -1), point: new THREE.Vector3(center.x, center.y, center.z - halfExtents.z) },
-    ];
+      // Place box center at screen-center ray hit on the ground plane.
+      const centerNDC = new THREE.Vector2(0, 0);
+      this.raycaster.setFromCamera(centerNDC, this.camera);
+      const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -groundY);
+      const groundHit = new THREE.Vector3();
+      const sceneCtr = bounds.getCenter(new THREE.Vector3());
+      let cx = sceneCtr.x, cz = sceneCtr.z;
+      if (this.raycaster.ray.intersectPlane(groundPlane, groundHit)) {
+        cx = groundHit.x;
+        cz = groundHit.z;
+      }
 
-    // Suppress individual plane actions — we record the whole box as one action
-    const prevSkip = this._skipRecord;
-    this._skipRecord = true;
-    const planeIds = [];
-    planesData.forEach(({ normal, point }) => {
-      const id = this.addClipPlane(normal, point);
-      planeIds.push(id);
-    });
-    this._skipRecord = prevSkip;
-    this.sectionBoxPlaneIds = planeIds;
+      // Default box: a cube whose side is 35 % of the largest scene dimension
+      const half = Math.max(Math.max(size.x, size.y, size.z) * 0.175, 1.0);
+      center      = new THREE.Vector3(cx, groundY + half, cz);
+      halfExtents = new THREE.Vector3(half, half, half);
+    }
 
-    const boxGeometry = new THREE.BoxGeometry(
-      Math.max(max.x - min.x, 0.01),
-      Math.max(max.y - min.y, 0.01),
-      Math.max(max.z - min.z, 0.01)
-    );
-    const edges = new THREE.EdgesGeometry(boxGeometry);
-    const material = new THREE.LineBasicMaterial({ color: 0x00a8ff, transparent: true, opacity: 0.8 });
-    const wireframe = new THREE.LineSegments(edges, material);
-    wireframe.position.copy(center);
-    wireframe.userData.isPlaneHelper = true;
+    this._boxState = { center: center.clone(), halfExtents: halfExtents.clone(), quaternion: quaternion.clone() };
 
-    this.sectionBoxGroup = new THREE.Group();
-    this.sectionBoxGroup.name = 'SectionBoxHelper';
-    this.sectionBoxGroup.add(wireframe);
-    this.helpersGroup.add(this.sectionBoxGroup);
+    // Create 6 clip planes — one per face, suppressed from action history
+    // since we record the box as a single action.
+    this._buildBoxClipPlanes();
 
-    const savedPlanesData = planesData.map(p => ({ normal: p.normal.clone(), point: p.point.clone() }));
+    // Build translucent blue face mesh + edge overlay.
+    this._buildBoxMesh();
+
+    // Build rotate gizmos (hidden until rotate sub-tool is selected).
+    this._buildRotateGizmos();
+
     this._pushAction({
       type: 'section-box',
       undo: () => { this.clearSectionBox(); },
       redo: () => { this.activateSectionBox(); },
     });
 
-    this.emit('section-box-activate', { planeIds });
-    return planeIds;
+    this.emit('section-box-activate', { planeIds: this.sectionBoxPlaneIds });
+    return this.sectionBoxPlaneIds;
+  }
+
+  // Create 6 clip planes from the current _boxState.
+  _buildBoxClipPlanes() {
+    const { center, halfExtents, quaternion } = this._boxState;
+    // Ordered to match BoxGeometry face groups: +X,-X,+Y,-Y,+Z,-Z
+    const localAxes = [
+      new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+      new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1),
+    ];
+    const halves = [halfExtents.x, halfExtents.x, halfExtents.y, halfExtents.y, halfExtents.z, halfExtents.z];
+
+    const prevSkip = this._skipRecord;
+    this._skipRecord = true;
+    const planeIds = [];
+    for (let i = 0; i < 6; i++) {
+      const worldNormal = localAxes[i].clone().applyQuaternion(quaternion).normalize();
+      const faceCenter = center.clone().addScaledVector(worldNormal, halves[i]);
+      const id = this.addClipPlane(worldNormal, faceCenter);
+      // Tag so the sectioning-tool gizmo-creation loop skips these planes.
+      const pd = this.clipPlanes.get(id);
+      if (pd) pd.isBoxPlane = true;
+      planeIds.push(id);
+    }
+    this._skipRecord = prevSkip;
+    this.sectionBoxPlaneIds = planeIds;
+    this._sectionBoxPlaneSet = new Set(planeIds);
+
+    // Show the section-plane gizmo ring on every box face so they can be
+    // individually dragged exactly like regular section planes.
+    for (const id of planeIds) {
+      this._showPlaneGizmo(id);
+    }
+  }
+
+  // Build (or rebuild) the translucent face + edge meshes from _boxState.
+  _buildBoxMesh() {
+    // Dispose previous
+    if (this._boxFaceMesh) {
+      this.helpersGroup.remove(this._boxFaceMesh);
+      this._boxFaceMesh.geometry.dispose();
+      this._boxFaceMesh = null;
+    }
+    if (this._boxEdgeMesh) {
+      this.helpersGroup.remove(this._boxEdgeMesh);
+      this._boxEdgeMesh.geometry.dispose();
+      this._boxEdgeMesh = null;
+    }
+    if (this._boxFaceMaterials) {
+      this._boxFaceMaterials.forEach(m => m.dispose());
+      this._boxFaceMaterials = null;
+    }
+
+    const { center, halfExtents, quaternion } = this._boxState;
+
+    // Face fill — 6 materials (one per BoxGeometry face group) for per-face hover highlight.
+    //
+    // Key material properties:
+    //   FrontSide    — render only outward-facing surfaces; prevents the inner/outer face
+    //                  stack that caused the heavy blue pixelation (12 transparent layers).
+    //   depthTest:false — THE z-fighting fix. Box faces sit at exactly the clip-plane
+    //                  boundary. Clipped model triangles are at essentially the same GPU
+    //                  depth, so the renderer flickers between "box wins" and "model wins"
+    //                  per-fragment per-frame → stippled noise. Disabling depth testing
+    //                  makes each face render as a pure 2-D colour overlay — the model
+    //                  already in the framebuffer shows through the transparent tint.
+    //   depthWrite:false — transparent pass; must not corrupt the depth buffer.
+    //   clippingPlanes:[] — opts the visual mesh out of the renderer's global clip planes
+    //                  so the face isn't self-clipped by the plane it lies exactly on.
+    this._boxFaceMaterials = Array.from({ length: 6 }, () => new THREE.MeshBasicMaterial({
+      color: 0x2B5CE6,
+      transparent: true,
+      opacity: 0.13,
+      side: THREE.FrontSide,
+      depthWrite: false,
+      depthTest: false,
+      toneMapped: false,
+      clippingPlanes: [],
+      clipIntersection: false,
+    }));
+
+    const unitGeo = new THREE.BoxGeometry(1, 1, 1);
+    this._boxFaceMesh = new THREE.Mesh(unitGeo, this._boxFaceMaterials);
+    this._boxFaceMesh.scale.set(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2);
+    this._boxFaceMesh.position.copy(center);
+    this._boxFaceMesh.quaternion.copy(quaternion);
+    this._boxFaceMesh.renderOrder = 1;
+    this._boxFaceMesh.userData.isPlaneHelper = true;
+    this._boxFaceMesh.userData.isSectionBox = true;
+    this._boxFaceMesh.visible = false;
+    this.helpersGroup.add(this._boxFaceMesh);
+
+    // Edge overlay — crisp blue outline of the full box boundary.
+    // depthTest:true so back edges are naturally occluded by the model interior.
+    const edgeGeo = new THREE.EdgesGeometry(unitGeo);
+    this._boxEdgeMesh = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({
+      color: 0x2B5CE6,
+      transparent: true,
+      opacity: 0.75,
+      depthTest: true,
+      depthWrite: false,
+      toneMapped: false,
+      clippingPlanes: [],
+    }));
+    this._boxEdgeMesh.scale.copy(this._boxFaceMesh.scale);
+    this._boxEdgeMesh.position.copy(center);
+    this._boxEdgeMesh.quaternion.copy(quaternion);
+    this._boxEdgeMesh.renderOrder = 2;
+    this._boxEdgeMesh.userData.isPlaneHelper = true;
+    this._boxEdgeMesh.userData.isSectionBox = true;
+    this._boxEdgeMesh.visible = false;
+    this.helpersGroup.add(this._boxEdgeMesh);
+  }
+
+  // Sync the box visual mesh to match the current clip plane positions.
+  // Called after a face drag moves one of the box planes via movePlane().
+  _syncBoxMeshToPlanes() {
+    if (!this._boxState || this.sectionBoxPlaneIds.length !== 6) return;
+    const { quaternion } = this._boxState;
+
+    // Recompute center: midpoint of each opposing face pair.
+    const pd0 = this.clipPlanes.get(this.sectionBoxPlaneIds[0]);
+    const pd1 = this.clipPlanes.get(this.sectionBoxPlaneIds[1]);
+    if (!pd0 || !pd1) return;
+    const center = pd0.point.clone().add(pd1.point).multiplyScalar(0.5);
+    this._boxState.center.copy(center);
+
+    // Recompute half-extents from face-to-center distance along each local axis.
+    const pd2 = this.clipPlanes.get(this.sectionBoxPlaneIds[2]);
+    const pd4 = this.clipPlanes.get(this.sectionBoxPlaneIds[4]);
+    const axisX = pd0.normal.clone();
+    const axisY = pd2 ? pd2.normal.clone() : new THREE.Vector3(0, 1, 0);
+    const axisZ = pd4 ? pd4.normal.clone() : new THREE.Vector3(0, 0, 1);
+
+    const halfX = Math.abs(pd0.point.clone().sub(center).dot(axisX));
+    const halfY = pd2 ? Math.abs(pd2.point.clone().sub(center).dot(axisY)) : this._boxState.halfExtents.y;
+    const halfZ = pd4 ? Math.abs(pd4.point.clone().sub(center).dot(axisZ)) : this._boxState.halfExtents.z;
+    this._boxState.halfExtents.set(halfX, halfY, halfZ);
+
+    if (this._boxFaceMesh) {
+      this._boxFaceMesh.scale.set(halfX * 2, halfY * 2, halfZ * 2);
+      this._boxFaceMesh.position.copy(center);
+    }
+    if (this._boxEdgeMesh) {
+      this._boxEdgeMesh.scale.set(halfX * 2, halfY * 2, halfZ * 2);
+      this._boxEdgeMesh.position.copy(center);
+    }
+  }
+
+  // Recompute all 6 clip planes from the current _boxState (used after move/rotate).
+  _syncBoxPlanesToState() {
+    if (!this._boxState || this.sectionBoxPlaneIds.length !== 6) return;
+    const { center, halfExtents, quaternion } = this._boxState;
+    const localAxes = [
+      new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+      new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1),
+    ];
+    const halves = [halfExtents.x, halfExtents.x, halfExtents.y, halfExtents.y, halfExtents.z, halfExtents.z];
+    for (let i = 0; i < 6; i++) {
+      const planeId = this.sectionBoxPlaneIds[i];
+      const pd = this.clipPlanes.get(planeId);
+      if (!pd) continue;
+      const worldNormal = localAxes[i].clone().applyQuaternion(quaternion).normalize();
+      const faceCenter = center.clone().addScaledVector(worldNormal, halves[i]);
+      pd.normal.copy(worldNormal);
+      pd.point.copy(faceCenter);
+      pd.plane.setFromNormalAndCoplanarPoint(worldNormal.clone().negate(), faceCenter);
+    }
+    this.updateRendererClipPlanes();
+  }
+
+  // Set the active section-box sub-tool ('drag-face' | 'move' | 'rotate').
+  setBoxSubTool(tool) {
+    this._boxSubTool = tool;
+    this._setBoxHoveredFace(-1);
+
+    // drag-face: show gizmo rings, hide the translucent box mesh (rings are enough).
+    // move/rotate: hide rings (don't intercept clicks), show the box mesh for dragging.
+    const showRings      = tool === 'drag-face';
+    const showBox        = tool !== 'drag-face';
+    const showRotateGizmos = tool === 'rotate';
+
+    if (this.sectionBoxPlaneIds) {
+      for (const planeId of this.sectionBoxPlaneIds) {
+        const gizmoData = this._planeGizmos.get(planeId);
+        if (!gizmoData) continue;
+        if (gizmoData.el) gizmoData.el.style.display = showRings ? 'flex' : 'none';
+        if (gizmoData.ring3D) gizmoData.ring3D.visible = showRings;
+      }
+    }
+
+    if (this._boxFaceMesh) this._boxFaceMesh.visible = showBox;
+    if (this._boxEdgeMesh) this._boxEdgeMesh.visible = showBox;
+
+    // Show/hide rotate gizmos — hidden in all modes except rotate.
+    for (const gizmo of this._rotateGizmos) {
+      gizmo.el.style.display = showRotateGizmos ? 'flex' : 'none';
+      if (gizmo.mesh3D) gizmo.mesh3D.visible = showRotateGizmos;
+    }
+    // Position gizmos immediately on switch so they appear on the correct face
+    // without waiting for the next RAF tick.
+    if (showRotateGizmos) this._updateRotateGizmoPositions();
+
+    // When switching back to drag-face, snap gizmo centroids to the current
+    // plane positions in case a move or rotate happened while rings were hidden.
+    if (showRings) {
+      this._refreshBoxGizmoCentroids();
+    }
+
+    // Clear any box cursor class — hover logic in onMouseMove re-applies it
+    // only when the pointer is actually over the box.
+    this._setBoxCursor(null);
+  }
+
+  // Recompute centroids and snap currentPos for all 6 box-plane gizmos.
+  // Called after whole-box move/rotate so rings follow the new plane positions.
+  _refreshBoxGizmoCentroids() {
+    if (!this.sectionBoxPlaneIds) return;
+    for (const id of this.sectionBoxPlaneIds) {
+      const gd = this._planeGizmos.get(id);
+      const pd = this.clipPlanes.get(id);
+      if (!gd || !pd) continue;
+      // Face centre is the exact centroid — no model traversal needed.
+      gd.centroid  = pd.point.clone();
+      gd.currentPos = gd.centroid.clone(); // snap immediately — no lerp from old position
+      gd.planeBounds2D = null; // force recompute with new box geometry
+    }
+  }
+
+  // ── Section-box rotate gizmos ─────────────────────────────────────────────
+  // One DOM element per box face, visible only in rotate mode. White circle with
+  // a bidirectional rotation-arrow SVG. Dragging drives the existing rotate logic.
+
+  // Draws a filled triangular arrowhead at (x,y) pointing in direction `angle`.
+  // The tip is at the origin; the base extends in the -angle direction.
+  // angle: the rotation applied to the arrowhead triangle.
+  // The tip sits at (x,y); the arrowhead POINTS in screen direction (angle + π/2).
+  // For a canvas CW arc ending at endAngle, pass angle=endAngle to point forward.
+  _drawRotateArrowhead(ctx, x, y, angle, size, hw) {
+    if (hw === undefined) hw = size * 0.65;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);       // tip
+    ctx.lineTo(-hw, -size); // base left
+    ctx.lineTo( hw, -size); // base right
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Shared helper: draws the white circle background with a drop shadow onto ctx.
+  _drawGizmoCircleBackground(ctx, S) {
+    const cx = S / 2, cy = S / 2;
+    ctx.clearRect(0, 0, S, S);
+
+    // Drop shadow behind the circle.
+    ctx.shadowColor   = 'rgba(0,0,0,0.32)';
+    ctx.shadowBlur    = S * 0.10;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = S * 0.04;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.97)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, S * 0.44, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Reset shadow before border stroke so the border stays clean.
+    ctx.shadowColor   = 'transparent';
+    ctx.shadowBlur    = 0;
+    ctx.shadowOffsetY = 0;
+
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, S * 0.44, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Creates a canvas texture for a rotate gizmo icon.
+  // isTopBottom: two-arc ↺ design.
+  // side faces: vertical double-arrow SVG icon.
+  _createRotateIconTexture(isTopBottom) {
+    const S = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width  = S;
+    canvas.height = S;
+    const ctx = canvas.getContext('2d');
+    const cx = S / 2, cy = S / 2;
+
+    this._drawGizmoCircleBackground(ctx, S);
+
+    if (!isTopBottom) {
+      // Side faces — draw the vertical arrow SVG icon provided by design.
+      // The SVG is loaded asynchronously; the white-circle base is visible
+      // immediately and the icon appears on the next frame after load.
+      const svgStr = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="11.9497" y="2" width="2" height="7" transform="rotate(45 11.9497 2)" fill="#232729"/>
+<rect width="2" height="7" transform="matrix(0.707107 -0.707107 -0.707107 -0.707107 11.9497 22.3638)" fill="#232729"/>
+<rect x="16.8994" y="6.94971" width="2" height="7" transform="rotate(135 16.8994 6.94971)" fill="#232729"/>
+<rect width="2" height="7" transform="matrix(-0.707107 -0.707107 -0.707107 0.707107 16.8994 17.4141)" fill="#232729"/>
+<rect x="11" y="4" width="2" height="16" fill="#232729"/>
+</svg>`;
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.minFilter    = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      tex.colorSpace   = THREE.SRGBColorSpace;
+      tex.needsUpdate  = true;
+
+      const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+      const url  = URL.createObjectURL(blob);
+      const img  = new Image();
+      img.onload = () => {
+        // Re-draw background then overlay icon at 60% of canvas size for clarity.
+        this._drawGizmoCircleBackground(ctx, S);
+        const iconSize = S * 0.60;
+        ctx.drawImage(img, cx - iconSize / 2, cy - iconSize / 2, iconSize, iconSize);
+        URL.revokeObjectURL(url);
+        tex.needsUpdate = true;
+      };
+      img.src = url;
+      return tex;
+    }
+
+    // Top / bottom faces — rotate box SVG icon.
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter    = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.colorSpace   = THREE.SRGBColorSpace;
+    tex.needsUpdate  = true;
+
+    const rotateSvgStr = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M5.91238 5.36737C7.62321 3.96483 9.74513 3.38709 11.6843 3.38709C16.8292 3.38709 21 7.55789 21 12.7028C21 17.8478 16.8292 22.0186 11.6843 22.0186C9.02023 22.0186 6.61572 20.8987 4.91944 19.1075L4.74632 18.9247L6.57439 17.1935L6.74752 17.3763C7.98811 18.6862 9.74002 19.5008 11.6843 19.5008C15.4387 19.5008 18.4822 16.4572 18.4822 12.7028C18.4822 8.94841 15.4387 5.90486 11.6843 5.90486C10.1722 5.90486 8.61681 6.36285 7.40937 7.40025L10.7529 7.70925L10.5212 10.2163L3 9.52125L3.69508 2L6.20216 2.23169L5.91238 5.36737Z" fill="#232729"/>
+</svg>`;
+    const rotateBlob = new Blob([rotateSvgStr], { type: 'image/svg+xml' });
+    const rotateUrl  = URL.createObjectURL(rotateBlob);
+    const rotateImg  = new Image();
+    rotateImg.onload = () => {
+      this._drawGizmoCircleBackground(ctx, S);
+      const iconSize = S * 0.60;
+      ctx.drawImage(rotateImg, cx - iconSize / 2, cy - iconSize / 2, iconSize, iconSize);
+      URL.revokeObjectURL(rotateUrl);
+      tex.needsUpdate = true;
+    };
+    rotateImg.src = rotateUrl;
+    return tex;
+  }
+
+  _buildRotateGizmos() {
+    this._destroyRotateGizmos();
+    if (!this._boxState || !this.sectionBoxPlaneIds?.length) return;
+
+    // Only top/bottom faces get a gizmo (Option A — Y-axis spin only).
+    const texTopBottom = this._createRotateIconTexture(true);
+
+    const overlayParent = this.domElement.parentElement || this.domElement;
+
+    for (const planeId of this.sectionBoxPlaneIds) {
+      const pd = this.clipPlanes.get(planeId);
+      if (!pd) continue;
+      const isTopBottom = Math.abs(pd.normal.y) > 0.7;
+
+      // Option A: only the top/bottom face gets a rotate gizmo (Y-axis spin only).
+      if (!isTopBottom) continue;
+
+      // ── Invisible DOM hit area (pointer events only — no visual) ─────────
+      const el = document.createElement('div');
+      Object.assign(el.style, {
+        position:      'absolute',
+        width:         '72px',
+        height:        '72px',
+        display:       'none',
+        transform:     'translate(-50%,-50%)',
+        pointerEvents: 'auto',
+        zIndex:        '1001',
+        userSelect:    'none',
+        touchAction:   'none',
+        cursor:        'grab',
+      });
+      overlayParent.appendChild(el);
+
+      // ── 3D PlaneGeometry — lies flat in the face plane ───────────────────
+      const geo = new THREE.PlaneGeometry(1, 1);
+      const mat = new THREE.MeshBasicMaterial({
+        map:            texTopBottom,
+        transparent:    true,
+        side:           THREE.DoubleSide,
+        depthTest:      false,  // always render in front — depth buffer from main pass would hide it
+        depthWrite:     false,
+        clippingPlanes: [],
+        clipIntersection: false,
+      });
+      const mesh3D = new THREE.Mesh(geo, mat);
+      mesh3D.visible = false;               // hidden until rotate mode is active
+      // Add to the unclipped overlay scene so section box clip planes don't hide it.
+      if (!this._gizmoRingScene) {
+        this._gizmoRingScene = new THREE.Scene();
+      }
+      this._gizmoRingScene.add(mesh3D);
+
+      const gizmoRef = { el, planeId, mesh3D, isTopBottom };
+      this._rotateGizmos.push(gizmoRef);
+
+      // ── Pointer event handling ───────────────────────────────────────────
+      // Self-contained drag: rotation is applied here directly (not via
+      // onMouseMove) and document-level capture listeners guarantee that
+      // pointerup is always received even when the cursor leaves the element
+      // or the canvas intercepts events below.
+      el.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!this._boxState) return;
+
+        el.style.cursor = 'grabbing';
+        document.body.style.cursor = 'grabbing';
+
+        this._isBoxDragging      = true;
+        this._boxDragType        = 'rotate';
+        this._boxRotateCumulative = 0;
+        let lastX = e.clientX;
+        this._boxRotateStartQuat  = this._boxState.quaternion.clone();
+        this._rotatePinnedCornerSigns = gizmoRef._lastCornerSigns || null;
+
+        const onMove = (mv) => {
+          // Safety: if mouse button was released outside the window, end drag.
+          if (mv.buttons === 0) { onEnd(mv); return; }
+          mv.stopPropagation();
+          mv.preventDefault();
+
+          const dx = mv.clientX - lastX;
+          lastX = mv.clientX;
+          if (Math.abs(dx) > 0.5) {
+            const angleY = dx * 0.008;
+            const dqY = new THREE.Quaternion()
+              .setFromAxisAngle(new THREE.Vector3(0, 1, 0), angleY);
+            this._boxState.quaternion.premultiply(dqY);
+            this._boxRotateCumulative += angleY;
+            this._syncBoxPlanesToState();
+            if (this._boxFaceMesh) this._boxFaceMesh.quaternion.copy(this._boxState.quaternion);
+            if (this._boxEdgeMesh) this._boxEdgeMesh.quaternion.copy(this._boxState.quaternion);
+          }
+          this.clearHoverHighlight?.();
+        };
+
+        const onEnd = (up) => {
+          document.removeEventListener('pointermove', onMove, { capture: true });
+          document.removeEventListener('pointerup',   onEnd,  { capture: true });
+          document.removeEventListener('pointercancel', onEnd, { capture: true });
+          el.style.cursor = 'grab';
+          document.body.style.cursor = '';
+          this._setCursor('');
+
+          this._isBoxDragging = false;
+          this._boxDragType   = null;
+
+          const beforeQuat = this._boxRotateStartQuat;
+          const afterQuat  = this._boxState?.quaternion.clone();
+          this._boxRotateStartQuat  = null;
+          this._rotatePinnedCornerSigns = null;
+          this._boxRotateCumulative = 0;
+
+          if (beforeQuat && afterQuat && !beforeQuat.equals(afterQuat)) {
+            this._pushAction({
+              type: 'box-rotate',
+              undo: () => { this._applyBoxQuaternion(beforeQuat); },
+              redo: () => { this._applyBoxQuaternion(afterQuat); },
+            });
+          }
+          this._refreshBoxGizmoCentroids();
+          this._setBoxCursor(null);
+        };
+
+        document.addEventListener('pointermove', onMove, { capture: true });
+        document.addEventListener('pointerup',   onEnd,  { capture: true });
+        document.addEventListener('pointercancel', onEnd, { capture: true });
+      });
+    }
+
+    // Store shared textures for disposal
+    this._rotateGizmoTextures = [texTopBottom];
+  }
+
+  _destroyRotateGizmos() {
+    for (const { el, mesh3D } of this._rotateGizmos) {
+      el.remove();
+      if (mesh3D) {
+        if (this._gizmoRingScene) this._gizmoRingScene.remove(mesh3D);
+        mesh3D.geometry.dispose();
+        mesh3D.material.dispose(); // material is per-mesh; texture disposal is below
+      }
+    }
+    this._rotateGizmos = [];
+    if (this._rotateGizmoTextures) {
+      this._rotateGizmoTextures.forEach(t => t.dispose());
+      this._rotateGizmoTextures = null;
+    }
+  }
+
+  // Projects each face's display position to screen (for the DOM hit area) and
+  // updates the 3D mesh position, orientation, and scale each frame.
+  // Top/bottom gizmos are offset to a corner of the face for easier grabbing.
+  _updateRotateGizmoPositions() {
+    if (!this._rotateGizmos.length) return;
+    const rect  = this.domElement.getBoundingClientRect();
+    const halfW = rect.width  / 2;
+    const halfH = rect.height / 2;
+    const tempV      = new THREE.Vector3();
+    const _tempCamDir = new THREE.Vector3();
+    const camPos = this.camera.position;
+
+    for (const gizmo of this._rotateGizmos) {
+      const pd = this.clipPlanes.get(gizmo.planeId);
+      if (!pd) {
+        gizmo.el.style.display = 'none';
+        if (gizmo.mesh3D) gizmo.mesh3D.visible = false;
+        continue;
+      }
+
+      // Only show on front-facing faces.
+      const facingCamera = camPos.clone().sub(pd.point).dot(pd.normal) > 0;
+      if (!facingCamera) {
+        gizmo.el.style.display = 'none';
+        if (gizmo.mesh3D) gizmo.mesh3D.visible = false;
+        continue;
+      }
+
+      // Place the gizmo at the nearest corner of the top face to the camera.
+      // While dragging, keep it pinned to the corner where the drag began so
+      // it doesn't jump mid-interaction. On release it snaps to nearest again.
+      let displayPoint = pd.point;
+      if (gizmo.isTopBottom && this._boxState) {
+        const q  = this._boxState.quaternion;
+        const he = this._boxState.halfExtents;
+        const tX = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+        const tY = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+        const tZ = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+
+        // Use box-state center + Y half-extent as the base so that corner
+        // positions stay correct when side faces are dragged (pd.point only
+        // updates when the top face itself moves, not when X/Z extents change).
+        const faceCenter = this._boxState.center.clone()
+          .addScaledVector(tY, pd.normal.dot(tY) > 0 ? he.y : -he.y);
+
+        // f=0.90 places the gizmo at 90% of the way from face-center to corner.
+        const f  = 0.90;
+        const cornerSigns = [
+          { sX:  1, sZ:  1 },
+          { sX:  1, sZ: -1 },
+          { sX: -1, sZ:  1 },
+          { sX: -1, sZ: -1 },
+        ];
+        const corners = cornerSigns.map(({ sX, sZ }) =>
+          faceCenter.clone().addScaledVector(tX, he.x * f * sX).addScaledVector(tZ, he.z * f * sZ)
+        );
+
+        const isDraggingThis =
+          this._isBoxDragging &&
+          this._boxDragType === 'rotate' &&
+          this._rotatePinnedCornerSigns;
+
+        if (isDraggingThis) {
+          // Recompute world position of the pinned corner as the box rotates.
+          const { sX, sZ } = this._rotatePinnedCornerSigns;
+          displayPoint = faceCenter.clone()
+            .addScaledVector(tX, he.x * f * sX)
+            .addScaledVector(tZ, he.z * f * sZ);
+        } else {
+          // Pick the corner that projects lowest on screen (highest pixel-Y),
+          // which is always the corner visually nearest to the viewer regardless
+          // of box aspect ratio or camera height.
+          const projV = new THREE.Vector3();
+          let bestIdx   = 0;
+          let bestScreenY = -Infinity;  // NDC y=-1 is bottom; we want the lowest
+          corners.forEach((c, i) => {
+            projV.copy(c).project(this.camera);
+            // NDC y decreases toward the bottom of the screen; flip it so
+            // "lower on screen" = higher value = visually closest corner.
+            const screenY = -projV.y;
+            if (screenY > bestScreenY) { bestScreenY = screenY; bestIdx = i; }
+          });
+          gizmo._lastCornerSigns = cornerSigns[bestIdx];
+          displayPoint = corners[bestIdx];
+        }
+      }
+
+      tempV.copy(displayPoint).project(this.camera);
+      if (tempV.z > 1) {
+        gizmo.el.style.display = 'none';
+        if (gizmo.mesh3D) gizmo.mesh3D.visible = false;
+        continue;
+      }
+
+      // DOM hit area — projected screen position.
+      const x = (tempV.x * halfW) + halfW;
+      const y = -(tempV.y * halfH) + halfH;
+      gizmo.el.style.display = 'flex';
+      gizmo.el.style.left    = `${x}px`;
+      gizmo.el.style.top     = `${y}px`;
+
+      // 3D mesh — lies flat in the face plane, scales with camera distance.
+      if (gizmo.mesh3D) {
+        gizmo.mesh3D.visible = (this._boxSubTool === 'rotate');
+        const camDist = camPos.distanceTo(displayPoint);
+        const scale   = Math.max(Math.min(camDist * 0.045, 10), camDist * 0.011);
+        gizmo.mesh3D.scale.setScalar(scale);
+
+        // Offset slightly toward the camera so the icon sits in front of the face.
+        const camDir = _tempCamDir.copy(camPos).sub(displayPoint).normalize();
+        gizmo.mesh3D.position.copy(displayPoint).addScaledVector(camDir, scale * 0.03);
+
+        // Billboard: always face the camera so the icon stays upright regardless
+        // of how the section box is rotated.
+        gizmo.mesh3D.quaternion.copy(this.camera.quaternion);
+      }
+    }
+  }
+
+  // Apply (or clear) a section-box cursor via CSS class so it wins over the
+  // orbit-mode !important class that blocks inline style.cursor changes.
+  // tool: 'move' | 'rotate' | null (null = clear, show default)
+  _setBoxCursor(tool) {
+    this._mvContainer.classList.remove('mv-cursor-box-move', 'mv-cursor-box-rotate');
+    if (tool === 'move') {
+      this._mvContainer.classList.add('mv-cursor-box-move');
+    } else if (tool === 'rotate') {
+      this._mvContainer.classList.add('mv-cursor-box-rotate');
+    }
+  }
+
+  // Returns a CSS cursor value for the rotate-box interaction.
+  // Uses a circular-arrow SVG encoded as a data URI so no extra assets are needed.
+  _rotateCursorCSS() {
+    if (this.__rotateCursorCSS) return this.__rotateCursorCSS;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+      <path fill="white" stroke="black" stroke-width="0.5"
+        d="M12 4a8 8 0 1 0 7.94 7H22A10 10 0 1 1 12 2v2z"/>
+      <polygon fill="white" stroke="black" stroke-width="0.5" points="10,0 14,0 12,4"/>
+    </svg>`;
+    const encoded = encodeURIComponent(svg);
+    this.__rotateCursorCSS = `url("data:image/svg+xml,${encoded}") 12 12, alias`;
+    return this.__rotateCursorCSS;
+  }
+
+  // Highlight/unhighlight a box face material for hover feedback.
+  _setBoxHoveredFace(_faceIdx) {
+    // No hover/select visual state on the box faces — cursor change is sufficient feedback.
+    this._boxHoveredFace = -1;
+  }
+
+  // Translate the entire box by a world-space delta vector.
+  _translateSectionBox(delta) {
+    if (!this._boxState) return;
+    this._boxState.center.add(delta);
+    for (const planeId of this.sectionBoxPlaneIds) {
+      const pd = this.clipPlanes.get(planeId);
+      if (!pd) continue;
+      pd.point.add(delta);
+      pd.plane.constant += delta.dot(pd.normal);
+    }
+    if (this._boxFaceMesh) this._boxFaceMesh.position.copy(this._boxState.center);
+    if (this._boxEdgeMesh) this._boxEdgeMesh.position.copy(this._boxState.center);
+    this.updateRendererClipPlanes();
+  }
+
+  // Rotate the entire box around the Y-axis through its center by angleY radians.
+  _rotateSectionBox(angleY) {
+    if (!this._boxState) return;
+    const dq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angleY);
+    this._boxState.quaternion.premultiply(dq);
+    this._syncBoxPlanesToState();
+    if (this._boxFaceMesh) this._boxFaceMesh.quaternion.copy(this._boxState.quaternion);
+    if (this._boxEdgeMesh) this._boxEdgeMesh.quaternion.copy(this._boxState.quaternion);
+  }
+
+  // Snap the box to an absolute quaternion (used for undo/redo of rotate drags).
+  _applyBoxQuaternion(quat) {
+    if (!this._boxState) return;
+    this._boxState.quaternion.copy(quat);
+    this._syncBoxPlanesToState();
+    if (this._boxFaceMesh) this._boxFaceMesh.quaternion.copy(quat);
+    if (this._boxEdgeMesh) this._boxEdgeMesh.quaternion.copy(quat);
   }
 
   clearSectionBox() {
     const ids = [...this.sectionBoxPlaneIds];
     ids.forEach(id => this.removeClipPlane(id));
     this.sectionBoxPlaneIds = [];
+    this._sectionBoxPlaneSet = new Set();
 
+    // Legacy wireframe group (pre-redesign)
     if (this.sectionBoxGroup) {
       this.helpersGroup.remove(this.sectionBoxGroup);
       this.disposeHelper(this.sectionBoxGroup);
       this.sectionBoxGroup = null;
     }
+
+    if (this._boxFaceMesh) {
+      this.helpersGroup.remove(this._boxFaceMesh);
+      this._boxFaceMesh.geometry.dispose();
+      this._boxFaceMesh = null;
+    }
+    if (this._boxEdgeMesh) {
+      this.helpersGroup.remove(this._boxEdgeMesh);
+      this._boxEdgeMesh.geometry.dispose();
+      this._boxEdgeMesh = null;
+    }
+    if (this._boxFaceMaterials) {
+      this._boxFaceMaterials.forEach(m => m.dispose());
+      this._boxFaceMaterials = null;
+    }
+
+    this._destroyRotateGizmos();
+
+    this._boxState = null;
+    this._boxHoveredFace = -1;
+    this._isBoxDragging = false;
+    this._boxDragType = null;
+    if (this.activeSectionPlaneId && this._sectionBoxPlaneSet?.has(this.activeSectionPlaneId)) {
+      this.activeSectionPlaneId = null;
+      this.emit('active-plane-change', { planeId: null });
+    }
+  }
+
+  hasSectionBox() {
+    return this._boxState !== null && this.sectionBoxPlaneIds.length === 6;
   }
 
   setHoverHighlight(mesh, faceIndex) {
@@ -1259,9 +2023,8 @@ export class Sectioning {
   }
 
   _loadGizmoArrowTexture() {
-    // Draws the two polygon arrows (top full opacity, bottom 40% dim) onto a
-    // 128×128 canvas so they can be used as a billboard sprite on the gizmo ring.
-    // The SVG source viewBox is 16×68; we scale it to fill the canvas height.
+    // Draws the two polygon arrows onto a 128×128 canvas used as a billboard
+    // sprite inside each drag-face gizmo ring.
     const sz = 128;
     const pad = 8;
     const svgW = 16, svgH = 68;
@@ -1271,16 +2034,11 @@ export class Sectioning {
     const tx = (x) => offsetX + x * scale;
     const ty = (y) => offsetY + y * scale;
 
-    // c=center, aW=arrowhead half-width, sW=stem half-width (tune independently)
     const c = 8, aW = 6, sW = 1.5;
-    // iR: convex corner radius — tip + outer arrowhead shoulders (warp inward)
-    // oR: outward-bulge radius  — where arrowhead meets stem (warp outward)
-    // base corners (where stem meets center ring) stay sharp
-    const iR = 1.5; // SVG units
-    const oR = 2.0; // SVG units
+    const iR = 1.5;
+    const oR = 2.0;
 
-    // Each arrow: [tip, rightOuter, rightInner, rightBase, leftBase, leftInner, leftOuter]
-    const arrowBase = 20; // arrowhead base y (top arrow); closer to 34 = shorter stem
+    const arrowBase = 20;
     const topPts = [
       [c,          1 ], [c+aW, arrowBase], [c+sW, arrowBase],
       [c+sW,      34 ], [c-sW,        34], [c-sW, arrowBase], [c-aW, arrowBase],
@@ -1295,7 +2053,6 @@ export class Sectioning {
     canvas.height = sz;
     const ctx = canvas.getContext('2d');
 
-    // Unit vector from point a toward point b
     const norm = (a, b) => {
       const dx = b[0] - a[0], dy = b[1] - a[1];
       const len = Math.sqrt(dx * dx + dy * dy);
@@ -1303,45 +2060,34 @@ export class Sectioning {
     };
 
     const drawArrow = (pts, alpha) => {
-      // pts order: [P0=tip, P1=rightOuter, P2=rightInner, P3=rightBase,
-      //             P4=leftBase, P5=leftInner, P6=leftOuter]
       const [P0, P1, P2, P3, P4, P5, P6] = pts;
-      const d32 = norm(P3, P2); // direction: base → inner
-      const d21 = norm(P2, P1); // direction: inner → outer
-      const d65 = norm(P6, P5); // direction: outer → inner (left side)
-      const d54 = norm(P5, P4); // direction: inner → base (left side)
-      const ir = iR * scale;    // convex radius in canvas px
+      const d32 = norm(P3, P2);
+      const d21 = norm(P2, P1);
+      const d65 = norm(P6, P5);
+      const d54 = norm(P5, P4);
+      const ir = iR * scale;
 
       ctx.globalAlpha = alpha;
       ctx.beginPath();
 
-      // Start at rightBase — sharp corner
       ctx.moveTo(tx(P3[0]), ty(P3[1]));
 
-      // ── rightInner (P2): outward bulge where arrowhead meets stem ────────
       ctx.lineTo(tx(P2[0] - d32[0] * oR), ty(P2[1] - d32[1] * oR));
       ctx.quadraticCurveTo(
         tx(P2[0]), ty(P2[1]),
         tx(P2[0] + d21[0] * oR), ty(P2[1] + d21[1] * oR),
       );
 
-      // ── rightOuter (P1): inward arc — outer arrowhead shoulder ───────────
       ctx.arcTo(tx(P1[0]), ty(P1[1]), tx(P0[0]), ty(P0[1]), ir);
-
-      // ── tip (P0): inward arc ──────────────────────────────────────────────
       ctx.arcTo(tx(P0[0]), ty(P0[1]), tx(P6[0]), ty(P6[1]), ir);
-
-      // ── leftOuter (P6): inward arc — outer arrowhead shoulder ────────────
       ctx.arcTo(tx(P6[0]), ty(P6[1]), tx(P5[0]), ty(P5[1]), ir);
 
-      // ── leftInner (P5): outward bulge where arrowhead meets stem ─────────
       ctx.lineTo(tx(P5[0] - d65[0] * oR), ty(P5[1] - d65[1] * oR));
       ctx.quadraticCurveTo(
         tx(P5[0]), ty(P5[1]),
         tx(P5[0] + d54[0] * oR), ty(P5[1] + d54[1] * oR),
       );
 
-      // ── leftBase (P4): sharp corner — close path ─────────────────────────
       ctx.lineTo(tx(P4[0]), ty(P4[1]));
       ctx.closePath();
 
@@ -1956,7 +2702,7 @@ export class Sectioning {
     Object.assign(el.style, {
       position: 'absolute',
       pointerEvents: 'auto',
-      cursor: 'pointer',
+      cursor: 'grab',
       zIndex: '1000',
       filter: 'none',
       transform: 'translate(-50%, -50%)',
@@ -1969,6 +2715,171 @@ export class Sectioning {
     });
     el.dataset.sectionPlaneId = planeId;
 
+    // ── Overflow button ──────────────────────────────────────────────────────
+    // Positioned as a sibling to el (not a child) so it stays at a fixed
+    // screen-right offset and doesn't inherit el's rotation transform.
+    const isBoxPlane = () => this._sectionBoxPlaneSet?.has(planeId);
+
+    const overflowBtn = document.createElement('button');
+    Object.assign(overflowBtn.style, {
+      position: 'absolute',
+      width: '28px',
+      height: '28px',
+      borderRadius: '50%',
+      background: '#ffffff',
+      border: 'none',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.22)',
+      cursor: 'pointer',
+      display: 'none',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '0',
+      zIndex: '1001',
+      transform: 'translate(0, -50%)',
+    });
+    // Restore pointer cursor when hovering the button — prevents section-tool
+    // cursors (grab, move, rotate) from overriding it.
+    overflowBtn.addEventListener('mouseenter', () => {
+      this._setCursor('');
+      this._mvContainer?.classList.remove('mv-cursor-none', 'mv-cursor-box-move', 'mv-cursor-box-rotate');
+    });
+    overflowBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="3" cy="8" r="1.5" fill="#444"/>
+      <circle cx="8" cy="8" r="1.5" fill="#444"/>
+      <circle cx="13" cy="8" r="1.5" fill="#444"/>
+    </svg>`;
+    overflowBtn.title = 'More options';
+
+    // ── Dropdown menu ────────────────────────────────────────────────────────
+    const menu = document.createElement('div');
+    Object.assign(menu.style, {
+      position: 'fixed',
+      background: '#ffffff',
+      borderRadius: '8px',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+      padding: '4px 0',
+      zIndex: '9999',
+      minWidth: '160px',
+      display: 'none',
+      flexDirection: 'column',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      fontSize: '13px',
+      color: '#1a1a1a',
+      cursor: 'default',
+    });
+    menu.addEventListener('mouseenter', () => {
+      this._setCursor('');
+      this._mvContainer?.classList.remove('mv-cursor-none', 'mv-cursor-box-move', 'mv-cursor-box-rotate');
+    });
+    document.body.appendChild(menu);
+
+    const makeMenuItem = (iconSvg, label, danger, onClick) => {
+      const item = document.createElement('button');
+      Object.assign(item.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        width: '100%',
+        padding: '9px 14px',
+        border: 'none',
+        background: 'transparent',
+        cursor: 'pointer',
+        textAlign: 'left',
+        fontSize: '13px',
+        color: danger ? '#c0392b' : '#1a1a1a',
+        borderRadius: '0',
+        whiteSpace: 'nowrap',
+      });
+      item.innerHTML = `<span style="opacity:0.55;display:flex;align-items:center">${iconSvg}</span><span>${label}</span>`;
+      item.addEventListener('mouseenter', () => { item.style.background = '#f5f5f5'; });
+      item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+      item.addEventListener('mousedown', (e) => { e.stopPropagation(); e.preventDefault(); });
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeMenu();
+        onClick();
+      });
+      return item;
+    };
+
+    const flipIcon = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 8h10M10 5l3 3-3 3M6 5L3 8l3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const deleteIcon = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 4h10M6 4V3h4v1M5 4l.5 9h5L11 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+    const flipItem = makeMenuItem(flipIcon, 'Flip direction', false, () => {
+      this.flipPlane(planeId);
+    });
+    menu.appendChild(flipItem);
+
+    // Delete is only available for regular section planes, not box faces.
+    if (!isBoxPlane()) {
+      const deleteItem = makeMenuItem(deleteIcon, 'Delete', true, () => {
+        this.removeClipPlane(planeId);
+      });
+      menu.appendChild(deleteItem);
+    }
+
+    let menuOpen = false;
+    let hideTimeout = null;
+
+    const openMenu = () => {
+      menuOpen = true;
+      menu.style.display = 'flex';
+      const btnRect = overflowBtn.getBoundingClientRect();
+      menu.style.left = `${btnRect.right + 6}px`;
+      menu.style.top  = `${btnRect.top}px`;
+    };
+
+    const closeMenu = () => {
+      menuOpen = false;
+      menu.style.display = 'none';
+    };
+
+    overflowBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (menuOpen) { closeMenu(); } else { openMenu(); }
+    });
+    overflowBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); e.preventDefault(); });
+
+    // Close menu when clicking anywhere else
+    const onDocClick = (e) => {
+      if (!menu.contains(e.target) && e.target !== overflowBtn) closeMenu();
+    };
+    document.addEventListener('click', onDocClick);
+
+    // ── Show / hide overflow button based on cursor proximity ────────────────
+    // Using document mousemove (rather than mouseenter/mouseleave) avoids two
+    // failure modes: (a) the canvas gap between el and overflowBtn swallowing
+    // enter events, and (b) the button being shorter than el so exit at top/
+    // bottom misses the button entirely.
+    const isPointInRect = (cx, cy, rect) =>
+      cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom;
+
+    const onDocMouseMove = (e) => {
+      if (el.style.display === 'none') return;
+      const inEl  = isPointInRect(e.clientX, e.clientY, el.getBoundingClientRect());
+      const inBtn = isPointInRect(e.clientX, e.clientY, overflowBtn.getBoundingClientRect());
+      const inMenu = menuOpen && isPointInRect(e.clientX, e.clientY, menu.getBoundingClientRect());
+      if (inEl || inBtn || inMenu) {
+        overflowBtn.style.display = 'flex';
+        clearTimeout(hideTimeout);
+      } else {
+        clearTimeout(hideTimeout);
+        hideTimeout = setTimeout(() => {
+          if (!menuOpen) overflowBtn.style.display = 'none';
+        }, 120);
+      }
+    };
+    document.addEventListener('mousemove', onDocMouseMove);
+
+    // Store cleanup refs on el for when this gizmo is destroyed
+    el._overflowCleanup = () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('mousemove', onDocMouseMove);
+      if (menu.parentNode) menu.parentNode.removeChild(menu);
+      clearTimeout(hideTimeout);
+    };
+
+    // ── Existing drag / hover logic ──────────────────────────────────────────
     const clearPlacementCursor = () => {
       this.clearCutHoverMarker();
       this.clearPlaneHoverMarker();
@@ -1994,6 +2905,8 @@ export class Sectioning {
       if (this._hoveredPlaneId === planeId) this._hoveredPlaneId = null;
     });
     el.addEventListener('mousedown', (e) => {
+      // Don't start a drag if the click was on the overflow button
+      if (e.target === overflowBtn || overflowBtn.contains(e.target)) return;
       e.stopPropagation();
       e.preventDefault();
       this._hoveringPlaneGizmo = true;
@@ -2029,9 +2942,9 @@ export class Sectioning {
         window.removeEventListener('mouseup', onGizmoMouseUp, { capture: true });
         el.style.pointerEvents = 'auto';
 
-        // Restore cursor; if pointer left the element during drag (mouseleave
+        // Restore grab cursor; if pointer left the element during drag (mouseleave
         // couldn't fire while pointerEvents was none), clear hover state now.
-        el.style.cursor = 'pointer';
+        el.style.cursor = 'grab';
         const rect = el.getBoundingClientRect();
         const overEl = (
           upEvent.clientX >= rect.left && upEvent.clientX <= rect.right &&
@@ -2057,9 +2970,10 @@ export class Sectioning {
 
     const overlayParent = this.domElement.parentElement || this.domElement;
     overlayParent.appendChild(el);
+    overlayParent.appendChild(overflowBtn);
 
     const ring3D = this._createGizmoRing3D(planeId);
-    return { el, centroid: centroid.clone(), planeBounds2D: null, currentPos: centroid.clone(), dragStartPos: null, ring3D, _ringAnimScale: 1.0 };
+    return { el, overflowBtn, centroid: centroid.clone(), planeBounds2D: null, currentPos: centroid.clone(), dragStartPos: null, ring3D, _ringAnimScale: 1.0 };
   }
 
   // Called when exiting sectioning mode entirely — hides gizmos and helpers.
@@ -2084,6 +2998,7 @@ export class Sectioning {
     // Hide the gizmo DOM element and 3D ring (keep in map for re-entry)
     const gizmoData = this._planeGizmos.get(planeId);
     if (gizmoData?.el) gizmoData.el.style.display = 'none';
+    if (gizmoData?.overflowBtn) gizmoData.overflowBtn.style.display = 'none';
     if (gizmoData?.ring3D) gizmoData.ring3D.visible = false;
 
     this._refreshSectionPlaneActiveVisuals();
@@ -2104,7 +3019,7 @@ export class Sectioning {
 
     // Ensure gizmo DOM element exists
     if (!this._planeGizmos.has(planeId)) {
-      const centroid = this._computeCrossSectionCentroid(planeData.plane) || planeData.point.clone();
+      const centroid = this._computeGizmoCentroid(planeId) || planeData.point.clone();
       const gizmo = this._createPlaneGizmo(planeId, centroid);
       this._planeGizmos.set(planeId, gizmo);
     }
@@ -2225,67 +3140,25 @@ export class Sectioning {
     return group;
   }
 
-  // Update ring gizmo visuals between normal and selected states.
-  _updateGizmoRingSelected(ring3D, isSelected) {
-    if (!ring3D) return;
-    const { _strokeMat: sMat, _fillMat: fMat, _dotMat: dMat,
-            _ringStroke: rStroke, _ringFill: rFill, _centerDot: dot,
-            _strokeW: sw, _dotR: dotR, _r: r } = ring3D.userData;
-    if (!sMat || !fMat || !rStroke || !rFill) return;
-
-    const newStrokeW = isSelected ? sw * (4 / 3) : sw;
-    const newDotR    = isSelected ? dotR * (4 / 3) : dotR;
-
-    rStroke.geometry.dispose();
-    rStroke.geometry = new THREE.RingGeometry(r - newStrokeW, r, 72);
-
-    rFill.geometry.dispose();
-    rFill.geometry = new THREE.RingGeometry(newDotR, r - newStrokeW, 72);
-
-    if (dot) {
-      dot.geometry.dispose();
-      dot.geometry = new THREE.CircleGeometry(newDotR, 32);
-    }
-
-    if (dMat) {
-      dMat.color.set(0x56ff77);
-      dMat.needsUpdate = true;
-    }
-
-    fMat.color.set(isSelected ? 0x45CC5F : 0x000000);
-    fMat.opacity = isSelected ? 0.5 : 0.30;
-    fMat.needsUpdate = true;
-  }
-
-  // Select a plane by click — updates visual, emits event.
-  // Pass null to deselect.
+  // Select a plane — tracks the active plane id and emits the event, but no
+  // longer applies any visual select state to the gizmo ring. Hover-only UX.
   _selectSectionPlane(planeId) {
     const prev = this.activeSectionPlaneId;
     if (prev === planeId) return;
-
-    // Deselect previous ring and snap its scale animation back to normal
-    if (prev) {
-      const prevGizmo = this._planeGizmos.get(prev);
-      if (prevGizmo?.ring3D) this._updateGizmoRingSelected(prevGizmo.ring3D, false);
-      if (prevGizmo) prevGizmo._ringAnimScale = 1.0;
-    }
-
     this.activeSectionPlaneId = planeId;
-
-    // Select new ring
-    if (planeId) {
-      const gizmo = this._planeGizmos.get(planeId);
-      if (gizmo?.ring3D) this._updateGizmoRingSelected(gizmo.ring3D, true);
-    }
-
     this.emit('active-plane-change', { planeId: planeId ?? null });
   }
 
   _removePlaneGizmo(planeId) {
     const data = this._planeGizmos.get(planeId);
     if (!data) return;
-    if (data.el?.parentElement) {
-      data.el.parentElement.removeChild(data.el);
+    if (data.el) {
+      // Run overflow button / menu cleanup (removes document listener + menu node)
+      if (typeof data.el._overflowCleanup === 'function') data.el._overflowCleanup();
+      if (data.el.parentElement) data.el.parentElement.removeChild(data.el);
+    }
+    if (data.overflowBtn?.parentElement) {
+      data.overflowBtn.parentElement.removeChild(data.overflowBtn);
     }
     if (data.ring3D) {
       if (this._gizmoRingScene) this._gizmoRingScene.remove(data.ring3D);
@@ -2303,6 +3176,72 @@ export class Sectioning {
     for (const [planeId] of this._planeGizmos) {
       this._removePlaneGizmo(planeId);
     }
+  }
+
+  // Compute gizmo centroid for a plane, clipping against partner planes when this
+  // is a section-box face so the centroid lands inside the visible box region.
+  _computeGizmoCentroid(planeId) {
+    const planeData = this.clipPlanes.get(planeId);
+    if (!planeData) return null;
+
+    // For box planes the exact centroid is the face centre – no model traversal needed.
+    if (planeData.isBoxPlane) {
+      return planeData.point.clone();
+    }
+
+    // For regular planes compute from model intersection edges.
+    const edges = this._computePlaneIntersection(planeData.plane);
+    if (edges.length === 0) return null;
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+    for (const [p1, p2] of edges) {
+      for (const p of [p1, p2]) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
+      }
+    }
+    return new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+  }
+
+  // Compute planeBounds2D for a box face directly from box geometry.
+  // The face rectangle is defined by the two tangent axes and their half-extents —
+  // no model traversal required, so it's always correct and instant.
+  _computeBoxFaceBounds2D(planeId) {
+    if (!this._boxState) return null;
+    const planeData = this.clipPlanes.get(planeId);
+    if (!planeData || !planeData.isBoxPlane) return null;
+
+    const { halfExtents, quaternion } = this._boxState;
+
+    // The 3 local box axes in world space.
+    const axes = [
+      new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion),
+      new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion),
+      new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion),
+    ];
+    const halves = [halfExtents.x, halfExtents.y, halfExtents.z];
+
+    // Find which axis aligns with the face normal (the one perpendicular to the face).
+    let normalAxisIdx = 0;
+    let bestDot = -1;
+    for (let i = 0; i < 3; i++) {
+      const d = Math.abs(axes[i].dot(planeData.normal));
+      if (d > bestDot) { bestDot = d; normalAxisIdx = i; }
+    }
+
+    // The two remaining axes are the face tangents.
+    const tangentIndices = [0, 1, 2].filter(i => i !== normalAxisIdx);
+    const tangent   = axes[tangentIndices[0]];
+    const bitangent = axes[tangentIndices[1]];
+    const halfT  = halves[tangentIndices[0]];
+    const halfBT = halves[tangentIndices[1]];
+
+    const refU = planeData.point.dot(tangent);
+    const refV = planeData.point.dot(bitangent);
+
+    return { tangent, bitangent, minU: refU - halfT, maxU: refU + halfT, minV: refV - halfBT, maxV: refV + halfBT };
   }
 
   _computeCrossSectionCentroid(clipPlane) {
@@ -2331,6 +3270,27 @@ export class Sectioning {
   // expressed in local (tangent, bitangent) coordinates. Returns null if no
   // intersection edges exist. Used to clamp the camera-following gizmo position
   // so it never floats outside the actual cut face.
+  _computeCrossSectionBoundsFromEdges(edges, normal) {
+    if (!edges || edges.length === 0) return null;
+    const tangent = new THREE.Vector3();
+    if (Math.abs(normal.x) < 0.9) {
+      tangent.crossVectors(normal, new THREE.Vector3(1, 0, 0)).normalize();
+    } else {
+      tangent.crossVectors(normal, new THREE.Vector3(0, 1, 0)).normalize();
+    }
+    const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (const [p1, p2] of edges) {
+      for (const p of [p1, p2]) {
+        const u = p.dot(tangent);
+        const v = p.dot(bitangent);
+        if (u < minU) minU = u; if (u > maxU) maxU = u;
+        if (v < minV) minV = v; if (v > maxV) maxV = v;
+      }
+    }
+    return { tangent, bitangent, minU, maxU, minV, maxV };
+  }
+
   _computeCrossSectionBounds(clipPlane, normal) {
     const edges = this._computePlaneIntersection(clipPlane);
     if (edges.length === 0) return null;
@@ -2360,8 +3320,9 @@ export class Sectioning {
   }
 
   _updatePlaneGizmoPositions() {
-    // Only show gizmos while in sectioning mode
-    const isSectioningTool = this.activeTool === 'section-plane' || this.activeTool === 'section-cut';
+    // Show gizmos for section-plane/cut always, and for section-box in drag-face mode.
+    const isSectioningTool = this.activeTool === 'section-plane' || this.activeTool === 'section-cut'
+      || (this.activeTool === 'section-box' && this._boxSubTool === 'drag-face');
     if (!isSectioningTool) return;
 
     const rect = this.domElement.getBoundingClientRect();
@@ -2400,8 +3361,13 @@ export class Sectioning {
       mathPlane.setFromNormalAndCoplanarPoint(planeData.normal, planeData.point);
 
       // Lazily compute and cache 2-D cross-section bounds for this gizmo.
+      // Box planes use exact geometry from the box state — no model traversal needed.
       if (!data.planeBounds2D) {
-        data.planeBounds2D = this._computeCrossSectionBounds(planeData.plane, planeData.normal);
+        if (planeData.isBoxPlane) {
+          data.planeBounds2D = this._computeBoxFaceBounds2D(planeId);
+        } else {
+          data.planeBounds2D = this._computeCrossSectionBounds(planeData.plane, planeData.normal);
+        }
       }
 
       const isDraggingThisPlane = this.isDragging && this.dragPlaneId === planeId;
@@ -2487,6 +3453,14 @@ export class Sectioning {
       data.el.style.left = `${x}px`;
       data.el.style.top = `${y}px`;
 
+      // Keep the overflow button anchored 44px to the right of the gizmo center
+      // in screen space — update every frame so it follows camera movement.
+      if (data.overflowBtn) {
+        data.overflowBtn.style.left = `${x + 44}px`;
+        data.overflowBtn.style.top  = `${y}px`;
+        if (!visible) data.overflowBtn.style.display = 'none';
+      }
+
       // Rotate the DOM arrows to point along the plane normal in screen space
       const nEnd = gizmoWorld.clone().add(planeData.normal);
       const nProj = nEnd.project(this.camera);
@@ -2524,11 +3498,10 @@ export class Sectioning {
             }
           }
 
-          // ── Smooth outer-ring expansion on hover / selected ──────────────
-          // Only the stroke ring and fill ring scale up — arrows + dot stay put.
+          // ── Smooth outer-ring expansion on hover / drag ──────────────────
+          // Only hover and active drag expand the ring — no select state.
           const isHovered  = this._hoveredPlaneId === planeId;
-          const isSelected = this.activeSectionPlaneId === planeId;
-          const targetScale = (isHovered || isSelected || this.isDragging && this.dragPlaneId === planeId) ? 1.22 : 1.0;
+          const targetScale = (isHovered || (this.isDragging && this.dragPlaneId === planeId)) ? 1.22 : 1.0;
           // Lerp toward target (fast in, same speed out for snappiness vs. smoothness)
           data._ringAnimScale = data._ringAnimScale !== undefined
             ? data._ringAnimScale + (targetScale - data._ringAnimScale) * 0.18
@@ -2981,6 +3954,13 @@ export class Sectioning {
       this._dragCumulativeDistance += distance;
     }
 
+    // Keep the section-box visual in sync when a face plane is dragged.
+    // Do NOT invalidate planeBounds2D here — that triggers geometry traversal in
+    // _updatePlaneGizmoPositions every frame. Invalidation happens in onMouseUp.
+    if (this._sectionBoxPlaneSet?.has(planeId)) {
+      this._syncBoxMeshToPlanes();
+    }
+
     this.emit('plane-move', { id: planeId, distance, point: planeData.point.clone() });
   }
 
@@ -2991,6 +3971,32 @@ export class Sectioning {
     const planeData = this.clipPlanes.get(planeId);
     if (!planeData) return;
 
+    // ── Section-box planes: flip the whole box as a unit ───────────────────
+    // Each box plane stores two separate things:
+    //   • planeData.plane  — the THREE.Plane the renderer clips with (negated normal)
+    //   • planeData.normal — the outward visual normal (drives gizmo arrows,
+    //                         face-visibility checks, and drag direction)
+    // Flipping a single plane would break box integrity (inconsistent clip faces).
+    // Instead, negate ALL 6 THREE.Planes together (inverts the clipped volume),
+    // but leave planeData.normal unchanged so every gizmo arrow, face-facing check,
+    // and drag interaction stays correct.
+    if (this._sectionBoxPlaneSet?.has(planeId)) {
+      for (const bpId of this._sectionBoxPlaneSet) {
+        const bp = this.clipPlanes.get(bpId);
+        if (bp) bp.plane.negate();
+      }
+      this.updateRendererClipPlanes();
+      this._pushAction({
+        type: 'flip-plane',
+        undo: () => { this.flipPlane(planeId); },
+        redo: () => { this.flipPlane(planeId); },
+      });
+      this.emit('plane-flip', { id: planeId });
+      this._refreshSectionPlaneActiveVisuals();
+      return;
+    }
+
+    // ── Regular section-plane flip ──────────────────────────────────────────
     planeData.plane.negate();
     planeData.normal.negate();
 
@@ -3182,10 +4188,47 @@ export class Sectioning {
       return;
     }
 
-    // ── Default: existing plane-helper drag logic for section-box etc. ──
+    // ── Section-box interaction ───────────────────────────────────────
+    if (this.activeTool === 'section-box' && this._boxFaceMesh) {
+      // drag-face / rotate: gizmo DOM elements handle the mousedown — nothing here.
+      // Still consume the event so the Selection system doesn't select model elements.
+      if (this._boxSubTool === 'drag-face' || this._boxSubTool === 'rotate') {
+        event.stopPropagation();
+        return;
+      }
+
+      // move: detect click on the box face mesh to begin whole-box drag.
+      this.updateMouse(event);
+      this.raycaster.setFromCamera(this.mouse, this.camera);
+      const hits = this.raycaster.intersectObject(this._boxFaceMesh, false);
+      if (hits.length > 0) {
+        const hit = hits[0];
+
+        if (this._boxSubTool === 'move') {
+          this._isBoxDragging = true;
+          this._boxDragType = 'move';
+          this._boxMoveCumulative.set(0, 0, 0);
+          const cameraDir = new THREE.Vector3();
+          this.camera.getWorldDirection(cameraDir);
+          this._boxDragPlane.setFromNormalAndCoplanarPoint(cameraDir, hit.point);
+          this._boxDragStartPoint.copy(hit.point);
+          this._setCursor('grabbing');
+          event.stopPropagation();
+          event.preventDefault();
+          return;
+        }
+
+        // rotate is now handled by the per-face gizmo DOM elements above.
+      }
+      // Always consume — prevent stray clicks from reaching the Selection system.
+      event.stopPropagation();
+      return;
+    }
+
+    // ── Default: existing plane-helper drag logic ─────────────────────
     const helpers = [];
     this.helpersGroup.traverse(obj => {
-      if (obj.isMesh && obj.userData.isPlaneHelper) {
+      if (obj.isMesh && obj.userData.isPlaneHelper && !obj.userData.isSectionBox) {
         helpers.push(obj);
       }
     });
@@ -3310,6 +4353,50 @@ export class Sectioning {
       } else if (this._tiltHoveredRing) {
         this._unhighlightTiltRing();
       }
+    }
+
+    // ── Section-box move / rotate drag ───────────────────────────────
+    if (this._isBoxDragging && this._boxDragType === 'move') {
+      const intersection = new THREE.Vector3();
+      if (this.raycaster.ray.intersectPlane(this._boxDragPlane, intersection)) {
+        const delta = intersection.clone().sub(this._boxDragStartPoint);
+        if (delta.lengthSq() > 1e-8) {
+          this._translateSectionBox(delta);
+          this._boxMoveCumulative.add(delta);
+          this._boxDragStartPoint.copy(intersection);
+        }
+      }
+      this.clearHoverHighlight();
+      this._setBoxCursor('move');
+      // Prevent orbit controls from also moving the camera during box drag.
+      event.stopPropagation();
+      event.preventDefault();
+      return;
+    }
+
+    if (this._isBoxDragging && this._boxDragType === 'rotate') {
+      const dx = event.clientX - this._boxDragStartClientX;
+      const dy = event.clientY - this._boxDragStartClientY;
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+        {
+          // Y-axis spin only — drag right = CW from above, drag left = CCW.
+          // Camera-independent so direction is always predictable.
+          const angleY = dx * 0.008;
+          const dqY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angleY);
+          this._boxState.quaternion.premultiply(dqY);
+          this._boxRotateCumulative += angleY;
+        }
+        this._syncBoxPlanesToState();
+        if (this._boxFaceMesh) this._boxFaceMesh.quaternion.copy(this._boxState.quaternion);
+        if (this._boxEdgeMesh) this._boxEdgeMesh.quaternion.copy(this._boxState.quaternion);
+        this._boxDragStartClientX = event.clientX;
+        this._boxDragStartClientY = event.clientY;
+      }
+      this.clearHoverHighlight();
+      // Prevent orbit controls from also rotating the camera during box rotate.
+      event.stopPropagation();
+      event.preventDefault();
+      return;
     }
 
     // ── Existing plane-helper drag ──
@@ -3452,6 +4539,22 @@ export class Sectioning {
       return;
     }
 
+    // ── Section-box hover ─────────────────────────────────────────────
+    if (this.activeTool === 'section-box') {
+      // drag-face / rotate: gizmo DOM elements own the cursor — nothing to do here.
+      if (this._boxSubTool === 'drag-face' || this._boxSubTool === 'rotate') return;
+
+      // Always suppress model hover/select highlights in move mode —
+      // the transparent box would otherwise let the system highlight model geometry
+      // behind it, which appears as a spurious hover/select state to the user.
+      this.clearHoverHighlight();
+      this.clearPlaneHoverMarker();
+
+      const overBox = intersects.some(h => h.object === this._boxFaceMesh);
+      this._setBoxCursor(overBox ? this._boxSubTool : null);
+      return;
+    }
+
     // Default hover for other tools
     this.clearHoverHighlight();
     this._setCursor(intersects.length > 0 ? 'pointer' : '');
@@ -3507,6 +4610,49 @@ export class Sectioning {
       this.emit('drag-end');
       return;
     }
+
+    // ── Section-box move / rotate drag end ───────────────────────────
+    if (this._isBoxDragging) {
+      const dragType = this._boxDragType;
+      const moveDelta = this._boxMoveCumulative.clone();
+      const rotateAngle = this._boxRotateCumulative;
+
+      this._isBoxDragging = false;
+      this._boxDragType = null;
+      this._boxMoveCumulative.set(0, 0, 0);
+      this._boxRotateCumulative = 0;
+
+      if (dragType === 'move' && moveDelta.lengthSq() > 1e-8) {
+        this._pushAction({
+          type: 'box-move',
+          undo: () => { this._translateSectionBox(moveDelta.clone().negate()); },
+          redo: () => { this._translateSectionBox(moveDelta); },
+        });
+      } else if (dragType === 'rotate') {
+        const beforeQuat = this._boxRotateStartQuat;
+        const afterQuat  = this._boxState.quaternion.clone();
+        // Only record if the box actually moved.
+        if (beforeQuat && !beforeQuat.equals(afterQuat)) {
+          this._pushAction({
+            type: 'box-rotate',
+            undo: () => { this._applyBoxQuaternion(beforeQuat); },
+            redo: () => { this._applyBoxQuaternion(afterQuat); },
+          });
+        }
+        this._boxRotateStartQuat = null;
+        this._rotatePinnedCornerSigns = null;  // release corner pin on mouse up
+      }
+
+      // Refresh all 6 gizmo centroids to the new plane positions so they
+      // follow the box after a whole-box move or rotate.
+      this._refreshBoxGizmoCentroids();
+
+      this._setBoxCursor(null);
+      this._setCursor('');
+      this.emit('drag-end');
+      return;
+    }
+
     if (this.isDragging) {
       const draggedPlaneId = this.dragPlaneId;
       const totalDist = this._dragCumulativeDistance || 0;
@@ -3560,9 +4706,23 @@ export class Sectioning {
           // Invalidate cached 2D bounds so they're recomputed at the new plane position
           gizmoData.planeBounds2D = null;
         }
-        // Restore pointer cursor on the gizmo element
+        // For box-plane drags: refresh centroids for the other 5 faces now that
+        // the plane has settled. Done once here (not per-frame) to avoid expense.
+        const draggedPd = this.clipPlanes.get(draggedPlaneId);
+        if (draggedPd?.isBoxPlane && this._sectionBoxPlaneSet) {
+          for (const id of this._sectionBoxPlaneSet) {
+            if (id === draggedPlaneId) continue;
+            const gd = this._planeGizmos.get(id);
+            if (gd) {
+              const refreshed = this._computeGizmoCentroid(id);
+              if (refreshed) gd.centroid = refreshed;
+              gd.planeBounds2D = null;
+            }
+          }
+        }
+        // Restore grab cursor on the gizmo element
         const g = this._planeGizmos.get(draggedPlaneId);
-        if (g?.el) g.el.style.cursor = 'pointer';
+        if (g?.el) g.el.style.cursor = 'grab';
       }
       this.clearPlaneHoverMarker();
       this._setCursor('');

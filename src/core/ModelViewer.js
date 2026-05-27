@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { SceneManager } from './SceneManager.js';
 import { IFCLoader } from './IFCLoader.js';
 import { Navigation } from '../features/Navigation.js';
@@ -114,9 +115,14 @@ export class ModelViewer {
       this.setupContextMenuEvents();
 
       this.sectioning.onToolChange((tool) => {
-        const disableSelection = tool === 'section-cut' || tool === 'section-plane';
+        const disableSelection = tool === 'section-cut' || tool === 'section-plane' || tool === 'section-box';
         this.selection.setHoverEnabled(!disableSelection);
         this.selection.setSelectionEnabled(!disableSelection);
+        // Clear any existing selection so highlighted elements don't persist
+        // when entering a sectioning mode.
+        if (disableSelection) {
+          this.selection.deselect();
+        }
       });
 
       // Create UI
@@ -335,13 +341,37 @@ export class ModelViewer {
       }
     });
 
+    // Isolate object — hide all others, show only this one
+    this.contextMenu.on('isolateObject', (context) => {
+      if (context && context.elementId) {
+        this.visibility.isolate([context.elementId]);
+      }
+    });
+
+    // Isolate in X-Ray — same visibility behaviour; x-ray overlay is a future enhancement
     this.contextMenu.on('isolateXray', (context) => {
       if (context && context.elementId) {
-        // Real isolate behavior available today.
         this.visibility.isolate([context.elementId]);
-        // TODO: add dedicated x-ray mode overlay pass for isolate workflow.
-        console.log('[ContextMenu] TODO: Isolate in X-Ray visual mode is not implemented yet');
+        console.log('[ContextMenu] TODO: X-Ray visual overlay not yet implemented');
       }
+    });
+
+    // Isolate in section box — fit a section box around the object and enter sectioning mode
+    this.contextMenu.on('isolateInSectionBox', (context) => {
+      if (!context?.mesh) return;
+      const box = new THREE.Box3().setFromObject(context.mesh);
+      if (box.isEmpty()) return;
+      const center     = box.getCenter(new THREE.Vector3());
+      const size       = box.getSize(new THREE.Vector3());
+      // 25 % padding on each side so the object isn't flush against the faces
+      const halfExtents = size.clone().multiplyScalar(0.625);
+      // setActiveTool must come first so helpersGroup.visible = true before the
+      // box mesh is added — otherwise the group is hidden and nothing shows.
+      this.sectioning.clearAll();
+      this.sectioning.setActiveTool('section-box');
+      this.sectioning.activateSectionBox({ center, halfExtents });
+      this.sectioning.setBoxSubTool('move');
+      this.emit('isolate-in-section-box', {});
     });
 
     this.contextMenu.on('viewProperties', (context) => {

@@ -35,15 +35,17 @@ function PanelSearchBar({
   onFilter?: () => void;
 }) {
   return (
-    <div className="flex items-center w-full h-7 rounded bg-[#EEF0F1] pl-3 pr-2 gap-1">
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="flex-1 min-w-0 bg-transparent text-sm text-[#111827] placeholder-[#6B7785] outline-none"
-      />
-      <img src={searchFieldIcon} alt="" width={24} height={24} className="shrink-0" />
+    <div className="flex items-center gap-2 w-full">
+      <div className="flex items-center flex-1 h-7 rounded bg-[#EEF0F1] pl-3 pr-2 gap-1">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="flex-1 min-w-0 bg-transparent text-sm text-[#111827] placeholder-[#6B7785] outline-none"
+        />
+        <img src={searchFieldIcon} alt="" width={24} height={24} className="shrink-0" />
+      </div>
       {onFilter && (
         <button
           type="button"

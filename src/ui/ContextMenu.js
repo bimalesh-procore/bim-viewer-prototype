@@ -36,9 +36,20 @@ export class ContextMenu {
       <div class="mv-context-menu-item" data-action="selectSimilar">
         <span>Select Similar</span>
       </div>
-      <div class="mv-context-menu-item" data-action="isolateXray">
+      <div class="mv-context-menu-item mv-context-menu-item--has-sub" data-action="isolate-parent">
         <span>Isolate</span>
         <span class="mv-context-menu-chevron">›</span>
+        <div class="mv-context-submenu mv-hidden">
+          <div class="mv-context-menu-item" data-action="isolateObject">
+            <span>Isolate object</span>
+          </div>
+          <div class="mv-context-menu-item" data-action="isolateXray">
+            <span>Isolate in X-Ray</span>
+          </div>
+          <div class="mv-context-menu-item" data-action="isolateInSectionBox">
+            <span>Isolate in section box</span>
+          </div>
+        </div>
       </div>
       <div class="mv-context-menu-item" data-action="viewProperties">
         <span>View Properties</span>
@@ -50,7 +61,7 @@ export class ContextMenu {
         <span>Add section plane</span>
       </div>
       <div class="mv-context-menu-item" data-action="linkExistingIssue">
-        <span>Link to existing issue</span>
+        <span>Link to existing item</span>
       </div>
     `;
 
@@ -59,9 +70,30 @@ export class ContextMenu {
   }
 
   setupEvents() {
-    // Menu item clicks
+    // Submenu hover — show on parent enter, hide with delay on leave
+    const parentItem = this.menu.querySelector('.mv-context-menu-item--has-sub');
+    const submenu = parentItem?.querySelector('.mv-context-submenu');
+    if (parentItem && submenu) {
+      let hideTimer = null;
+      const showSub = () => {
+        clearTimeout(hideTimer);
+        submenu.classList.remove('mv-hidden');
+      };
+      const hideSub = () => {
+        hideTimer = setTimeout(() => submenu.classList.add('mv-hidden'), 120);
+      };
+      parentItem.addEventListener('mouseenter', showSub);
+      parentItem.addEventListener('mouseleave', hideSub);
+      submenu.addEventListener('mouseenter', showSub);
+      submenu.addEventListener('mouseleave', hideSub);
+    }
+
+    // Clicks on all menu items (including inside submenu)
     this.menu.querySelectorAll('.mv-context-menu-item').forEach(item => {
+      // The parent "Isolate" row itself should not fire an action on click
+      if (item.dataset.action === 'isolate-parent') return;
       item.addEventListener('click', (e) => {
+        e.stopPropagation();
         const action = item.dataset.action;
         this.handleAction(action);
         this.hide();
@@ -131,7 +163,10 @@ export class ContextMenu {
     const sectionPlaneItem = this.menu.querySelector('[data-action="addSectionPlane"]');
     const hideItem = this.menu.querySelector('[data-action="hideSelected"]');
     const similarItem = this.menu.querySelector('[data-action="selectSimilar"]');
-    const isolateItem = this.menu.querySelector('[data-action="isolateXray"]');
+    const isolateParent   = this.menu.querySelector('[data-action="isolate-parent"]');
+    const isolateObject   = this.menu.querySelector('[data-action="isolateObject"]');
+    const isolateXray     = this.menu.querySelector('[data-action="isolateXray"]');
+    const isolateSection  = this.menu.querySelector('[data-action="isolateInSectionBox"]');
     const propsItem = this.menu.querySelector('[data-action="viewProperties"]');
 
     if (title) {
@@ -151,7 +186,7 @@ export class ContextMenu {
 
     // Remaining actions require an element
     const hasElement = context && context.elementId;
-    [hideItem, similarItem, isolateItem, propsItem].forEach(item => {
+    [hideItem, similarItem, isolateParent, isolateObject, isolateXray, isolateSection, propsItem].forEach(item => {
       if (item) {
         item.classList.toggle('disabled', !hasElement);
       }

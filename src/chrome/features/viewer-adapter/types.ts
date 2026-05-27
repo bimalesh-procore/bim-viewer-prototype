@@ -125,6 +125,7 @@ export interface ViewerAdapter {
   setActiveSectioningTool?(
     tool: 'section-plane' | 'section-box' | 'section-cut' | null,
   ): void;
+  setSectionBoxSubTool?(tool: 'drag-face' | 'move' | 'rotate'): void;
   clearSectioningPlanes?(): void;
   isSectioningActive?(): boolean;
   setSectioningActive?(active: boolean): void;
@@ -220,4 +221,7 @@ export interface ViewerAdapter {
   setMarkupTool?(tool: string | null): void;
   setMarkupColor?(color: string): void;
   getMarkupColor?(): string;
+
+  // ── Isolate in section box ────────────────────────────────────────────────
+  subscribeIsolateInSectionBox?(listener: () => void): () => void;
 }

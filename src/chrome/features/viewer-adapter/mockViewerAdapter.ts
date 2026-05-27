@@ -61,6 +61,9 @@ export const mockViewerAdapter: ViewerAdapter = {
   setActiveSectioningTool(tool) {
     log('setActiveSectioningTool', tool);
   },
+  setSectionBoxSubTool(tool) {
+    log('setSectionBoxSubTool', tool);
+  },
   clearSectioningPlanes() {
     log('clearSectioningPlanes');
   },

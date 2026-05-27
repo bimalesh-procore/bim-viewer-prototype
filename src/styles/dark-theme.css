@@ -538,7 +538,18 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
   z-index: 200;
   padding: 0;
+  /* overflow must be visible so the Isolate submenu can fly out */
+  overflow: visible;
+}
+
+/* Clip the first and last rows so they still look rounded */
+.mv-context-menu > .mv-context-menu-header {
+  border-radius: 8px 8px 0 0;
   overflow: hidden;
+}
+.mv-context-menu > .mv-context-menu-item:first-of-type,
+.mv-context-menu > .mv-context-menu-item:last-of-type {
+  border-radius: 0;
 }
 
 .mv-context-menu-header {

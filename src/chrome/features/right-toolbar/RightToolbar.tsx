@@ -2,7 +2,7 @@ import { RightToolbarGroup } from './RightToolbarGroup';
 import { RightToolbarButton } from './RightToolbarButton';
 import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import type { ActionHistorySummary } from '../viewer-adapter/types';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MoreVertical } from 'lucide-react';
 import orthographicIcon from '../../assets/icons/right-toolbar/orthographic.svg';
 import perspectiveIcon from '../../assets/icons/right-toolbar/perspective.svg';
@@ -15,9 +15,11 @@ import sectioningIcon from '../../assets/icons/right-toolbar/sectioning.svg';
 import sectionBoxIcon from '../../assets/icons/right-toolbar/section-box.svg';
 import sectionPlaneIcon from '../../assets/icons/right-toolbar/section-plane.svg';
 import sectionCutIcon from '../../assets/icons/right-toolbar/section-cut.svg';
-import sectionFlipIcon from '../../assets/icons/right-toolbar/section-flip.svg';
-import sectionDeleteIcon from '../../assets/icons/right-toolbar/section-delete.svg';
+import sectionBoxDragFaceIcon from '../../assets/icons/right-toolbar/section-box-drag-face.svg';
+import sectionBoxMoveIcon from '../../assets/icons/right-toolbar/section-box-move.png';
+import sectionBoxRotateIcon from '../../assets/icons/right-toolbar/section-box-rotate.svg';
 import resetIcon from '../../assets/icons/right-toolbar/reset.svg';
+import saveIcon from '../../assets/icons/right-toolbar/save.svg';
 import undoIcon from '../../assets/icons/right-toolbar/undo.svg';
 import redoIcon from '../../assets/icons/right-toolbar/redo.svg';
 import markupSelectIcon from '../../assets/icons/right-toolbar/markup-select.svg';
@@ -51,9 +53,7 @@ export function RightToolbar() {
   });
   const [activeMeasureTool, setActiveMeasureTool] = useState<'dimensions' | 'point-to-point' | 'laser' | 'manhole' | 'coordinates' | null>(null);
   const [activeSectionTool, setActiveSectionTool] = useState<'section-box' | 'section-plane' | 'section-cut' | null>(null);
-  const [hasActiveSectionPlane, setHasActiveSectionPlane] = useState(
-    () => adapter.hasActiveSectionPlane?.() ?? false,
-  );
+  const [activeSectionBoxSubTool, setActiveSectionBoxSubTool] = useState<'drag-face' | 'move' | 'rotate'>('move');
   const [activeMarkupTool, setActiveMarkupTool] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [markupColor, setMarkupColor] = useState('#FF0000');
@@ -72,12 +72,49 @@ export function RightToolbar() {
       markupsCount: 0, measurementsCount: 0,
     },
   );
+  const [saveBadgeCount, setSaveBadgeCount] = useState<number | null>(null);
+  const historySnapshot = useRef<ActionHistorySummary | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const saveBadgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (saveBadgeCount !== null) {
+      if (saveBadgeTimer.current) clearTimeout(saveBadgeTimer.current);
+      saveBadgeTimer.current = setTimeout(() => setSaveBadgeCount(null), 3000);
+    }
+    return () => {
+      if (saveBadgeTimer.current) clearTimeout(saveBadgeTimer.current);
+    };
+  }, [saveBadgeCount]);
 
   const exitMarkupIfActive = () => {
     if (adapter.isMarkupModeActive?.()) {
       adapter.exitMarkupMode?.(true);
       setActiveMarkupTool(null);
     }
+  };
+
+  const setSectionBoxSubTool = (tool: 'drag-face' | 'move' | 'rotate') => {
+    setActiveSectionBoxSubTool(tool);
+    adapter.setSectionBoxSubTool?.(tool);
+  };
+
+  const snapshotHistory = () => {
+    historySnapshot.current = adapter.getActionHistory?.() ?? actionHistory;
+  };
+
+  const triggerSaveBadge = () => {
+    const snap = historySnapshot.current;
+    const current = adapter.getActionHistory?.() ?? actionHistory;
+    if (!snap) return;
+    const delta =
+      (current.sectioningCount - snap.sectioningCount) +
+      (current.hiddenObjectsCount - snap.hiddenObjectsCount) +
+      (current.isolateCount - snap.isolateCount) +
+      (current.markupsCount - snap.markupsCount) +
+      (current.measurementsCount - snap.measurementsCount);
+    if (delta > 0) setSaveBadgeCount(delta);
+    historySnapshot.current = null;
   };
 
   useEffect(() => {
@@ -133,19 +170,26 @@ export function RightToolbar() {
     return () => unsubscribe?.();
   }, [adapter]);
 
-  useEffect(() => {
-    const unsubscribe = adapter.subscribeActiveSectionPlane?.(setHasActiveSectionPlane);
-    if (!unsubscribe) {
-      setHasActiveSectionPlane(adapter.hasActiveSectionPlane?.() ?? false);
-    }
-    return () => unsubscribe?.();
-  }, [adapter]);
 
   useEffect(() => {
     const unsubscribe = adapter.subscribeRequestEditPlane?.((tool) => {
       exitMarkupIfActive();
       setActiveMode('sectioning');
       setActiveSectionTool(tool);
+      setOpenFlyout(null);
+    });
+    return () => unsubscribe?.();
+  }, [adapter]);
+
+  useEffect(() => {
+    // When the context menu's "Isolate in section box" is clicked the engine
+    // already positioned the section box and updated adapter state; we just
+    // need to switch the React UI into section-box / move-sub-tool mode.
+    const unsubscribe = adapter.subscribeIsolateInSectionBox?.(() => {
+      exitMarkupIfActive();
+      setActiveMode('sectioning');
+      setActiveSectionTool('section-box');
+      setActiveSectionBoxSubTool('move');
       setOpenFlyout(null);
     });
     return () => unsubscribe?.();
@@ -159,31 +203,38 @@ export function RightToolbar() {
 
       if (sourceId === 'mode:markup') {
         const viewId = (detail as { viewId?: string })?.viewId;
+        snapshotHistory();
         enterMarkup(viewId ?? undefined);
         setOpenFlyout(null);
         return;
       }
       if (sourceId === 'mode:measure') {
+        snapshotHistory();
         setActiveMode('measure');
         setActiveMeasureTool('dimensions');
         setOpenFlyout(null);
         return;
       }
       if (sourceId === 'mode:create') {
+        snapshotHistory();
         setActiveMode('create');
         setOpenFlyout(null);
         return;
       }
       if (sourceId === 'mode:sectioning') {
+        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-plane');
+        setActiveSectionTool('section-box');
+        setActiveSectionBoxSubTool('move');
         setOpenFlyout(null);
         adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-plane');
+        adapter.setActiveSectioningTool?.('section-box');
+        adapter.setSectionBoxSubTool?.('move');
         return;
       }
       if (sourceId === 'sectioning:section-box') {
+        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
         setActiveSectionTool('section-box');
@@ -193,6 +244,7 @@ export function RightToolbar() {
         return;
       }
       if (sourceId === 'sectioning:section-plane') {
+        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
         setActiveSectionTool('section-plane');
@@ -202,6 +254,7 @@ export function RightToolbar() {
         return;
       }
       if (sourceId === 'sectioning:section-cut') {
+        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
         setActiveSectionTool('section-cut');
@@ -219,6 +272,19 @@ export function RightToolbar() {
     window.addEventListener('mv:activate-right-tool', handler);
     return () => window.removeEventListener('mv:activate-right-tool', handler);
   }, [adapter]);
+
+  // Close any open flyout when the user clicks outside the toolbar.
+  useEffect(() => {
+    if (openFlyout === null && !isOverflowOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
+        setOpenFlyout(null);
+        setIsOverflowOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown, { capture: true });
+    return () => document.removeEventListener('pointerdown', onPointerDown, { capture: true });
+  }, [openFlyout, isOverflowOpen]);
 
   const TopDefaultButtons = ({ showTooltip }: { showTooltip: boolean }) => (
     <>
@@ -363,24 +429,24 @@ export function RightToolbar() {
       src: markupIcon,
       label: 'Markup',
       shortcut: 'P P',
-      onClick: () => enterMarkup(),
-      enterMode: () => enterMarkup(),
+      onClick: () => { snapshotHistory(); enterMarkup(); },
+      enterMode: () => { snapshotHistory(); enterMarkup(); },
     },
     {
       id: 'measure' as const,
       src: measureIcon,
       label: 'Measure',
       shortcut: 'M M',
-      onClick: () => setOpenFlyout((prev) => (prev === 'measure' ? null : 'measure')),
-      enterMode: () => { setActiveMode('measure'); setActiveMeasureTool('dimensions'); adapter.toggleMeasureTool?.(); },
+      onClick: () => { snapshotHistory(); setOpenFlyout((prev) => (prev === 'measure' ? null : 'measure')); },
+      enterMode: () => { snapshotHistory(); setActiveMode('measure'); setActiveMeasureTool('dimensions'); adapter.toggleMeasureTool?.(); },
     },
     {
       id: 'create' as const,
       src: quickCreateIcon,
       label: 'Create Item',
       shortcut: 'C C',
-      onClick: () => setOpenFlyout((prev) => (prev === 'create' ? null : 'create')),
-      enterMode: () => setActiveMode('create'),
+      onClick: () => { snapshotHistory(); setOpenFlyout((prev) => (prev === 'create' ? null : 'create')); },
+      enterMode: () => { snapshotHistory(); setActiveMode('create'); },
     },
     {
       id: 'sectioning' as const,
@@ -388,19 +454,25 @@ export function RightToolbar() {
       label: 'Sectioning',
       shortcut: 'X X',
       onClick: () => {
+        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-plane');
+        setActiveSectionTool('section-box');
+        setActiveSectionBoxSubTool('move');
         setOpenFlyout(null);
         adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-plane');
+        adapter.setActiveSectioningTool?.('section-box');
+        adapter.setSectionBoxSubTool?.('move');
       },
       enterMode: () => {
+        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-plane');
+        setActiveSectionTool('section-box');
+        setActiveSectionBoxSubTool('move');
         adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-plane');
+        adapter.setActiveSectioningTool?.('section-box');
+        adapter.setSectionBoxSubTool?.('move');
       },
     },
   ];
@@ -590,6 +662,45 @@ export function RightToolbar() {
             isActive={openFlyout === 'history'}
             onClick={() => setOpenFlyout(prev => prev === 'history' ? null : 'history')}
           />
+          {saveBadgeCount !== null && (
+            <div
+              key={saveBadgeCount}
+              aria-label={`${saveBadgeCount} modifications saved`}
+              className="pointer-events-none absolute top-[8px] right-full -mr-2 z-[240]"
+              style={{
+                animation: 'mv-badge-pop 0.25s cubic-bezier(0.34,1.56,0.64,1) both, mv-badge-fade 0.4s ease-in 2.6s both',
+              }}
+            >
+              <div
+                className="flex items-center bg-[#FF5100] text-white rounded-[10px]"
+                style={{ padding: '2px 8px', gap: 0 }}
+              >
+                <span
+                  style={{
+                    fontFamily: 'Inter, sans-serif',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    lineHeight: '16px',
+                    letterSpacing: '0.25px',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {saveBadgeCount}
+                </span>
+                <span
+                  style={{
+                    fontFamily: 'Inter, sans-serif',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    lineHeight: '16px',
+                    letterSpacing: '0.25px',
+                  }}
+                >
+                  +
+                </span>
+              </div>
+            </div>
+          )}
           {openFlyout === 'history' && (
             <div
               className="absolute right-full top-0 mr-2 z-[230] w-max"
@@ -623,6 +734,7 @@ export function RightToolbar() {
 
   return (
     <div
+      ref={toolbarRef}
       className={`absolute right-2 top-2 flex flex-col gap-2 ${
         activeMode === 'default' ? 'z-20' : 'z-[220]'
       }`}
@@ -631,8 +743,9 @@ export function RightToolbar() {
     >
       {activeMode === 'default' ? defaultToolbar : (
         <>
-          {/* Exit group */}
+          {/* Exit group — checkmark saves, X clears and exits */}
           <RightToolbarGroup>
+            {/* Save and exit */}
             <button
               type="button"
               aria-label="Save and exit"
@@ -646,22 +759,53 @@ export function RightToolbar() {
                   adapter.setActiveSectioningTool?.(null);
                   adapter.setSectioningActive?.(false);
                 }
+                triggerSaveBadge();
                 setActiveMode('default');
                 setIsOverflowOpen(false);
                 setActiveMeasureTool(null);
                 setActiveSectionTool(null);
               }}
-              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#E3E6E8] hover:bg-[#D6DADC]"
+              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#D4EDDA] hover:bg-[#C3E6CB]"
             >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <g transform="translate(3 3)">
-                  <path d="M11.3686 9.00025L18.0003 2.36856L15.6317 0L9 6.63169L2.36856 0.000253665L0 2.36881L6.63144 9.00025L0 15.6317L2.36856 18.0003L9 11.3688L15.6317 18.0005L18.0003 15.6319L11.3686 9.00025Z" fill="#232729"/>
-                </g>
-              </svg>
+              <img src={saveIcon} width={24} height={24} alt="" aria-hidden="true" />
               {showTooltips && (
                 <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left" aria-hidden="true">
                   <span className="mv-toolbar-tooltip-shortcut">Enter</span>
                   <span className="mv-toolbar-tooltip-label">Save and exit</span>
+                </div>
+              )}
+            </button>
+            {/* Clear and exit */}
+            <button
+              type="button"
+              aria-label="Clear and exit"
+              onClick={() => {
+                if (activeMode === 'markup' || activeMode === 'create') {
+                  adapter.exitMarkupMode?.(false);
+                  setActiveMarkupTool(null);
+                }
+                if (activeMode === 'sectioning') {
+                  // Clear all section planes/box before deactivating
+                  adapter.clearSectioningPlanes?.();
+                  adapter.setActiveSectioningTool?.(null);
+                  adapter.setSectioningActive?.(false);
+                }
+                setActiveMode('default');
+                setIsOverflowOpen(false);
+                setActiveMeasureTool(null);
+                setActiveSectionTool(null);
+              }}
+              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#F8D7DA] hover:bg-[#F5C6C6]"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <g transform="translate(3 3)">
+                  <path d="M11.3686 9.00025L18.0003 2.36856L15.6317 0L9 6.63169L2.36856 0.000253665L0 2.36881L6.63144 9.00025L0 15.6317L2.36856 18.0003L9 11.3688L15.6317 18.0005L18.0003 15.6319L11.3686 9.00025Z" fill="#842029"/>
+                </g>
+              </svg>
+              {showTooltips && (
+                <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left" aria-hidden="true">
+                  <span className="mv-toolbar-tooltip-shortcut">Esc</span>
+                  <span className="mv-toolbar-tooltip-label">Clear and exit</span>
                 </div>
               )}
             </button>
@@ -671,32 +815,38 @@ export function RightToolbar() {
           {activeMode === 'sectioning' ? (
             <>
               <RightToolbarGroup>
-                <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-box'} onClick={() => { setActiveSectionTool('section-box'); adapter.setActiveSectioningTool?.('section-box'); }} />
+                <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-box'} onClick={() => { setActiveSectionTool('section-box'); setActiveSectionBoxSubTool('move'); adapter.setActiveSectioningTool?.('section-box'); adapter.setSectionBoxSubTool?.('move'); }} />
                 <RightToolbarButton src={sectionPlaneIcon} label="Section plane" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-plane'} onClick={() => { setActiveSectionTool('section-plane'); adapter.setActiveSectioningTool?.('section-plane'); }} />
                 <RightToolbarButton src={sectionCutIcon} label="Section cut" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-cut'} onClick={() => { setActiveSectionTool('section-cut'); adapter.setActiveSectioningTool?.('section-cut'); }} />
               </RightToolbarGroup>
-              {/* Plane actions — separate group, only for plane-based tools.
-                  Disabled until a plane is in edit state. */}
-              {(activeSectionTool === 'section-plane' || activeSectionTool === 'section-cut') && (
+
+              {/* Section-box sub-tools */}
+              {activeSectionTool === 'section-box' && (
                 <RightToolbarGroup>
                   <RightToolbarButton
-                    src={sectionFlipIcon}
-                    label="Flip plane"
-                    shortcut="F"
+                    src={sectionBoxMoveIcon}
+                    label="Move box"
                     showTooltip={showTooltips}
-                    disabled={!hasActiveSectionPlane}
-                    onClick={() => adapter.flipActiveSectionPlane?.()}
+                    isActive={activeSectionBoxSubTool === 'move'}
+                    onClick={() => setSectionBoxSubTool('move')}
                   />
                   <RightToolbarButton
-                    src={sectionDeleteIcon}
-                    label="Delete plane"
-                    shortcut="Del"
+                    src={sectionBoxDragFaceIcon}
+                    label="Drag face"
                     showTooltip={showTooltips}
-                    disabled={!hasActiveSectionPlane}
-                    onClick={() => adapter.deleteActiveSectionPlane?.()}
+                    isActive={activeSectionBoxSubTool === 'drag-face'}
+                    onClick={() => setSectionBoxSubTool('drag-face')}
+                  />
+                  <RightToolbarButton
+                    src={sectionBoxRotateIcon}
+                    label="Rotate box"
+                    showTooltip={showTooltips}
+                    isActive={activeSectionBoxSubTool === 'rotate'}
+                    onClick={() => setSectionBoxSubTool('rotate')}
                   />
                 </RightToolbarGroup>
               )}
+
             </>
           ) : activeMode === 'measure' ? (
             <RightToolbarGroup>

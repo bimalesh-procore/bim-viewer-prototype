@@ -65,10 +65,12 @@ interface ModelViewerInstance {
     setActiveTool(tool: 'section-plane' | 'section-box' | 'section-cut' | null): void;
     activateSectionBox(): void;
     clearSectionBox(): void;
+    hasSectionBox(): boolean;
     clearAll(): void;
     flipActivePlane(): boolean;
     deleteActivePlane(): boolean;
     setPlaneContextMenuOpen(open: boolean): void;
+    setBoxSubTool(tool: 'drag-face' | 'move' | 'rotate'): void;
     activeSectionPlaneId: string | null;
     undo(): void;
     redo(): void;
@@ -476,6 +478,20 @@ export function createModelViewerAdapter(
   viewer.sectioning.on('planes-clear', () => emitActionHistory());
   viewer.sectioning.on('section-box-activate', () => emitActionHistory());
 
+  // Isolate in section box — wire ModelViewer event into adapter subscriptions.
+  // The engine has already positioned the section box; we update adapter state
+  // so subsequent setSectioningActive / setSectionBoxSubTool calls work correctly
+  // without re-creating the box.
+  const isolateInSectionBoxListeners = new Set<() => void>();
+  viewer.on('isolate-in-section-box', () => {
+    // Engine already called setActiveTool('section-box'), activateSectionBox, and
+    // setBoxSubTool('move'). Just sync the adapter's local state and notify React.
+    sectioningActive  = true;
+    activeSectionTool = 'section-box';
+    emitSectioningState();
+    isolateInSectionBoxListeners.forEach(l => l());
+  });
+
   // React to visibility changes
   viewer.visibility.on('visibility-change', () => emitActionHistory());
 
@@ -551,11 +567,20 @@ export function createModelViewerAdapter(
       if (!tool) return;
 
       if (tool === 'section-box') {
-        viewer.sectioning.clearAll();
-        viewer.sectioning.activateSectionBox();
+        if (viewer.sectioning.hasSectionBox()) {
+          // An existing box is already in the scene (e.g. from "Isolate in section box").
+          // Just restore visibility — don't clear and recreate it.
+          viewer.sectioning.setBoxSubTool('move');
+        } else {
+          viewer.sectioning.clearAll();
+          viewer.sectioning.activateSectionBox();
+        }
       } else {
         viewer.sectioning.clearSectionBox();
       }
+    },
+    setSectionBoxSubTool(tool: 'drag-face' | 'move' | 'rotate') {
+      viewer.sectioning.setBoxSubTool(tool);
     },
     clearSectioningPlanes() {
       viewer.sectioning.clearAll();
@@ -1007,6 +1032,10 @@ export function createModelViewerAdapter(
     },
     getMarkupColor() {
       return markupColor;
+    },
+    subscribeIsolateInSectionBox(listener: () => void) {
+      isolateInSectionBoxListeners.add(listener);
+      return () => isolateInSectionBoxListeners.delete(listener);
     },
   };
 }

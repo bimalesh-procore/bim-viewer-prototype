@@ -109,6 +109,32 @@ body,
   color: #111827 !important;
 }
 
+/* Isolate submenu — floats to the left of the parent row */
+.mv-context-menu-item--has-sub {
+  position: relative;
+}
+
+.mv-context-submenu {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  min-width: 180px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  z-index: 1001;
+  padding: 4px 0;
+}
+
+.mv-context-submenu .mv-context-menu-item {
+  padding: 8px 16px;
+  font-size: 14px;
+  color: #374151;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 /* Light-theme and position the tree panel to match the Search Sets panel */
 .mv-panel {
   /* Override dark-theme CSS variables at the panel scope */
@@ -563,6 +589,16 @@ body,
   cursor: none !important;
 }
 
+.model-viewer.mv-cursor-box-move,
+.model-viewer.mv-cursor-box-move canvas {
+  cursor: move !important;
+}
+
+.model-viewer.mv-cursor-box-rotate,
+.model-viewer.mv-cursor-box-rotate canvas {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8' fill='none' stroke='white' stroke-width='2'/%3E%3Ccircle cx='12' cy='12' r='8' fill='none' stroke='black' stroke-width='0.5'/%3E%3Cpath d='M12 4 A8 8 0 1 1 4 12' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M12 4 A8 8 0 1 1 4 12' fill='none' stroke='black' stroke-width='0.5' stroke-linecap='round'/%3E%3Cpolygon points='9,1 13,1 11,5' fill='white'/%3E%3Cpolygon points='9,1 13,1 11,5' fill='none' stroke='black' stroke-width='0.5'/%3E%3C/svg%3E") 12 12, alias !important;
+}
+
 .model-viewer.mv-cursor-orbit,
 .model-viewer.mv-cursor-orbit canvas {
   cursor: url("./assets/cursors/orbit-cursor.svg") 10 10, grab !important;
@@ -585,4 +621,14 @@ html.mv-force-selected-cursor * {
 
 .mv-skeleton-pulse {
   animation: mv-skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes mv-badge-pop {
+  0% { transform: scale(0); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes mv-badge-fade {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
 }

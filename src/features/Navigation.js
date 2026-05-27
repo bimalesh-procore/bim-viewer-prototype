@@ -57,6 +57,25 @@ export class Navigation {
     this.controls.maxDistance = 500;
     this.controls.maxPolarAngle = Math.PI;
 
+    // Left drag = look around (pivot at camera), right drag = orbit (pivot at target), middle drag = pan
+    this.controls.mouseButtons = {
+      LEFT: THREE.MOUSE.ROTATE,
+      MIDDLE: THREE.MOUSE.PAN,
+      RIGHT: THREE.MOUSE.ROTATE,
+    };
+
+    // Left button: free-look — OrbitControls is disabled during the drag and the
+    // camera quaternion is rotated directly so position never moves.
+    this._isLooking = false;
+    this._lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+    this._boundLookMouseDown = this._onLookMouseDown.bind(this);
+    this._boundLookMouseMove = this._onLookMouseMove.bind(this);
+    this._boundLookMouseUp = this._onLookMouseUp.bind(this);
+    this._boundOrbitMouseDown = this._onOrbitMouseDown.bind(this);
+    this.domElement.addEventListener('mousedown', this._boundLookMouseDown);
+    this.domElement.addEventListener('mousedown', this._boundOrbitMouseDown);
+    window.addEventListener('mouseup', this._boundLookMouseUp);
+
     this.controls.addEventListener('change', () => {
       this.emit('camera-change', {
         position: this.camera.position.clone(),
@@ -66,6 +85,56 @@ export class Navigation {
 
     // Start animation loop for controls update
     this.animate();
+  }
+
+  _onOrbitMouseDown(event) {
+    if (event.button !== 2) return;
+    // Always orbit around the point directly in front of the camera (screen center)
+    // at the current orbit distance so the pivot is never off-center.
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    this.controls.target.copy(
+      this.camera.position.clone().addScaledVector(forward, dist)
+    );
+    this.controls.update();
+  }
+
+  _onLookMouseDown(event) {
+    if (event.button !== 0) return;
+    this._isLooking = true;
+    this.controls.enabled = false;
+    this._lookEuler.setFromQuaternion(this.camera.quaternion);
+    window.addEventListener('mousemove', this._boundLookMouseMove);
+  }
+
+  _onLookMouseMove(event) {
+    if (!this._isLooking) return;
+    this._lookEuler.y -= event.movementX * 0.002;
+    this._lookEuler.x -= event.movementY * 0.002;
+    this._lookEuler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this._lookEuler.x));
+    this.camera.quaternion.setFromEuler(this._lookEuler);
+    this.emit('camera-change', {
+      position: this.camera.position.clone(),
+      target: this.controls.target.clone()
+    });
+  }
+
+  _onLookMouseUp(event) {
+    if (event.button !== 0 || !this._isLooking) return;
+    this._isLooking = false;
+    window.removeEventListener('mousemove', this._boundLookMouseMove);
+    // Place the orbit target in front of the camera's new look direction so
+    // right-click orbit immediately pivots around screen center.
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    this.controls.target.copy(
+      this.camera.position.clone().addScaledVector(forward, dist)
+    );
+    this.controls.enabled = true;
+    // Do NOT call controls.update() here — the animate loop will pick up the
+    // corrected target on the next frame without snapping the camera.
   }
 
   animate() {
@@ -84,7 +153,9 @@ export class Navigation {
       this.updateFly(delta);
     }
 
-    if (this.controls) {
+    // Skip while free-looking — OrbitControls.update() rewrites camera
+    // position/orientation every tick and would fight our manual rotation.
+    if (this.controls && !this._isLooking) {
       this.controls.update();
     }
   }
@@ -536,6 +607,13 @@ export class Navigation {
   destroy() {
     this.disableFirstPerson();
     this.disableFly();
+
+    if (this.domElement && this._boundLookMouseDown) {
+      this.domElement.removeEventListener('mousedown', this._boundLookMouseDown);
+      this.domElement.removeEventListener('mousedown', this._boundOrbitMouseDown);
+      window.removeEventListener('mousemove', this._boundLookMouseMove);
+      window.removeEventListener('mouseup', this._boundLookMouseUp);
+    }
 
     if (this.controls) {
       this.controls.dispose();

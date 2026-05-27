@@ -84,7 +84,7 @@ export class Selection {
 
     const meshes = [];
     this.scene.traverse((object) => {
-      if (object.isMesh && object.visible) {
+      if (object.isMesh && object.visible && !object.userData.isPlaneHelper) {
         meshes.push(object);
       }
     });
@@ -422,7 +422,7 @@ export class Selection {
 
     const meshes = [];
     this.scene.traverse((object) => {
-      if (object.isMesh && object.visible) {
+      if (object.isMesh && object.visible && !object.userData.isPlaneHelper) {
         meshes.push(object);
       }
     });

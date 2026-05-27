@@ -230,6 +230,37 @@ The short version:
   The directional light + shadow map are already set up in `SceneManager.js`.
   Mesh `castShadow`/`receiveShadow` flags are set in `IFCLoader.finalizeMeshAfterReveal`.
 
+### 4e. Z-Fighting Mitigation (`IFCLoader.finalizeMeshAfterReveal`)
+
+IFC models routinely contain coplanar geometry (slab + topping + finish at
+the same Y; stud + sheathing + finish in the same vertical plane). Without
+intervention this produces visible jagged crosshatch z-fighting on flat
+surfaces in Default render mode.
+
+The mitigation lives in `finalizeMeshAfterReveal`:
+
+- **Opaque meshes** get a `polygonOffset` whose `polygonOffsetUnits` comes
+  from a stable hash on `mesh.id` into one of `POLY_OFFSET_BUCKETS = 4096`
+  buckets at `step ≈ 0.0623`. This breaks ties between coplanar surfaces.
+- **Transparent meshes** (window glass) have `polygonOffset = false` and
+  rely on Three's normal transparent render-pass depth sort. Applying a
+  large offset here breaks window rendering (black/missing panes).
+
+**Things to know before changing this code:**
+
+- **Do not put back `(revealIndex % 7)` or any low-bucket scheme.** With
+  ~2,500 meshes per model, low bucket counts guarantee coplanar collisions.
+- **Do not apply polygonOffset to transparent materials.** Windows will
+  render black, render in front of the wall, or disappear entirely.
+- **`mesh.id` must be stable across reloads** for the hash buckets to be
+  stable. `@thatopen/fragments` is currently deterministic; if the loader
+  is ever swapped, verify session-to-session consistency.
+
+**Full engineering notes** (history of the investigation, ruled-out
+hypotheses, residual limitations, tier-1 / tier-2 follow-ups if we ever
+want to fully eliminate the residual speckle): see
+[`Z_FIGHTING.md`](./Z_FIGHTING.md).
+
 ### 5. Sync Source (`model-chrome/`)
 - `model-chrome/` is a **read-only reference copy** of the external ModelChrome repository maintained by colleagues.
 - It is periodically updated by pulling from their repo.

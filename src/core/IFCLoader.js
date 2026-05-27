@@ -3,6 +3,29 @@ import * as WEBIFC from 'web-ifc';
 import * as THREE from 'three';
 import { ObjectLoadingState } from '../features/ObjectLoadingState.js';
 
+// Z-fighting mitigation knobs for finalizeMeshAfterReveal. See Z_FIGHTING.md
+// for the full investigation. 4096 buckets keeps the collision probability
+// for a 20-mesh coplanar junction (e.g. a parapet seam) at ~5%, while step
+// = 255/4096 ≈ 0.0623 keeps the max polygonOffset small enough that
+// surfaces never visibly pop in front of where they should be.
+const POLY_OFFSET_BUCKETS = 4096;
+const POLY_OFFSET_MAX_UNITS = 255;
+const POLY_OFFSET_STEP = POLY_OFFSET_MAX_UNITS / POLY_OFFSET_BUCKETS;
+
+// Mulberry32-style integer hash. Stable across reloads for a given mesh.id,
+// so the same coplanar pair always lands in the same buckets (no shimmer
+// between sessions). If two specific meshes collide they always do — the
+// random-hash approach is fundamentally bucket-limited and will leave
+// residual speckle at dense seams. See Z_FIGHTING.md "Future work" for the
+// coplanar-grouping plan that would eliminate this.
+function hashOffsetBucket(id) {
+  let h = ((id | 0) + 0x9e3779b9) | 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h % POLY_OFFSET_BUCKETS;
+}
+
 export class IFCLoader {
   constructor(sceneManager) {
     this.sceneManager = sceneManager;
@@ -387,6 +410,12 @@ export class IFCLoader {
   finalizeMeshAfterReveal(mesh, revealIndex = 0) {
     if (!mesh) return;
 
+    // Per-mesh polygonOffset bucket from a stable hash on mesh.id. This
+    // replaces the older (revealIndex % 7) scheme which only had 7 buckets
+    // and so guaranteed collisions across thousands of meshes — visible as
+    // jagged crosshatch z-fighting on coplanar BIM seams. See Z_FIGHTING.md.
+    const offsetUnits = hashOffsetBucket(mesh.id) * POLY_OFFSET_STEP;
+
     const finalizeMaterial = (material) => {
       const original = material?.userData?.__mvRevealOriginal;
       if (original) {
@@ -411,9 +440,23 @@ export class IFCLoader {
       // the camera is on. This also ensures the raycaster always hits geometry
       // from inside the model, preventing scroll-zoom fallback runaway.
       material.side = THREE.DoubleSide;
-      material.polygonOffset = true;
-      material.polygonOffsetFactor = -1;
-      material.polygonOffsetUnits = (revealIndex % 7) * 0.35;
+
+      // Transparent materials (typically window glass) must NOT receive a
+      // polygonOffset. They go through Three's transparent render pass, which
+      // sorts by depth — non-zero offset scrambles that sort and produces
+      // black/missing window panes. See Z_FIGHTING.md "Transparent skip".
+      const isTransparent =
+        material.transparent === true ||
+        (typeof material.opacity === 'number' && material.opacity < 1);
+      if (isTransparent) {
+        material.polygonOffset = false;
+        material.polygonOffsetFactor = 0;
+        material.polygonOffsetUnits = 0;
+      } else {
+        material.polygonOffset = true;
+        material.polygonOffsetFactor = -1;
+        material.polygonOffsetUnits = offsetUnits;
+      }
       material.needsUpdate = true;
     };
 

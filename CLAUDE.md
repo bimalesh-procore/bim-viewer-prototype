@@ -8,6 +8,25 @@
 - **Lint:** `npm run lint`
 - **Convert IFC → .frag.gz:** `npm run convert <path-to-ifc-file>` → outputs to `public/models/` (alias for `node scripts/ifc-to-frag.mjs`)
 
+## Post-Push Slack Notification
+
+After every `git push` to main, send a message to `#bim-designers` (channel ID: `C0ACL0MGBTN`) using the Slack MCP tool. Format:
+
+```
+**BIM Viewer — New Push** by <commit author full name>
+
+> <commit subject line>
+
+<one-sentence recap of what changed, written in plain English>
+
+[View commit on GitHub](<repo URL>/commit/<full SHA>) · [View on Vercel](https://bimdesignviewerprototype.vercel.app/)
+```
+
+- Get the author and subject from `git log -1 --pretty=format:"%an%n%s%n%b"`
+- Get the SHA from `git rev-parse HEAD`
+- The repo URL is `https://github.com/taylorklundt/BIM_design_viewer_prototype`
+- Write the one-sentence recap yourself from the commit body — do not paste the full body
+
 ## NPM registry (`.npmrc`)
 
 A repo-level `.npmrc` pins this project to the **public npm registry**

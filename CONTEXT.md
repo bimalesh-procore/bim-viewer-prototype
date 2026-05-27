@@ -192,6 +192,7 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Model prev/next navigation** → Back/Forward arrow buttons in header cycle through models list with wrapping (`Header.tsx` `handlePrev` / `handleNext`)
 - **Header dropdown z-index** → wrapper raised to `z-[60]` in `ChromeLayout.tsx` so the model picker always floats above left/right toolbar panels (`z-50`)
 - **Selection — click-to-deselect** → clicking a selected object a second time deselects it (`Selection.js` `onClick`)
+- **Selection — drag-vs-click suppression** → left-button drags (>4px between mousedown and mouseup) do not trigger selection on release, so a navigation drag that happens to end over an object no longer selects it. Clean clicks still select. Mirrors the existing right-click drag detection (`Selection.js` `leftMouseDown` / `leftMouseMoved`)
 - **Selection — opaque highlight** → selection highlight material has no transparency; selected objects render fully opaque with tint only
 - **Selection — hover transparency removed** → `applyHover()` body commented out; re-enable by uncommenting the block
 - **Right-click context menu — objects only** → `openContextMenuAtEvent` no longer fires on empty-space clicks; context menu only appears when the raycast hits an object

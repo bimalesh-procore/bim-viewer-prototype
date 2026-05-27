@@ -782,16 +782,6 @@ export class Navigation {
       case 'KeyQ':
         this.keys.down = true;
         break;
-      case 'Space':
-        this.keys.up = true;
-        break;
-      case 'ShiftLeft':
-      case 'ShiftRight':
-        this.keys.down = true;
-        break;
-      case 'Escape':
-        this.setMode('orbit');
-        break;
     }
   }
 
@@ -817,13 +807,6 @@ export class Navigation {
         this.keys.up = false;
         break;
       case 'KeyQ':
-        this.keys.down = false;
-        break;
-      case 'Space':
-        this.keys.up = false;
-        break;
-      case 'ShiftLeft':
-      case 'ShiftRight':
         this.keys.down = false;
         break;
     }

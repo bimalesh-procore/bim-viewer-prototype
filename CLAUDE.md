@@ -179,9 +179,8 @@ The navigation system has three modes with distinct behaviors:
 | S / ↓ | Backward |
 | A / ← | Strafe left |
 | D / → | Strafe right |
-| E / Space | Up |
-| Q / Shift | Down |
-| Escape | Return to Default mode |
+| E | Up |
+| Q | Down |
 
 **Right-click temporary mode switching** is handled entirely within `Navigation.js` via a `pointerdown` capture listener. Navigation only activates after the pointer moves **more than 4 px** while the right button is held — a clean right-click (no movement) lets the browser show the context menu normally. The Chrome layer does not need to manage any of this — it happens transparently to the adapter.
 

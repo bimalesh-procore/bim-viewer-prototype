@@ -39,6 +39,8 @@ export class Selection {
     this.lastIntersection = null;
     this.rightMouseDown = null;
     this.rightMouseMoved = false;
+    this.leftMouseDown = null;
+    this.leftMouseMoved = false;
 
     this.init();
   }
@@ -103,6 +105,12 @@ export class Selection {
 
   onClick(event) {
     if (!this.selectionEnabled) return;
+    // Suppress selection if the click was actually a navigation drag
+    // (mouse moved >4px between mousedown and mouseup).
+    if (this.leftMouseMoved) {
+      this.leftMouseMoved = false;
+      return;
+    }
 
     const intersects = this.raycast(event);
 
@@ -218,12 +226,23 @@ export class Selection {
   }
 
   onMouseDown(event) {
+    if (event.button === 0) {
+      this.leftMouseDown = { x: event.clientX, y: event.clientY };
+      this.leftMouseMoved = false;
+      return;
+    }
     if (event.button !== 2) return;
     this.rightMouseDown = { x: event.clientX, y: event.clientY };
     this.rightMouseMoved = false;
   }
 
   onMouseUp(event) {
+    if (event.button === 0) {
+      this.leftMouseDown = null;
+      // Do not reset leftMouseMoved here — onClick fires after mouseup
+      // and needs to read the drag state to decide whether to select.
+      return;
+    }
     if (event.button !== 2) return;
     const wasRightClick = !!this.rightMouseDown && !this.rightMouseMoved;
     this.rightMouseDown = null;
@@ -249,6 +268,13 @@ export class Selection {
       const dy = event.clientY - this.rightMouseDown.y;
       if ((dx * dx + dy * dy) > 16) {
         this.rightMouseMoved = true;
+      }
+    }
+    if (this.leftMouseDown) {
+      const dx = event.clientX - this.leftMouseDown.x;
+      const dy = event.clientY - this.leftMouseDown.y;
+      if ((dx * dx + dy * dy) > 16) {
+        this.leftMouseMoved = true;
       }
     }
 

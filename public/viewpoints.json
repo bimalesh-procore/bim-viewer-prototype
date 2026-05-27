@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 3,
+  "models": {
+    "condos": {
+      "homeView": {
+        "id": "home-1779915733202",
+        "name": "Home",
+        "cameraPosition": {
+          "x": 46.31561055536764,
+          "y": 17.429781344010525,
+          "z": 27.3414532956342
+        },
+        "cameraTarget": {
+          "x": 0,
+          "y": 8,
+          "z": 0
+        },
+        "isOrthographic": false,
+        "hiddenObjects": [
+          "5f625d34-91c7-49af-b32c-a8e16dc76df9",
+          "5430fba0-42e0-41ea-a78b-1dfe159d1b9e",
+          "26ce1b0a-fa56-42fd-bff9-915752d88c83",
+          "9ce5812f-95a1-4f70-a1f8-164e6ee5c489",
+          "b2e9f826-1903-459b-82c7-c23cadf5e270",
+          "1b854d8d-aa5b-443a-8fdd-111052ee9803",
+          "cb2a47b7-20ab-471b-8ffd-414b189fc9dc",
+          "9f4c8142-b486-4c8b-aa61-af5c792de06a",
+          "353de6d0-6202-4cfa-a64c-52791e01e60c",
+          "848fc4e3-74e7-45cd-95bf-f5a5e983c09d",
+          "5a90e199-a96a-48ce-90b3-7edf44cb05b3",
+          "89d8a5e3-b35e-4bd8-bbe4-5025dfab6a12",
+          "290fec73-c0c5-4aca-9ad7-a6145ee601f1",
+          "97944560-f1ee-4474-b904-f1282464b94e",
+          "083ae002-0c47-4925-a302-e216305d5fab"
+        ],
+        "sectioning": null,
+        "markups": [],
+        "createdAt": 1779915733202
+      },
+      "customViews": []
+    }
+  }
+}

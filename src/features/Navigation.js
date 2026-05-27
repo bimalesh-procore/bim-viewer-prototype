@@ -330,6 +330,24 @@ export class Navigation {
     };
   }
 
+  // Like getCamera, but derives target from the camera's actual look direction
+  // at the current orbit distance, instead of returning controls.target which
+  // can be stale in look/fly mode. Use this as the start state for any animated
+  // camera restore — otherwise the first controls.update() snaps the camera's
+  // lookAt to controls.target and produces a visible jolt before the
+  // animation begins.
+  getEffectiveCamera() {
+    const position = this.camera.position.clone();
+    if (!this.controls) {
+      return { position, target: new THREE.Vector3() };
+    }
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const lookDir = new THREE.Vector3();
+    this.camera.getWorldDirection(lookDir);
+    const target = position.clone().add(lookDir.multiplyScalar(distance));
+    return { position, target };
+  }
+
   setCamera(position, target) {
     this.camera.position.copy(position);
     const targetVec = target

@@ -4,6 +4,8 @@ import { ChromeLayout } from '../features/chrome-layout';
 import { ViewerAdapterProvider } from '../features/viewer-adapter/ViewerAdapterContext';
 import { ViewerSettingsProvider } from '../features/viewer-settings/ViewerSettingsContext';
 import { FormFactorProvider } from '../features/form-factor';
+import { ToastProvider } from '../features/toast';
+import { ViewpointsProvider, viewpointStore } from '../features/viewpoints';
 import { createModelViewerAdapter } from '../features/viewer-adapter/modelViewerAdapter';
 import { mockViewerAdapter } from '../features/viewer-adapter/mockViewerAdapter';
 import type { ViewerAdapter, ObjectStreamingState } from '../features/viewer-adapter/types';
@@ -54,6 +56,17 @@ export function ChromeApp() {
   const [loadRequested, setLoadRequested] = useState(false);
   const initialModelRef = useRef<ModelEntry>(getInitialModel());
   const [activeModelId, setActiveModelId] = useState<string | null>(initialModelRef.current.id);
+  // Mirrored in a ref so the load-complete listener (registered once) can
+  // read the latest active model when applying its saved home view.
+  const activeModelIdRef = useRef<string | null>(initialModelRef.current.id);
+  useEffect(() => { activeModelIdRef.current = activeModelId; }, [activeModelId]);
+  // Tracks whether the user moved the camera during the model's load phase.
+  // We seed the camera to the home view immediately, but if the user
+  // explores during the (potentially long) load, load-complete must NOT
+  // snap them back. The companion ref holds the listener so we can detach
+  // it after load-complete.
+  const userMovedDuringLoadRef = useRef<boolean>(false);
+  const userMoveListenerRef = useRef<(() => void) | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [streamingState, setStreamingState] = useState<ObjectStreamingState>({
     streamingSupported: false,
@@ -116,12 +129,36 @@ export function ChromeApp() {
       // Auto-load the default sample model
       setLoadRequested(true);
       setModelLoaded(true);
-      setInitialLoadingCamera(viewer);
       const initial = initialModelRef.current;
-      viewer.loadModel(initial.url, initial.label).catch((err: unknown) => {
-        console.error('Failed to auto-load default model:', err);
-        setModelLoaded(false);
-        setLoadError('Failed to load model. Please try again.');
+
+      // Seed the camera with the saved home view (if any) BEFORE the model
+      // starts loading, so the first frame the user sees is the final pose —
+      // no visible jump when load-complete fires. Sectioning + visibility
+      // can't be applied until the model is loaded, so they wait for
+      // load-complete; only the camera + projection can be applied now.
+      viewpointStore.getHomeView(initial.id).then((home) => {
+        if (home) {
+          viewer.navigation.setOrthographic(home.isOrthographic);
+          viewer.navigation.setCamera(home.cameraPosition, home.cameraTarget);
+          // Clip planes are global to the renderer, so they affect every
+          // mesh that gets revealed during streaming. Apply sectioning now
+          // so the model appears already-clipped, not clipped-after-the-fact.
+          viewer.sectioning.restoreState(home.sectioning ?? null);
+        } else {
+          setInitialLoadingCamera(viewer);
+        }
+        // Watch for user movement starting now — anything that fires
+        // camera-change after this point counts as "user is exploring,
+        // don't snap them back."
+        userMovedDuringLoadRef.current = false;
+        const onUserMove = () => { userMovedDuringLoadRef.current = true; };
+        userMoveListenerRef.current = onUserMove;
+        viewer.navigation.on('camera-change', onUserMove);
+        viewer.loadModel(initial.url, initial.label).catch((err: unknown) => {
+          console.error('Failed to auto-load default model:', err);
+          setModelLoaded(false);
+          setLoadError('Failed to load model. Please try again.');
+        });
       });
     });
 
@@ -131,6 +168,39 @@ export function ChromeApp() {
 
     viewer.on('load-complete', () => {
       setModelLoaded(true);
+
+      // Stop tracking user movement — from here on we're no longer in the
+      // "snap back to home" window, so any future camera-change is just
+      // ordinary navigation.
+      if (userMoveListenerRef.current) {
+        viewer.navigation.off('camera-change', userMoveListenerRef.current);
+        userMoveListenerRef.current = null;
+      }
+
+      const modelId = activeModelIdRef.current;
+      if (!modelId) return;
+      const userMoved = userMovedDuringLoadRef.current;
+
+      viewpointStore.getHomeView(modelId).then((home) => {
+        if (!home) return;
+        // Re-check the active model in case the user switched models mid-fetch.
+        if (activeModelIdRef.current !== modelId) return;
+        // Visibility applies here — element IDs only become resolvable once
+        // meshes have loaded. Sectioning was already applied at seed time
+        // (clip planes are renderer-global and clipped streaming meshes as
+        // they appeared). See BACKLOG.md for the equivalent treatment of
+        // hidden objects.
+        viewer.visibility.showAll();
+        if (home.hiddenObjects && home.hiddenObjects.length > 0) {
+          viewer.visibility.hide(home.hiddenObjects);
+        }
+        // Camera + projection: only re-apply if the user hasn't moved since
+        // the seed. If they have, respect their exploration.
+        if (!userMoved) {
+          viewer.navigation.setOrthographic(home.isOrthographic);
+          viewer.navigation.setCamera(home.cameraPosition, home.cameraTarget);
+        }
+      });
     });
 
     (window as unknown as Record<string, unknown>).viewer = viewer;
@@ -164,7 +234,32 @@ export function ChromeApp() {
       // previous model's tree isn't visible during the new model's load.
       if (viewer.objectTree) viewer.objectTree.buildTree();
       if (viewer.treePanel?.isOpen) viewer.treePanel.refresh();
-      setInitialLoadingCamera(viewer);
+
+      // Same as initial load: pre-seed the camera with the new model's saved
+      // home view (if any) so the user doesn't see a jump after load-complete.
+      // Sectioning applies here too — clip planes are renderer-global and
+      // will clip meshes as they stream in.
+      const home = await viewpointStore.getHomeView(model.id);
+      if (home) {
+        viewer.navigation.setOrthographic(home.isOrthographic);
+        viewer.navigation.setCamera(home.cameraPosition, home.cameraTarget);
+        viewer.sectioning.restoreState(home.sectioning ?? null);
+      } else {
+        // No saved home — make sure any sectioning from the previous model
+        // is cleared so it doesn't bleed into the new one.
+        viewer.sectioning.clearAll();
+        setInitialLoadingCamera(viewer);
+      }
+
+      // Reset user-movement tracking for this new load. Detach any prior
+      // listener (from initial load) first to avoid duplicates.
+      if (userMoveListenerRef.current) {
+        viewer.navigation.off('camera-change', userMoveListenerRef.current);
+      }
+      userMovedDuringLoadRef.current = false;
+      const onUserMove = () => { userMovedDuringLoadRef.current = true; };
+      userMoveListenerRef.current = onUserMove;
+      viewer.navigation.on('camera-change', onUserMove);
 
       try {
         await viewer.loadModel(model.url, model.label);
@@ -270,6 +365,8 @@ export function ChromeApp() {
     <FormFactorProvider>
     <ViewerAdapterProvider adapter={adapter}>
       <ViewerSettingsProvider>
+      <ViewpointsProvider activeModelId={activeModelId}>
+      <ToastProvider>
       <ChromeLayout
         viewerContainerRef={setViewerContainer}
         showOverlays={loadRequested}
@@ -301,6 +398,8 @@ export function ChromeApp() {
           </button>
         </div>
       )}
+      </ToastProvider>
+      </ViewpointsProvider>
       </ViewerSettingsProvider>
     </ViewerAdapterProvider>
     </FormFactorProvider>

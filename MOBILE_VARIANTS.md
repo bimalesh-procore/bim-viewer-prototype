@@ -6,12 +6,12 @@ Status and next steps for the tablet / phone form-factor work. Architectural rul
 
 ## Current Status (2026-05-23)
 
-**Scaffolding is in place; designs are not.** The chrome can be switched between desktop, tablet, and phone via URL or the header settings cog. Tablet and phone render inside a bezelled device frame with a rotation button outside the top-right corner. Phone shows a notch and home indicator that rotate with orientation. Underneath the bezel, the chrome currently renders the desktop layout (the tablet/phone variant files forward to desktop) — visibly cramped in the phone width, which is the intended motivation for the real variant work.
+**Scaffolding is in place; designs are not.** The chrome can be switched between desktop, tablet, and phone via URL or the phone-icon button in the header (next to the settings cog). Tablet and phone render inside a bezelled device frame with a rotation button outside the top-right corner. Phone shows a notch and home indicator that rotate with orientation. Underneath the bezel, the chrome currently renders the desktop layout (the tablet/phone variant files forward to desktop) — visibly cramped in the phone width, which is the intended motivation for the real variant work.
 
 ### What's built
 
 - `src/chrome/features/form-factor/` — `FormFactorContext` with form factor (`desktop` / `tablet` / `phone`) and orientation (`portrait` / `landscape`). URL-driven via `?form=` and `?orient=`. Bare URL defaults to desktop. Orientation defaults: tablet → landscape, phone → portrait. Switching form factors resets orientation to the new default.
-- Header settings cog opens a dropdown that switches form factor.
+- Header phone-icon button opens the form-factor menu (`src/chrome/features/form-factor-menu/`); cog opens the Settings window.
 - `src/chrome/features/chrome-layout/DeviceFrame.tsx` — centered, bezelled device shell. Scale-independent bezel, concentric corner radii, notch + home indicator for phone, rotation button outside top-right. Tablet bezel 11px, phone bezel 8px (both visual CSS px, identical across orientations).
 - `src/chrome/features/header/` — variant files (`Header.desktop.tsx`, `Header.tablet.tsx`, `Header.phone.tsx`) + `index.tsx` selector + `types.ts`. Tablet/phone are stubs that forward to desktop.
 - `src/chrome/features/chrome-layout/` — same variant file pattern.
@@ -37,7 +37,7 @@ Replace the stub bodies of `Header.tablet.tsx` and `Header.phone.tsx` with the F
 - Tablet header likely keeps a similar structure to desktop with adjusted spacing/sizing.
 - Phone header is substantially different — narrower width forces consolidation (model picker may collapse into a hamburger or single-tap dropdown; search may move to a separate icon; nav buttons may pin to specific corners).
 - Extract shared state into `useHeader.ts` so the three variants share handlers and state. Keep variants JSX-only.
-- The settings cog must remain visible in all three variants (it's how the user gets back to desktop).
+- The phone-icon button (form-factor menu) must remain visible in all three variants — it's how the user gets back to desktop. The settings cog can stay too, but it's not the variant switcher anymore.
 - Dropdowns stay the same component for now (per the architecture conversation — iOS/Android-style bottom drawers are a later concern).
 
 ### 2. Real toolbar variants

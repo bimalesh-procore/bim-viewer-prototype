@@ -42,6 +42,15 @@ Before running `gh pr merge` (or any equivalent merge-to-main command):
 | `src/chrome/features/form-factor/` | `evals/tests/regression.spec.js` (no dedicated suite yet — see [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) §7) |
 | `src/chrome/features/chrome-layout/` | `evals/tests/regression.spec.js` + `evals/tests/chrome-compatibility.spec.js` (touches viewer mount and variant routing — see [CLAUDE.md §3c](./CLAUDE.md)) |
 | `src/chrome/features/header/` | `evals/tests/regression.spec.js` + `evals/tests/chrome-compatibility.spec.js` |
+| `src/chrome/features/settings-panel/` | `evals/tests/regression.spec.js` (no dedicated suite yet — the panel is mostly stubs; Home View save needs a focused test eventually) |
+| `src/chrome/features/floating-window/` | `evals/tests/regression.spec.js` (smoke only — no dedicated suite yet) |
+| `src/chrome/features/toast/` | `evals/tests/regression.spec.js` (smoke only — no dedicated suite yet) |
+| `src/chrome/features/viewpoints/` | `evals/tests/regression.spec.js` + `evals/tests/chrome-ifc-loading.spec.js` (touches load-complete restore path) |
+| `src/chrome/features/form-factor-menu/` | `evals/tests/regression.spec.js` (no dedicated suite — same situation as `form-factor/`) |
+| `scripts/vite-plugin-viewpoints-writer.mjs` | `evals/tests/regression.spec.js` (dev-only middleware; integration coverage via the viewpoints round-trip) |
+| `public/viewpoints.json` | None — data file. Sanity check that JSON parses. |
+| `src/features/Navigation.js` (the `getEffectiveCamera` addition) | `evals/tests/navigation.spec.js` (covered by existing navigation suite) |
+| `src/features/Sectioning.js` (the `serializeState`/`restoreState` additions) | `evals/tests/regression.spec.js` (no dedicated sectioning suite yet) |
 | `src/chrome/app/ChromeApp.tsx` | `evals/tests/chrome-compatibility.spec.js` + `evals/tests/chrome-ifc-loading.spec.js` (viewer container migration logic lives here — see [CLAUDE.md §3c](./CLAUDE.md)) |
 | `src/chrome/` (any other) | `evals/tests/chrome-ifc-loading.spec.js` + `evals/tests/chrome-compatibility.spec.js` |
 | `src/features/Selection.js` | `evals/tests/selection.spec.js` |

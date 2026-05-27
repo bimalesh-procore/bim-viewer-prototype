@@ -71,10 +71,23 @@ src/chrome/
 │   │                          Variant files: ChromeLayout.{desktop,tablet,phone}.tsx
 │   │                          + index.tsx selector + DeviceFrame.tsx (bezelled
 │   │                          tablet/phone shell with rotation button).
-│   ├── header/              ← Back/forward, project dropdown, search, settings cog.
+│   ├── header/              ← Back/forward, project dropdown, search, settings cog, device-preview button.
 │   │                          Variant files: Header.{desktop,tablet,phone}.tsx + index.tsx
 │   ├── form-factor/         ← FormFactorContext (desktop/tablet/phone + orientation).
-│   │                          URL-driven via ?form= and ?orient=. Settings cog updates it.
+│   │                          URL-driven via ?form= and ?orient=.
+│   ├── form-factor-menu/    ← Radio menu of Desktop/Tablet/Phone. Opened from
+│   │                          the phone-icon button in the header.
+│   ├── settings-panel/      ← Settings dialog (Measurement System stub, Performance stub,
+│   │                          Home View save). Variant files + sections/.
+│   │                          Renders inside a FloatingWindow anchored to the right toolbar.
+│   ├── floating-window/     ← Reusable free-floating in-page dialog. Title bar drag,
+│   │                          close X, Escape to close, no auto-dismiss. See CLAUDE.md §4f.
+│   ├── toast/               ← Reusable toast surface (success/error/info/warning,
+│   │                          bottom-center, auto-dismiss). See CLAUDE.md §4g.
+│   ├── viewpoints/          ← Persistent home view + (future) saved viewpoints.
+│   │                          Source of truth is public/viewpoints.json (committed),
+│   │                          dev-only writes via scripts/vite-plugin-viewpoints-writer.mjs.
+│   │                          See CLAUDE.md §4e.
 │   ├── left-toolbar/        ← Object Tree, Search Sets, Views, Items, Properties, Deviation
 │   ├── right-toolbar/       ← View group, Tools group, History group
 │   ├── view-cube/           ← 3D orientation indicator
@@ -177,7 +190,11 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Reset** → `viewer.resetView()`
 - **Object Tree** → `viewer.treePanel.toggle()`
 - **Sectioning** → `viewer.sectioning.clearClipPlanes()`
-- **Bottom toolbar Home button** → `viewer.navigation.zoomToFit()` (fit-to-view)
+- **Bottom toolbar Home button** → restores the saved home view (camera + sectioning + visibility) with a 550ms ease-in-out animation; falls back to `zoomToFit()` if no home view is saved
+- **Settings → Update Home View** → saves current camera + isOrthographic + hiddenObjects + sectioning to `public/viewpoints.json`. Dev-write only; prod shows an error toast. See CLAUDE.md §4e.
+- **Saved home auto-restore on model load** → seeded at viewer-ready time (before model parse) so the camera starts at the home pose with no post-load jump. Sectioning is also applied at seed time (clip planes are renderer-global and clip streaming meshes as they appear). Visibility is applied at load-complete (needs element IDs). Camera is **not** snapped back if the user navigated during the load
+- **Settings window** → floating in-page dialog (`FloatingWindow`) anchored to the right toolbar on first open; draggable by title bar; Escape closes
+- **Device-preview button (header)** → phone icon next to the settings cog; opens the FormFactorMenu
 - **Navigation modes** → `viewer.navigation.setMode('look'|'orbit'|'fly')` via the bottom toolbar nav-mode menu (active state shown on the picker button)
 - **WASD/QE keyboard movement** → `Navigation.js` (all modes, camera-relative, always active)
 - **Right-click temporary mode** → `Navigation.js` (Default/Fly→orbit, Orbit→look-around)

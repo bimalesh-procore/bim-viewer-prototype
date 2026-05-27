@@ -726,6 +726,7 @@ export function RightToolbar() {
   return (
     <div
       ref={toolbarRef}
+      id="right-toolbar"
       className={`absolute right-2 top-2 flex flex-col gap-2 ${
         activeMode === 'default' ? 'z-20' : 'z-[220]'
       }`}

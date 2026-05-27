@@ -233,7 +233,137 @@ The short version:
   The directional light + shadow map are already set up in `SceneManager.js`.
   Mesh `castShadow`/`receiveShadow` flags are set in `IFCLoader.finalizeMeshAfterReveal`.
 
-### 4e. Z-Fighting Mitigation (`IFCLoader.finalizeMeshAfterReveal`)
+### 4e. Viewpoint Persistence (`public/viewpoints.json` + `scripts/vite-plugin-viewpoints-writer.mjs`)
+
+The chrome's "Home View" — and, later, the Viewpoints panel's custom views —
+persist to a JSON file committed to the repo. The file is the single source
+of truth; localStorage is **not** used.
+
+**Storage shape** (`public/viewpoints.json`, `schemaVersion: 3`):
+
+```jsonc
+{
+  "schemaVersion": 3,
+  "models": {
+    "condos": {
+      "homeView": { /* Viewpoint */ } | null,
+      "customViews": [ /* Viewpoint, ... */ ]   // reserved for the Viewpoints panel
+    },
+    ...
+  }
+}
+```
+
+Each `Viewpoint` captures the camera (`cameraPosition`, `cameraTarget`,
+`isOrthographic`), the hidden-objects list (`hiddenObjects: string[]`),
+sectioning state (`sectioning: SectioningSnapshot | null` — planes + box),
+and `markups: MarkupData[]` (currently always `[]`; the Viewpoints panel
+will populate). Types live in
+`src/chrome/features/viewpoints/types.ts`.
+
+**Reading** — the chrome fetches `/viewpoints.json` with `cache: 'no-cache'`
+once on app boot via the module-level promise-cached `viewpointStore`
+(`src/chrome/features/viewpoints/viewpointStore.ts`). Every consumer
+(`viewpoints.getHomeView()`, the load-complete handler in `ChromeApp.tsx`,
+the bottom-toolbar Home button) reads from this cache. Schema v2 entries
+are migrated to v3 on read.
+
+**Writing** — `scripts/vite-plugin-viewpoints-writer.mjs` registers a
+`POST /__viewpoints/home` middleware on the Vite dev server. The Settings
+panel's "Update Home View" button calls this endpoint, the plugin merges
+the new viewpoint into the file on disk, and the in-memory cache is
+updated. **Active only under `npm run dev`** (`apply: 'serve'`).
+
+**On a Vercel build, the endpoint does not exist.** Saves return 404; the
+chrome shows an error toast ("Saving a home view is only available when
+running locally"). This is intentional — saves require an authenticated
+write back to the GitHub repo, which we don't want to wire up for a
+prototype. To update a saved home from prod: run the dev server locally,
+save, commit the resulting `public/viewpoints.json` change, push.
+
+**Apply order on home restore** (camera + visibility + sectioning):
+
+1. **Seed time** (before model load, in `ChromeApp.tsx`'s viewer-ready
+   handler): apply `camera + isOrthographic` and `sectioning`. Clip planes
+   are global to the renderer, so they clip every mesh as it streams in.
+2. **Load-complete**: apply `visibility` (hide list) — `getMeshByElementId`
+   only resolves once meshes have loaded. Camera is re-applied here too
+   **unless** the user has moved during the load (tracked via a
+   `camera-change` listener attached after seeding). Same for the
+   model-switch path in `handleSelectModel`.
+
+If the user navigated during the model load, the load-complete handler
+respects their position and does not snap back. Sectioning + visibility
+still apply (they're part of the view's *configuration*, not navigation
+state).
+
+Hidden objects briefly flash visible during stream-in before being
+hidden — see [`BACKLOG.md`](./BACKLOG.md) for the planned per-batch
+queue-and-apply fix that would mirror what sectioning already does.
+
+**Engine-side helpers used by the apply path:**
+
+- `Navigation.getEffectiveCamera()` — like `getCamera()` but derives the
+  target from `camera.getWorldDirection()` × current orbit distance instead
+  of `controls.target`. Used as the **start** state of any animated camera
+  restore, because in look/fly mode `controls.target` can be stale, and the
+  first `controls.update()` in the animation would otherwise snap the
+  lookAt direction visibly before the easing begins.
+- `Sectioning.serializeState()` / `restoreState(snapshot)` — capture and
+  re-apply the clip planes + box state. Plane IDs are not preserved across
+  restore (planes are recreated); anything pinned to plane IDs externally
+  would need to be re-pinned.
+
+**Adapter methods** (engine-agnostic, no Three.js types):
+
+- `getCameraSnapshot()` / `setCameraSnapshot(snapshot, { animate, durationMs })`
+  — camera + projection only. Animation uses an ease-in-out-sine curve over
+  550ms by default.
+- `getViewpointState()` / `setViewpointState(state, { animate })` —
+  bundled snapshot (camera + hidden objects + sectioning). The apply order
+  is sectioning → visibility → camera.
+
+### 4f. FloatingWindow vs Panels vs Dropdowns
+
+Four floating-UI patterns coexist in the chrome. Pick the right one when
+building a new piece:
+
+| Pattern | Where | Use when |
+|---|---|---|
+| **Dropdown / popover** | Header menus, header buttons | Small menu anchored to a button, auto-dismiss on outside click |
+| **DockedPanel** | `dock-manager/DockedPanel.tsx` | Persistent feature panel that lives in the layout (Views, Properties, etc.). Can be undocked into a floating in-page panel. |
+| **DetachedPanel** | `dock-manager/DetachedPanelPortal.tsx` + `usePopupWindow.ts` | Open a panel in a **real OS popup window** via `window.open()`. Heavy — separate browser window, separate event loop. |
+| **FloatingWindow** | `src/chrome/features/floating-window/` | Free-floating in-page dialog with title bar + close X + drag. No auto-dismiss. Non-modal. Centered on first open unless `initialPosition` given. |
+
+The FloatingWindow is the right home for things that aren't dock content
+but need to stay open while the user works (the Settings window is the
+current example). Multiple may be open; z-index handles stacking.
+Escape key closes the focused window.
+
+When opening a FloatingWindow that should anchor near a specific UI
+element (e.g. Settings anchors to the right toolbar), compute the
+`initialPosition` from that element's bounding rect in the consumer
+component, not inside FloatingWindow itself. The right toolbar carries
+`id="right-toolbar"` for this purpose.
+
+### 4g. Toast Notifications (`src/chrome/features/toast/`)
+
+Reusable toast surface for transient, non-modal feedback. Variants:
+`success`, `error`, `info`, `warning`. Auto-dismiss default 3.5s
+(`duration: 0` for sticky). Position: bottom-center, above the bottom
+toolbar but below modals (`z-40`). Multiple stack.
+
+```tsx
+const toast = useToast();
+toast.show({ kind: 'success', message: 'Saved.' });
+toast.show({ kind: 'error', message: 'Save failed.', duration: 5000 });
+```
+
+The provider lives in `ChromeApp.tsx` so any feature can call
+`useToast()`. New toast triggers should always go through this surface —
+don't roll your own.
+
+### 4h. Z-Fighting Mitigation (`IFCLoader.finalizeMeshAfterReveal`)
 
 IFC models routinely contain coplanar geometry (slab + topping + finish at
 the same Y; stud + sheathing + finish in the same vertical plane). Without
@@ -296,3 +426,80 @@ See **[`MERGETOMAIN.md`](./MERGETOMAIN.md)** for:
 - The feature → test suite mapping table
 - Agent instructions (run targeted tests before `gh pr merge`)
 - Human instructions (run tests manually before merging)
+
+### 9. Documentation Sweep Before Commit/Push
+
+**Before any `git commit` or `git push` initiated by the agent, run a
+documentation sweep.** The goal is to keep the `.md` files in this repo
+honest — they're the only durable record of *why* the code does what it
+does, and they rot fast if nobody minds them.
+
+**Skip this sweep** if the user has just walked through documentation
+updates manually with the agent in the same session **and** no further
+file changes have happened since the last doc edit. The point of the
+sweep is to catch agents committing undocumented changes, not to repeat
+work already done.
+
+**The sweep:**
+
+1. **Identify which `.md` files describe what just changed.** Map by topic:
+
+   | What changed | File to update |
+   |---|---|
+   | Architectural rules, new patterns, new chrome features | [`CLAUDE.md`](./CLAUDE.md) |
+   | "What's wired and working", structure trees, status | [`CONTEXT.md`](./CONTEXT.md) |
+   | Test suite mapping for changed features | [`MERGETOMAIN.md`](./MERGETOMAIN.md) |
+   | Tablet / phone variant work | [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) |
+   | Realism render mode internals | [`REALISM.md`](./REALISM.md) |
+   | Z-fighting fix history / follow-ups | [`Z_FIGHTING.md`](./Z_FIGHTING.md) |
+   | Test infrastructure / suites / fixtures | [`TEST_PLAN.md`](./TEST_PLAN.md) |
+   | Dead-end experiments worth remembering | [`EXPERIMENTS.md`](./EXPERIMENTS.md) |
+   | Anything surfaced but not built | [`BACKLOG.md`](./BACKLOG.md) — see §10 |
+
+2. **Update each relevant file.** Write the *behavior* and the *reason*,
+   not the line-by-line diff. Future readers want to know what to expect
+   and why decisions were made, not what got renamed.
+
+3. **Consider whether the work warrants a new top-level `.md`.** If a
+   single area accumulated enough engineering nuance that it would
+   overwhelm `CLAUDE.md` (like Realism or Z-Fighting did), create a new
+   `<TOPIC>.md` at the repo root **and add a short summary section in
+   `CLAUDE.md` that links to it**. The new file should not be findable
+   only by `ls` — it has to be discoverable from `CLAUDE.md`.
+
+4. **Cross things off [`BACKLOG.md`](./BACKLOG.md)** if they shipped this
+   session. **Add new entries** for anything that surfaced but didn't get
+   built. See §10 for the workflow.
+
+5. **Then commit.** The doc updates can be part of the same commit as
+   the code change they describe — that's preferred over a separate
+   "docs: …" commit, because the change and its rationale travel
+   together.
+
+### 10. Backlog Workflow (`BACKLOG.md`)
+
+Future work that's been discussed but not yet implemented lives in
+[`BACKLOG.md`](./BACKLOG.md) at the repo root. The point is to capture the
+*why* and at least one viable approach so future-you (or a colleague)
+doesn't have to re-investigate the problem from scratch.
+
+**At the end of a project session:**
+
+1. **Check off finished items.** If a session touched something that
+   existed as a backlog entry, remove the entry (the code change *is* the
+   record). Don't leave stale "✓ done" entries — the file's job is to
+   list things still to do.
+2. **Add anything left undone.** If a discussion turned up a real issue
+   or improvement that wasn't in scope, write a backlog entry before
+   wrapping up. Include:
+   - **Why** — what problem this fixes / what behavior is wrong now.
+   - **At least one approach** — enough that a future agent can act on
+     it without re-investigating.
+   - **Touchpoints** — file paths likely to change.
+3. **Note alternatives where they exist.** If you considered multiple
+   approaches and picked one, list the others too. The next person may
+   have different constraints.
+
+**Don't** put session-scoped task lists in `BACKLOG.md` — those live in
+the agent's task system. The backlog is for things that survive across
+sessions.

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import { useViewerSettings } from '../viewer-settings/ViewerSettingsContext';
+import { useViewpoints } from '../viewpoints';
 import { BottomToolbarButton } from './BottomToolbarButton';
 import { BottomToolbarDivider } from './BottomToolbarDivider';
 import { NavModeMenu, NAV_MODE_ICONS, type NavMode } from './NavModeMenu';
@@ -41,6 +42,28 @@ function writeRenderStyleToUrl(style: RenderStyle) {
 export function BottomToolbar() {
   const adapter = useViewerAdapter();
   const { isOrthographic, isXRayActive, toggleOrthographic, toggleXRay } = useViewerSettings();
+  const viewpoints = useViewpoints();
+
+  const handleGoHome = async () => {
+    const home = await viewpoints.getHomeView();
+    if (home && adapter.setViewpointState) {
+      adapter.setViewpointState(
+        {
+          camera: {
+            position: home.cameraPosition,
+            target:   home.cameraTarget,
+            isOrthographic: home.isOrthographic,
+          },
+          hiddenObjects: home.hiddenObjects ?? [],
+          sectioning:    home.sectioning ?? null,
+        },
+        { animate: true },
+      );
+      return;
+    }
+    adapter.fitToView();
+  };
+
   const [activeMode, setActiveMode] = useState<NavMode>('select');
   const [openFlyout, setOpenFlyout] = useState<OpenFlyout>(null);
   const [hoveredId, setHoveredId] = useState<ButtonId | null>(null);
@@ -124,7 +147,7 @@ export function BottomToolbar() {
             src={homeIcon}
             label="Home"
             showTooltip={hoveredId === 'home' && openFlyout === null}
-            onClick={() => adapter.fitToView()}
+            onClick={handleGoHome}
             {...hoverHandlers('home')}
           />
           <div className="relative">

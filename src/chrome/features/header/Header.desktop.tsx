@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check } from 'lucide-react';
+import { Check, Smartphone } from 'lucide-react';
 import { HeaderButton } from './HeaderButton';
 import { HeaderSearch } from './HeaderSearch';
 import type { HeaderProps } from './types';
-import { useFormFactor, FORM_FACTORS, type FormFactor } from '../form-factor';
+import { FormFactorMenu } from '../form-factor-menu';
+import { SettingsPanel, useSettingsPanel } from '../settings-panel';
+import { useToast } from '../toast';
+import { useViewpoints } from '../viewpoints';
+import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import arrowLeftIcon from '../../assets/icons/header/arrow-left.svg';
 import arrowRightIcon from '../../assets/icons/header/arrow-right.svg';
 import caretDownIcon from '../../assets/icons/header/caret-down.svg';
@@ -12,18 +16,57 @@ import infoIcon from '../../assets/icons/header/info.svg';
 import closeIcon from '../../assets/icons/header/close.svg';
 import procoreEmblem from '../../assets/icons/header/procoreEmblem.png';
 
-const FORM_FACTOR_LABELS: Record<FormFactor, string> = {
-  desktop: 'Desktop',
-  tablet: 'Tablet',
-  phone: 'Phone',
-};
-
 export function HeaderDesktop({ models = [], activeModelId = null, onSelectModel }: HeaderProps) {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
-  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
-  const settingsMenuRef = useRef<HTMLDivElement>(null);
-  const { formFactor, setFormFactor } = useFormFactor();
+  const [formFactorMenuOpen, setFormFactorMenuOpen] = useState(false);
+  const formFactorMenuRef = useRef<HTMLDivElement>(null);
+  const formFactorAnchorRef = useRef<HTMLButtonElement>(null);
+  const settings = useSettingsPanel();
+  const toast = useToast();
+  const viewpoints = useViewpoints();
+  const adapter = useViewerAdapter();
+
+  const handleUpdateHomeView = async () => {
+    const state = adapter.getViewpointState?.();
+    if (!state) {
+      toast.show({ kind: 'error', message: 'Could not capture current view.' });
+      settings.close();
+      return;
+    }
+    if (!viewpoints.activeModelId) {
+      toast.show({ kind: 'error', message: 'Load a model before setting a home view.' });
+      settings.close();
+      return;
+    }
+    settings.close();
+    const result = await viewpoints.setHomeView({
+      id: `home-${Date.now()}`,
+      name: 'Home',
+      cameraPosition: state.camera.position,
+      cameraTarget:   state.camera.target,
+      isOrthographic: state.camera.isOrthographic,
+      hiddenObjects:  state.hiddenObjects,
+      sectioning:     state.sectioning,
+      markups: [],
+      createdAt: Date.now(),
+    });
+    if (result.ok) {
+      toast.show({ kind: 'success', message: 'The home view was successfully updated.' });
+      return;
+    }
+    if (result.reason === 'writer-unavailable') {
+      // Saves require the dev server's writer middleware; in a Vercel build
+      // the endpoint doesn't exist.
+      toast.show({
+        kind: 'error',
+        message: 'Saving a home view is only available when running locally.',
+        duration: 5000,
+      });
+      return;
+    }
+    toast.show({ kind: 'error', message: 'Could not save the home view. Try again.' });
+  };
 
   useEffect(() => {
     if (!modelMenuOpen) return;
@@ -37,15 +80,16 @@ export function HeaderDesktop({ models = [], activeModelId = null, onSelectModel
   }, [modelMenuOpen]);
 
   useEffect(() => {
-    if (!settingsMenuOpen) return;
+    if (!formFactorMenuOpen) return;
     const onDocClick = (e: MouseEvent) => {
-      if (!settingsMenuRef.current?.contains(e.target as Node)) {
-        setSettingsMenuOpen(false);
-      }
+      const target = e.target as Node;
+      if (formFactorMenuRef.current?.contains(target)) return;
+      if (formFactorAnchorRef.current?.contains(target)) return;
+      setFormFactorMenuOpen(false);
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
-  }, [settingsMenuOpen]);
+  }, [formFactorMenuOpen]);
 
   const activeModel = models.find((m) => m.id === activeModelId) ?? null;
   const buttonLabel = activeModel?.label ?? 'Project Model';
@@ -145,48 +189,51 @@ export function HeaderDesktop({ models = [], activeModelId = null, onSelectModel
       {/* Right section */}
       <div className="flex items-center gap-3 pr-3">
         <div className="flex items-center gap-1.5">
-          <div ref={settingsMenuRef} className="relative">
-            <HeaderButton
-              src={settingsIcon}
-              label="Settings"
-              iconSize={24}
-              onClick={() => setSettingsMenuOpen((v) => !v)}
-            />
-            {settingsMenuOpen && (
-              <div
-                role="menu"
-                className="absolute top-full right-0 mt-1 min-w-[160px] bg-white rounded-md shadow-lg border border-gray-200 py-1 z-40"
-              >
-                <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                  Form factor
-                </div>
-                {FORM_FACTORS.map((ff) => {
-                  const isActive = ff === formFactor;
-                  return (
-                    <button
-                      key={ff}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={isActive}
-                      onClick={() => {
-                        setFormFactor(ff);
-                        setSettingsMenuOpen(false);
-                      }}
-                      className="flex items-center justify-between w-full gap-3 px-3 py-2 text-sm text-[#232729] hover:bg-gray-100 transition-colors text-left"
-                    >
-                      <span className="font-medium">{FORM_FACTOR_LABELS[ff]}</span>
-                      {isActive && <Check size={16} className="text-[#2066DF] flex-shrink-0" />}
-                    </button>
-                  );
-                })}
+          {/* Device-preview button — the only place form factor is changed.
+              Lives next to the cog so designers can flip the prototype
+              between desktop/tablet/phone without touching the URL bar. */}
+          <div className="relative">
+            <button
+              ref={formFactorAnchorRef}
+              type="button"
+              onClick={() => setFormFactorMenuOpen((v) => !v)}
+              aria-label="Device preview"
+              aria-haspopup="menu"
+              aria-expanded={formFactorMenuOpen}
+              className="flex items-center justify-center rounded p-1 transition-colors hover:bg-gray-200 active:bg-gray-300"
+            >
+              <Smartphone size={24} className="text-[#232729]" strokeWidth={1.5} />
+            </button>
+            {formFactorMenuOpen && (
+              <div ref={formFactorMenuRef} className="absolute top-full right-0 mt-1 z-40">
+                <FormFactorMenu onSelect={() => setFormFactorMenuOpen(false)} />
               </div>
             )}
           </div>
+          <button
+            type="button"
+            onClick={settings.toggle}
+            aria-label="Settings"
+            aria-haspopup="dialog"
+            aria-expanded={settings.isOpen}
+            className="flex items-center justify-center rounded p-1 transition-colors hover:bg-gray-200 active:bg-gray-300"
+          >
+            <img src={settingsIcon} alt="" width={24} height={24} className="block" />
+          </button>
           <HeaderButton src={infoIcon} label="Info" iconSize={24} />
         </div>
         <div className="w-px h-12 bg-[#e3e6e8]" />
         <HeaderButton src={closeIcon} label="Close" iconSize={24} />
       </div>
+      {/* Settings window is a free-floating dialog, not anchored to the cog,
+          so render it as a sibling of the header. */}
+      {settings.isOpen && (
+        <SettingsPanel
+          onClose={settings.close}
+          onUpdateHomeView={handleUpdateHomeView}
+          homeViewDisabled={!viewpoints.activeModelId}
+        />
+      )}
     </header>
   );
 }

@@ -3935,6 +3935,54 @@ export class Sectioning {
   }
 
   /**
+   * Serialize the full sectioning state to plain JSON-safe values.
+   * Includes standalone planes and (if active) the section-box state.
+   * Section-box-owned planes are excluded from the planes array since they
+   * are reconstructed from the box state on restore.
+   * Returns null when no sectioning is active.
+   */
+  serializeState() {
+    const boxPlaneSet = this._sectionBoxPlaneSet ?? new Set();
+    const planes = [];
+    for (const pd of this.clipPlanes.values()) {
+      if (boxPlaneSet.has(pd.id)) continue;
+      planes.push({
+        normal: { x: pd.normal.x, y: pd.normal.y, z: pd.normal.z },
+        point:  { x: pd.point.x,  y: pd.point.y,  z: pd.point.z },
+        creatorTool: pd.creatorTool ?? 'section-plane',
+      });
+    }
+    const box = this._boxState ? {
+      center:      { x: this._boxState.center.x,      y: this._boxState.center.y,      z: this._boxState.center.z },
+      halfExtents: { x: this._boxState.halfExtents.x, y: this._boxState.halfExtents.y, z: this._boxState.halfExtents.z },
+      quaternion:  { x: this._boxState.quaternion.x,  y: this._boxState.quaternion.y,  z: this._boxState.quaternion.z, w: this._boxState.quaternion.w },
+    } : null;
+    if (planes.length === 0 && !box) return null;
+    return { planes, box };
+  }
+
+  /**
+   * Restore a sectioning state previously captured via serializeState().
+   * Clears any current sectioning first. Passing null clears all sectioning.
+   */
+  restoreState(snapshot) {
+    this.clearAll();
+    if (!snapshot) return;
+    if (Array.isArray(snapshot.planes)) {
+      for (const p of snapshot.planes) {
+        const n = new THREE.Vector3(p.normal.x, p.normal.y, p.normal.z);
+        const pt = new THREE.Vector3(p.point.x, p.point.y, p.point.z);
+        this.addClipPlane(n, pt, { creatorTool: p.creatorTool ?? 'section-plane' });
+      }
+    }
+    if (snapshot.box) {
+      const center      = new THREE.Vector3(snapshot.box.center.x,      snapshot.box.center.y,      snapshot.box.center.z);
+      const halfExtents = new THREE.Vector3(snapshot.box.halfExtents.x, snapshot.box.halfExtents.y, snapshot.box.halfExtents.z);
+      this.activateSectionBox({ center, halfExtents });
+    }
+  }
+
+  /**
    * Move a plane along its normal
    */
   movePlane(planeId, distance) {

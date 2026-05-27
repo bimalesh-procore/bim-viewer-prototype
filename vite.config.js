@@ -1,11 +1,12 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 import react from '@vitejs/plugin-react';
+import { viewpointsWriter } from './scripts/vite-plugin-viewpoints-writer.mjs';
 
 export default defineConfig({
   root: 'demo',
   publicDir: '../public',
-  plugins: [react()],
+  plugins: [react(), viewpointsWriter({ file: resolve(__dirname, 'public/viewpoints.json') })],
   resolve: {
     alias: {
       '@chrome': resolve(__dirname, 'src/chrome'),

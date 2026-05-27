@@ -91,6 +91,35 @@ export interface MarkupData {
   position?: { x: number; y: number };
 }
 
+export interface Vec3Plain {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface SectioningStateSnapshot {
+  planes: Array<{
+    normal: Vec3Plain;
+    point: Vec3Plain;
+    creatorTool: 'section-plane' | 'section-cut';
+  }>;
+  box: {
+    center: Vec3Plain;
+    halfExtents: Vec3Plain;
+    quaternion: { x: number; y: number; z: number; w: number };
+  } | null;
+}
+
+export interface ViewpointStateSnapshot {
+  camera: {
+    position: Vec3Plain;
+    target:   Vec3Plain;
+    isOrthographic: boolean;
+  };
+  hiddenObjects: string[];
+  sectioning: SectioningStateSnapshot | null;
+}
+
 export interface ViewData {
   id: string;
   name: string;
@@ -180,6 +209,33 @@ export interface ViewerAdapter {
 
   toggleOrthographic?(): void;
   isOrthographic?(): boolean;
+
+  // Engine-agnostic camera snapshot — used by the chrome's home view and
+  // (future) Viewpoints panel to capture and restore camera state without
+  // pulling in any Three.js types.
+  getCameraSnapshot?(): {
+    position: { x: number; y: number; z: number };
+    target:   { x: number; y: number; z: number };
+    isOrthographic: boolean;
+  };
+  setCameraSnapshot?(
+    snapshot: {
+      position: { x: number; y: number; z: number };
+      target:   { x: number; y: number; z: number };
+      isOrthographic: boolean;
+    },
+    options?: { animate?: boolean; durationMs?: number },
+  ): void;
+
+  // Bundled viewpoint snapshot — camera + hidden objects + sectioning.
+  // Always-on for the chrome's viewpoint persistence; the adapter is the
+  // only thing that knows the engine-side apply order (sectioning → hidden →
+  // camera) and how to read/write each piece.
+  getViewpointState?(): ViewpointStateSnapshot;
+  setViewpointState?(
+    state: ViewpointStateSnapshot,
+    options?: { animate?: boolean; durationMs?: number },
+  ): void;
 
   toggleXRay?(): void;
   isXRayActive?(): boolean;

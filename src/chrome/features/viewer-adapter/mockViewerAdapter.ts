@@ -25,6 +25,32 @@ export const mockViewerAdapter: ViewerAdapter = {
   resetView() {
     log('resetView');
   },
+  getCameraSnapshot() {
+    log('getCameraSnapshot');
+    return {
+      position: { x: 0, y: 0, z: 0 },
+      target:   { x: 0, y: 0, z: 0 },
+      isOrthographic: false,
+    };
+  },
+  setCameraSnapshot(snapshot, options) {
+    log('setCameraSnapshot', { snapshot, options });
+  },
+  getViewpointState() {
+    log('getViewpointState');
+    return {
+      camera: {
+        position: { x: 0, y: 0, z: 0 },
+        target:   { x: 0, y: 0, z: 0 },
+        isOrthographic: false,
+      },
+      hiddenObjects: [],
+      sectioning: null,
+    };
+  },
+  setViewpointState(state, options) {
+    log('setViewpointState', { state, options });
+  },
   setViewOrientation(view: ViewOrientation) {
     log('setViewOrientation', view);
   },

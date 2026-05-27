@@ -10,6 +10,7 @@ import type {
   ViewData,
   ViewFolder,
   PropertyGroup,
+  ViewpointStateSnapshot,
 } from './types';
 import * as THREE from 'three';
 
@@ -28,6 +29,14 @@ interface ModelViewerInstance {
       position: { x: number; y: number; z: number },
       target: { x: number; y: number; z: number },
     ): void;
+    getCamera(): {
+      position: { x: number; y: number; z: number };
+      target:   { x: number; y: number; z: number };
+    };
+    getEffectiveCamera(): {
+      position: { x: number; y: number; z: number };
+      target:   { x: number; y: number; z: number };
+    };
     setOrthographic(enabled: boolean): void;
     getIsOrthographic(): boolean;
     setControlsEnabled?(enabled: boolean): void;
@@ -80,6 +89,8 @@ interface ModelViewerInstance {
     clearHistory(): void;
     on(event: string, callback: (data: unknown) => void): void;
     getClipPlanes(): Array<{ id: string }>;
+    serializeState(): unknown;
+    restoreState(snapshot: unknown): void;
   };
   treePanel: {
     toggle(): void;
@@ -229,6 +240,66 @@ export function createModelViewerAdapter(
   };
 
   let loadedModelName: string | null = null;
+  let cameraAnimRaf: number | null = null;
+
+  function applyCameraSnapshot(
+    snapshot: ViewpointStateSnapshot['camera'],
+    options?: { animate?: boolean; durationMs?: number },
+  ): void {
+    const animate = options?.animate ?? false;
+    const durationMs = options?.durationMs ?? 550;
+
+    if (cameraAnimRaf !== null) {
+      cancelAnimationFrame(cameraAnimRaf);
+      cameraAnimRaf = null;
+    }
+
+    const needsProjectionSwitch =
+      viewer.navigation.getIsOrthographic() !== snapshot.isOrthographic;
+
+    if (!animate) {
+      if (needsProjectionSwitch) {
+        viewer.navigation.setOrthographic(snapshot.isOrthographic);
+      }
+      viewer.navigation.setCamera(snapshot.position, snapshot.target);
+      return;
+    }
+
+    // See getEffectiveCamera in Navigation.js — start the animation from the
+    // camera's actual look direction, not from a stale controls.target.
+    const from = viewer.navigation.getEffectiveCamera();
+    const fromPos = { x: from.position.x, y: from.position.y, z: from.position.z };
+    const fromTarget = { x: from.target.x, y: from.target.y, z: from.target.z };
+    const start = performance.now();
+    const easeInOutSine = (t: number) => 0.5 - 0.5 * Math.cos(Math.PI * t);
+
+    const tick = (now: number) => {
+      const raw = Math.min(1, (now - start) / durationMs);
+      const t = easeInOutSine(raw);
+      viewer.navigation.setCamera(
+        {
+          x: fromPos.x + (snapshot.position.x - fromPos.x) * t,
+          y: fromPos.y + (snapshot.position.y - fromPos.y) * t,
+          z: fromPos.z + (snapshot.position.z - fromPos.z) * t,
+        },
+        {
+          x: fromTarget.x + (snapshot.target.x - fromTarget.x) * t,
+          y: fromTarget.y + (snapshot.target.y - fromTarget.y) * t,
+          z: fromTarget.z + (snapshot.target.z - fromTarget.z) * t,
+        },
+      );
+      if (raw < 1) {
+        cameraAnimRaf = requestAnimationFrame(tick);
+      } else {
+        cameraAnimRaf = null;
+        if (needsProjectionSwitch) {
+          viewer.navigation.setOrthographic(snapshot.isOrthographic);
+          viewer.navigation.setCamera(snapshot.position, snapshot.target);
+        }
+      }
+    };
+    cameraAnimRaf = requestAnimationFrame(tick);
+  }
 
   const streamingState: ObjectStreamingState = {
     streamingSupported: false,
@@ -545,6 +616,39 @@ export function createModelViewerAdapter(
         return;
       }
       viewer.resetView();
+    },
+    getCameraSnapshot() {
+      const cam = viewer.navigation.getCamera();
+      return {
+        position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },
+        target:   { x: cam.target.x,   y: cam.target.y,   z: cam.target.z },
+        isOrthographic: viewer.navigation.getIsOrthographic(),
+      };
+    },
+    setCameraSnapshot(snapshot, options) {
+      applyCameraSnapshot(snapshot, options);
+    },
+    getViewpointState() {
+      const cam = viewer.navigation.getCamera();
+      return {
+        camera: {
+          position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },
+          target:   { x: cam.target.x,   y: cam.target.y,   z: cam.target.z },
+          isOrthographic: viewer.navigation.getIsOrthographic(),
+        },
+        hiddenObjects: viewer.visibility.getHiddenElements(),
+        sectioning: viewer.sectioning.serializeState() as ViewpointStateSnapshot['sectioning'],
+      };
+    },
+    setViewpointState(state: ViewpointStateSnapshot, options) {
+      // Apply order matters: sectioning first (so clip planes are in place
+      // before geometry is shown/hidden), then visibility, then camera.
+      viewer.sectioning.restoreState(state.sectioning);
+      viewer.visibility.showAll();
+      if (state.hiddenObjects.length > 0) {
+        viewer.visibility.hide(state.hiddenObjects);
+      }
+      applyCameraSnapshot(state.camera, options);
     },
     setViewOrientation(view: ViewOrientation) {
       const preset = ORIENTATIONS[view];

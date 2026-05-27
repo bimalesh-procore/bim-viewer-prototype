@@ -3,6 +3,29 @@ import * as WEBIFC from 'web-ifc';
 import * as THREE from 'three';
 import { ObjectLoadingState } from '../features/ObjectLoadingState.js';
 
+// Z-fighting mitigation knobs for finalizeMeshAfterReveal. See Z_FIGHTING.md
+// for the full investigation. 4096 buckets keeps the collision probability
+// for a 20-mesh coplanar junction (e.g. a parapet seam) at ~5%, while step
+// = 255/4096 ≈ 0.0623 keeps the max polygonOffset small enough that
+// surfaces never visibly pop in front of where they should be.
+const POLY_OFFSET_BUCKETS = 4096;
+const POLY_OFFSET_MAX_UNITS = 255;
+const POLY_OFFSET_STEP = POLY_OFFSET_MAX_UNITS / POLY_OFFSET_BUCKETS;
+
+// Mulberry32-style integer hash. Stable across reloads for a given mesh.id,
+// so the same coplanar pair always lands in the same buckets (no shimmer
+// between sessions). If two specific meshes collide they always do — the
+// random-hash approach is fundamentally bucket-limited and will leave
+// residual speckle at dense seams. See Z_FIGHTING.md "Future work" for the
+// coplanar-grouping plan that would eliminate this.
+function hashOffsetBucket(id) {
+  let h = ((id | 0) + 0x9e3779b9) | 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h % POLY_OFFSET_BUCKETS;
+}
+
 export class IFCLoader {
   constructor(sceneManager) {
     this.sceneManager = sceneManager;
@@ -77,26 +100,37 @@ export class IFCLoader {
     await this._initPromise;
 
     const modelId = `model-${++this.modelIdCounter}`;
+    const cleanUrl = url.split('?')[0].toLowerCase();
+    const format = (cleanUrl.endsWith('.frag') || cleanUrl.endsWith('.frag.gz')) ? 'frag' : 'ifc';
 
     try {
       this.emit('load-start', { modelId, url, name });
 
-      // Streamed fetch so the loading bar can show real download progress.
-      // We read the body in chunks and emit a `load-progress` event each
-      // chunk with bytes-received vs Content-Length total.
       const response = await fetch(url);
       if (!response.ok) {
-        throw new Error(`Failed to fetch IFC file: ${response.statusText}`);
+        throw new Error(`Failed to fetch model file: ${response.statusText}`);
       }
 
       const totalHeader = response.headers.get('Content-Length');
-      const total = totalHeader ? parseInt(totalHeader, 10) : 0;
-      const buffer = await this._readBodyWithProgress(response, modelId, total);
+      // For .frag.gz, Content-Length is the compressed size but the browser
+      // decompresses transparently, so received bytes will exceed total and
+      // show a misleading ratio. Force total=0 for an indeterminate bar.
+      const total = (format === 'frag' || !totalHeader) ? 0 : parseInt(totalHeader, 10);
+      let buffer = await this._readBodyWithProgress(response, modelId, total);
+
+      // Some servers (and browser caches populated before a Content-Encoding
+      // header was added) deliver the raw gzip bytes without decompressing.
+      // Detect by the gzip magic bytes (0x1f 0x8b) and decompress in JS so
+      // FragmentsManager.load() always receives raw .frag data.
+      if (format === 'frag' && buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b) {
+        buffer = await this._decompressGzip(buffer);
+      }
 
       return this.loadModelFromBuffer(buffer, {
         modelId,
         name: name || url.split('/').pop(),
         url,
+        format,
       });
     } catch (error) {
       this.objectLoadingState.clearModel(modelId);
@@ -160,11 +194,37 @@ export class IFCLoader {
     return buf;
   }
 
+  async _decompressGzip(compressed) {
+    const ds = new DecompressionStream('gzip');
+    const writer = ds.writable.getWriter();
+    writer.write(compressed);
+    writer.close();
+
+    const reader = ds.readable.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.length;
+    }
+
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return out;
+  }
+
   async loadModelFromFile(file, name) {
     // Ensure init() has completed before loading
     await this._initPromise;
 
     const modelId = `model-${++this.modelIdCounter}`;
+    const format = file.name.toLowerCase().endsWith('.frag') ? 'frag' : 'ifc';
 
     try {
       this.emit('load-start', { modelId, fileName: file.name, name });
@@ -176,6 +236,7 @@ export class IFCLoader {
         modelId,
         name: name || file.name,
         fileName: file.name,
+        format,
       });
     } catch (error) {
       this.objectLoadingState.clearModel(modelId);
@@ -185,18 +246,19 @@ export class IFCLoader {
   }
 
   async loadModelFromBuffer(buffer, meta) {
-    const { modelId, name, url, fileName } = meta;
+    const { modelId, name, url, fileName, format = 'ifc' } = meta;
 
     try {
       this.emit('stream-capability', { modelId, streamingSupported: true });
 
-      // Mark the start of the parse phase. web-ifc gives us no progress
-      // signal mid-parse, so the bar's fill rests at 55% from here until
-      // the reveal phase begins below.
+      // Mark the start of the parse phase.
       this.emit('load-progress', { modelId, phase: 'parse' });
 
-      // Load real IFC fragments, then reveal actual geometry progressively.
-      const model = await this.ifcLoader.load(buffer);
+      // Load geometry — IFC requires async parsing via web-ifc; .frag is a
+      // pre-converted binary that FragmentsManager reads synchronously.
+      const model = format === 'frag'
+        ? this.fragmentsManager.load(buffer)
+        : await this.ifcLoader.load(buffer);
       this.sceneManager.add(model);
 
       this.loadedModels.set(modelId, {
@@ -348,6 +410,12 @@ export class IFCLoader {
   finalizeMeshAfterReveal(mesh, revealIndex = 0) {
     if (!mesh) return;
 
+    // Per-mesh polygonOffset bucket from a stable hash on mesh.id. This
+    // replaces the older (revealIndex % 7) scheme which only had 7 buckets
+    // and so guaranteed collisions across thousands of meshes — visible as
+    // jagged crosshatch z-fighting on coplanar BIM seams. See Z_FIGHTING.md.
+    const offsetUnits = hashOffsetBucket(mesh.id) * POLY_OFFSET_STEP;
+
     const finalizeMaterial = (material) => {
       const original = material?.userData?.__mvRevealOriginal;
       if (original) {
@@ -365,16 +433,41 @@ export class IFCLoader {
         material.polygonOffset = false;
         material.alphaTest = 0;
       }
-      // Stabilize final shading for IFC surfaces that often overlap/coplanar.
-      material.side = THREE.FrontSide;
-      material.polygonOffset = true;
-      material.polygonOffsetFactor = -1;
-      material.polygonOffsetUnits = (revealIndex % 7) * 0.35;
+      // BIM geometry must be visible from inside. Some IFC/frag materials
+      // default to FrontSide, which back-face-culls interior surfaces and
+      // causes the model to disappear when the camera navigates inside.
+      // Force DoubleSide so every surface renders regardless of which side
+      // the camera is on. This also ensures the raycaster always hits geometry
+      // from inside the model, preventing scroll-zoom fallback runaway.
+      material.side = THREE.DoubleSide;
+
+      // Transparent materials (typically window glass) must NOT receive a
+      // polygonOffset. They go through Three's transparent render pass, which
+      // sorts by depth — non-zero offset scrambles that sort and produces
+      // black/missing window panes. See Z_FIGHTING.md "Transparent skip".
+      const isTransparent =
+        material.transparent === true ||
+        (typeof material.opacity === 'number' && material.opacity < 1);
+      if (isTransparent) {
+        material.polygonOffset = false;
+        material.polygonOffsetFactor = 0;
+        material.polygonOffsetUnits = 0;
+      } else {
+        material.polygonOffset = true;
+        material.polygonOffsetFactor = -1;
+        material.polygonOffsetUnits = offsetUnits;
+      }
       material.needsUpdate = true;
     };
 
     // Deterministic render ordering reduces tie flicker on coplanar surfaces.
     mesh.renderOrder = 1000 + (revealIndex % 4000);
+
+    // Shadow flags are inert when renderer.shadowMap.enabled is false (Default
+    // mode), so setting them unconditionally is free in Default and lights up
+    // automatically when RealismRenderer flips shadows on.
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
 
     if (Array.isArray(mesh.material)) {
       mesh.material.forEach(finalizeMaterial);
@@ -460,9 +553,27 @@ export class IFCLoader {
     this.sceneManager.remove(modelData.model);
     this.objectLoadingState.clearModel(modelId);
 
-    // Dispose fragments
+    // Dispose this model's fragments only — not the global FragmentsManager.
+    // @thatopen/fragments Fragment.dispose() iterates mesh.material assuming
+    // it's always an array, so normalize first to avoid the crash.
     if (this.fragmentsManager) {
-      this.fragmentsManager.dispose();
+      try {
+        modelData.model.traverse((node) => {
+          if (node.isMesh && !Array.isArray(node.material)) {
+            node.material = [node.material];
+          }
+        });
+        this.fragmentsManager.disposeGroup(modelData.model);
+      } catch (err) {
+        console.warn('[IFCLoader] disposeGroup failed, falling back to manual cleanup:', err);
+        modelData.model.traverse((node) => {
+          if (node.isMesh) {
+            node.geometry?.dispose();
+            const mats = Array.isArray(node.material) ? node.material : [node.material];
+            mats.forEach((m) => m?.dispose());
+          }
+        });
+      }
     }
 
     // Remove from map
@@ -471,6 +582,12 @@ export class IFCLoader {
     this.emit('model-unload', { modelId });
 
     return true;
+  }
+
+  clearAllModels() {
+    for (const modelId of [...this.loadedModels.keys()]) {
+      this.unloadModel(modelId);
+    }
   }
 
   getLoadedModels() {

@@ -1,3 +1,4 @@
+import orbitCursor from '../../assets/cursors/orbit-cursor.svg';
 import type {
   ViewerAdapter,
   ViewOrientation,
@@ -30,6 +31,7 @@ interface ModelViewerInstance {
     setOrthographic(enabled: boolean): void;
     getIsOrthographic(): boolean;
     setControlsEnabled?(enabled: boolean): void;
+    on(event: string, callback: (data: unknown) => void): void;
   };
   selection: {
     getSelected(): string[];
@@ -132,6 +134,7 @@ interface ModelViewerInstance {
   };
   resetView(): void;
   setInteractionMode(mode: InteractionMode): void;
+  setRenderStyle(style: 'default' | 'realism'): void;
   on(event: string, callback: (data: unknown) => void): ModelViewerInstance;
   off(event: string, callback: (data: unknown) => void): ModelViewerInstance;
 }
@@ -426,10 +429,22 @@ export function createModelViewerAdapter(
     requestAnimationFrame(tryReveal);
   };
 
+  const MOCK_VIEWS: ViewData[] = [
+    { id: 'v1', name: 'Entry Lobby',      folderId: 'f1', cameraPosition: { x: 0, y: 0, z: 0 }, cameraTarget: { x: 0, y: 0, z: 0 }, isOrthographic: false, markups: [],            createdAt: 0, isProjectView: false },
+    { id: 'v2', name: 'Level 1 Overview', folderId: 'f1', cameraPosition: { x: 0, y: 0, z: 0 }, cameraTarget: { x: 0, y: 0, z: 0 }, isOrthographic: true,  markups: [{ id: 'm1' } as any], createdAt: 0, isProjectView: true  },
+    { id: 'v3', name: 'Stairwell Detail', folderId: 'f2', cameraPosition: { x: 0, y: 0, z: 0 }, cameraTarget: { x: 0, y: 0, z: 0 }, isOrthographic: false, markups: [],            createdAt: 0, isProjectView: false },
+    { id: 'v4', name: 'Roof Plan',        folderId: null, cameraPosition: { x: 0, y: 0, z: 0 }, cameraTarget: { x: 0, y: 0, z: 0 }, isOrthographic: true,  markups: [],            createdAt: 0, isProjectView: false },
+  ];
+
+  const getViewsToEmit = (): ViewData[] => {
+    const live = viewer.views.getViews() as ViewData[];
+    const hasRealStructure = live.some((v) => v.folderId !== null) || live.length > 1;
+    return hasRealStructure ? live : MOCK_VIEWS;
+  };
+
   const emitViews = () => {
-    const views = viewer.views.getViews() as ViewData[];
     const sel = viewer.views.getSelectedViewId();
-    for (const listener of viewsListeners) listener(views, sel);
+    for (const listener of viewsListeners) listener(getViewsToEmit(), sel);
   };
 
   viewer.views.on('views-changed', () => {
@@ -509,6 +524,10 @@ export function createModelViewerAdapter(
     body.style.setProperty('--mv-selected-cursor', `url("${iconUrl}") 10 10`);
     root.classList.add('mv-force-selected-cursor');
   };
+
+  // Right-click orbit in Default/Fly modes: mirror the orbit cursor
+  viewer.navigation.on('right-drag-orbit-start', () => setViewerCursor(orbitCursor));
+  viewer.navigation.on('right-drag-orbit-end',   () => setViewerCursor(null));
 
   return {
     zoomIn() {
@@ -822,6 +841,9 @@ export function createModelViewerAdapter(
     isXRayActive() {
       return viewer.xray.isEnabled;
     },
+    setRenderStyle(style: 'default' | 'realism') {
+      viewer.setRenderStyle(style);
+    },
     setHoverEffect(mode: 'gradient' | 'edgeTrace') {
       viewer.selection.setHoverEffectMode(mode);
     },
@@ -951,7 +973,7 @@ export function createModelViewerAdapter(
     },
     subscribeViews(listener: (views: ViewData[], selectedId: string | null) => void) {
       viewsListeners.add(listener);
-      listener(viewer.views.getViews() as ViewData[], viewer.views.getSelectedViewId());
+      listener(getViewsToEmit(), viewer.views.getSelectedViewId());
       return () => { viewsListeners.delete(listener); };
     },
     createFolder(name: string, parentId?: string | null) {
@@ -964,7 +986,11 @@ export function createModelViewerAdapter(
       viewer.views.renameFolder(id, name);
     },
     getFolders() {
-      return viewer.views.getFolders() as ViewFolder[];
+      const liveFolders = viewer.views.getFolders() as ViewFolder[];
+      return liveFolders.length > 0 ? liveFolders : [
+        { id: 'f1', name: 'Architecture', parentFolderId: null },
+        { id: 'f2', name: 'Structural',   parentFolderId: null },
+      ];
     },
 
     // ── Markup mode ───────────────────────────────────────────────────

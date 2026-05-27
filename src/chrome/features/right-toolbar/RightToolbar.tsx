@@ -1,6 +1,7 @@
 import { RightToolbarGroup } from './RightToolbarGroup';
 import { RightToolbarButton } from './RightToolbarButton';
 import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
+import { useViewerSettings } from '../viewer-settings/ViewerSettingsContext';
 import type { ActionHistorySummary } from '../viewer-adapter/types';
 import { useEffect, useRef, useState } from 'react';
 import { MoreVertical } from 'lucide-react';
@@ -40,17 +41,19 @@ type ModeId = 'default' | 'markup' | 'measure' | 'create' | 'sectioning';
 
 export function RightToolbar() {
   const adapter = useViewerAdapter();
+  const {
+    isOrthographic,
+    isXRayActive,
+    renderToggles,
+    toggleOrthographic,
+    toggleXRay,
+    setRenderToggle,
+  } = useViewerSettings();
   const [showTooltips, setShowTooltips] = useState(false);
   const [showFlyoutTooltips, setShowFlyoutTooltips] = useState(false);
   const [activeMode, setActiveMode] = useState<ModeId>('default');
   const [isOverflowOpen, setIsOverflowOpen] = useState(false);
   const [openFlyout, setOpenFlyout] = useState<'measure' | 'create' | 'sectioning' | 'render' | 'history' | null>(null);
-  const [renderToggles, setRenderToggles] = useState({
-    mesh: true,
-    lines: true,
-    terrain: true,
-    pointCloud: true,
-  });
   const [activeMeasureTool, setActiveMeasureTool] = useState<'dimensions' | 'point-to-point' | 'laser' | 'manhole' | 'coordinates' | null>(null);
   const [activeSectionTool, setActiveSectionTool] = useState<'section-box' | 'section-plane' | 'section-cut' | null>(null);
   const [activeSectionBoxSubTool, setActiveSectionBoxSubTool] = useState<'drag-face' | 'move' | 'rotate'>('move');
@@ -59,12 +62,6 @@ export function RightToolbar() {
   const [markupColor, setMarkupColor] = useState('#FF0000');
   const [isSectioningActive, setIsSectioningActive] = useState(
     () => adapter.isSectioningActive?.() ?? false,
-  );
-  const [isOrthographic, setIsOrthographic] = useState(
-    () => adapter.isOrthographic?.() ?? false,
-  );
-  const [isXRayActive, setIsXRayActive] = useState(
-    () => adapter.isXRayActive?.() ?? false,
   );
   const [actionHistory, setActionHistory] = useState<ActionHistorySummary>(
     () => adapter.getActionHistory?.() ?? {
@@ -293,10 +290,7 @@ export function RightToolbar() {
         label={isOrthographic ? 'Perspective' : 'Orthographic'}
         showTooltip={showTooltip}
         isActive={isOrthographic}
-        onClick={() => {
-          adapter.toggleOrthographic?.();
-          setIsOrthographic((prev) => !prev);
-        }}
+        onClick={toggleOrthographic}
       />
       <div className="relative">
         <RightToolbarButton
@@ -336,11 +330,11 @@ export function RightToolbar() {
                     role="switch"
                     aria-checked={renderToggles[key]}
                     tabIndex={0}
-                    onClick={() => setRenderToggles((prev) => ({ ...prev, [key]: !prev[key] }))}
+                    onClick={() => setRenderToggle(key, !renderToggles[key])}
                     onKeyDown={(e) => {
                       if (e.key === ' ' || e.key === 'Enter') {
                         e.preventDefault();
-                        setRenderToggles((prev) => ({ ...prev, [key]: !prev[key] }));
+                        setRenderToggle(key, !renderToggles[key]);
                       }
                     }}
                     style={{
@@ -407,10 +401,7 @@ export function RightToolbar() {
         shortcut="Cmd X"
         showTooltip={showTooltip}
         isActive={isXRayActive}
-        onClick={() => {
-          adapter.toggleXRay?.();
-          setIsXRayActive((prev) => !prev);
-        }}
+        onClick={toggleXRay}
       />
     </>
   );

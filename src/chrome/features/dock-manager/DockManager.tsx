@@ -646,7 +646,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
                   onTabChange={panel.id === 'properties'
                     ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
                     : undefined}
-                  onAdd={panel.id === 'views' ? () => handleAddForPanel(panel.id) : undefined}
+                  onAdd={panel.id === 'views' || panel.id === 'sheets' ? () => handleAddForPanel(panel.id) : undefined}
                   onClose={()         => handleClosePanel(panel.id)}
                   onToggleMinimize={()  => toggleMinimized(panel.id)}
                   onDragStart={(ev)   => handleDragStart(panel.id, ev)}
@@ -654,7 +654,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
                     const zr = dockZoneRef.current?.getBoundingClientRect();
                     undockPanel(panel.id, { x: (zr?.right ?? 80) + 16, y: zr?.top ?? 80 });
                   }}
-                  onDetach={() => detachPanel(panel.id)}
+                  onDetach={panel.id !== 'sheets' ? () => detachPanel(panel.id) : undefined}
                   onResizeHeight={(h) => setDockedHeight(panel.id, h)}
                   onResizeStart={()   => setIsResizingDocked(true)}
                   onResizeEnd={()     => setIsResizingDocked(false)}

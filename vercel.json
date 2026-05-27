@@ -4,5 +4,14 @@
   "framework": null,
   "rewrites": [
     { "source": "/old", "destination": "/old.html" }
+  ],
+  "headers": [
+    {
+      "source": "/models/(.*).frag.gz",
+      "headers": [
+        { "key": "Content-Encoding", "value": "gzip" },
+        { "key": "Content-Type", "value": "application/octet-stream" }
+      ]
+    }
   ]
 }

@@ -119,9 +119,12 @@ test.describe('Navigation', () => {
     await setupViewer(page);
   });
 
-  test('REG-NAV-001: Default mode is orbit', async ({ page }) => {
+  test('REG-NAV-001: Default mode is look', async ({ page }) => {
+    // ModelViewer.init() calls setInteractionMode('select'), which routes to
+    // navigation.setMode('look'). See CLAUDE.md §4c — "look-around" is the
+    // default interaction mode; orbit and fly are opt-in via the UI.
     const mode = await page.evaluate(() => window.viewer.navigation.getMode());
-    expect(mode).toBe('orbit');
+    expect(mode).toBe('look');
   });
 
   test('REG-NAV-002: Switch to pan mode', async ({ page }) => {
@@ -149,7 +152,8 @@ test.describe('Navigation', () => {
   test('REG-NAV-004: Setting same mode is a no-op', async ({ page }) => {
     const getEvents = await captureEvents(page, ['mode-change']);
 
-    await page.evaluate(() => window.viewer.navigation.setMode('orbit'));
+    // Default mode is 'look' (see REG-NAV-001), so re-setting 'look' is the no-op.
+    await page.evaluate(() => window.viewer.navigation.setMode('look'));
 
     const events = await getEvents();
     expect(events.length).toBe(0);
@@ -212,6 +216,12 @@ test.describe('Navigation', () => {
   });
 
   test('REG-NAV-008: setControlsEnabled toggles orbit controls', async ({ page }) => {
+    // Run in orbit mode so OrbitControls is the active driver and controls.enabled
+    // is meaningful. In look/fly mode, controls.enabled is kept false by the mode
+    // itself (see CLAUDE.md §4c), so the restore-on-enable path would intentionally
+    // keep it false — not what this test wants to assert.
+    await page.evaluate(() => window.viewer.navigation.setMode('orbit'));
+
     await page.evaluate(() => window.viewer.navigation.setControlsEnabled(false));
 
     const disabled = await page.evaluate(() => {
@@ -248,6 +258,11 @@ test.describe('Navigation', () => {
   });
 
   test('REG-NAV-010: orbit via mouse drag changes camera position', async ({ page }) => {
+    // Default mode is 'look' (camera rotates in place); only orbit mode moves
+    // the camera position on left-drag. Switch first so the assertion is testing
+    // the right behavior.
+    await page.evaluate(() => window.viewer.navigation.setMode('orbit'));
+
     const before = await page.evaluate(() => {
       const pos = window.viewer.sceneManager.getCamera().position;
       return { x: pos.x, y: pos.y, z: pos.z };

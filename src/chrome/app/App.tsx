@@ -1,4 +1,4 @@
-import { ChromeLayout } from '../features/chrome-layout/ChromeLayout';
+import { ChromeLayout } from '../features/chrome-layout';
 
 export function App() {
   return <ChromeLayout />;

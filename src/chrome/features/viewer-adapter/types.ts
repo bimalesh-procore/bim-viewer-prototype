@@ -184,6 +184,8 @@ export interface ViewerAdapter {
   toggleXRay?(): void;
   isXRayActive?(): boolean;
 
+  setRenderStyle?(style: 'default' | 'realism'): void;
+
   setHoverEffect?(mode: 'gradient' | 'edgeTrace'): void;
   getHoverEffect?(): 'gradient' | 'edgeTrace';
 

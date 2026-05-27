@@ -39,6 +39,8 @@ export class Selection {
     this.lastIntersection = null;
     this.rightMouseDown = null;
     this.rightMouseMoved = false;
+    this.leftMouseDown = null;
+    this.leftMouseMoved = false;
 
     this.init();
   }
@@ -56,8 +58,8 @@ export class Selection {
       color: this.highlightColor,
       emissive: this.highlightColor,
       emissiveIntensity: 0.3,
-      transparent: true,
-      opacity: 0.9
+      // transparent: true, // Removed: selection highlight should be fully opaque.
+      // opacity: 0.9,      // Re-enable both lines if partial transparency is desired.
     });
 
     this.hoverLightnessBoost = 0.105;
@@ -103,6 +105,12 @@ export class Selection {
 
   onClick(event) {
     if (!this.selectionEnabled) return;
+    // Suppress selection if the click was actually a navigation drag
+    // (mouse moved >4px between mousedown and mouseup).
+    if (this.leftMouseMoved) {
+      this.leftMouseMoved = false;
+      return;
+    }
 
     const intersects = this.raycast(event);
 
@@ -113,6 +121,9 @@ export class Selection {
       // Handle multi-select with Ctrl/Cmd key
       if (event.ctrlKey || event.metaKey) {
         this.toggleSelect(elementId, mesh);
+      } else if (this.selectedElements.has(elementId)) {
+        // Clicking an already-selected object deselects everything.
+        this.deselect();
       } else {
         this.deselect();
         this.select([elementId], [mesh]);
@@ -210,28 +221,28 @@ export class Selection {
       };
 
       this.emit('context-menu', this.lastIntersection);
-    } else {
-      // Right-clicked on empty space
-      this.lastIntersection = null;
-      this.emit('context-menu', {
-        elementId: null,
-        mesh: null,
-        point: null,
-        face: null,
-        normal: null,
-        screenX: event.clientX,
-        screenY: event.clientY
-      });
     }
+    // No intersection — right-click on empty space does nothing.
   }
 
   onMouseDown(event) {
+    if (event.button === 0) {
+      this.leftMouseDown = { x: event.clientX, y: event.clientY };
+      this.leftMouseMoved = false;
+      return;
+    }
     if (event.button !== 2) return;
     this.rightMouseDown = { x: event.clientX, y: event.clientY };
     this.rightMouseMoved = false;
   }
 
   onMouseUp(event) {
+    if (event.button === 0) {
+      this.leftMouseDown = null;
+      // Do not reset leftMouseMoved here — onClick fires after mouseup
+      // and needs to read the drag state to decide whether to select.
+      return;
+    }
     if (event.button !== 2) return;
     const wasRightClick = !!this.rightMouseDown && !this.rightMouseMoved;
     this.rightMouseDown = null;
@@ -257,6 +268,13 @@ export class Selection {
       const dy = event.clientY - this.rightMouseDown.y;
       if ((dx * dx + dy * dy) > 16) {
         this.rightMouseMoved = true;
+      }
+    }
+    if (this.leftMouseDown) {
+      const dx = event.clientX - this.leftMouseDown.x;
+      const dy = event.clientY - this.leftMouseDown.y;
+      if ((dx * dx + dy * dy) > 16) {
+        this.leftMouseMoved = true;
       }
     }
 
@@ -477,31 +495,31 @@ export class Selection {
   applyHover(mesh) {
     if (!mesh || !mesh.material) return;
 
-    if (!this.originalMaterials.has(mesh.uuid)) {
-      this.originalMaterials.set(mesh.uuid, mesh.material);
-    }
-
-    const origColor = mesh.material.color || new THREE.Color(0xcccccc);
-    const hsl = {};
-    origColor.getHSL(hsl);
-
-    const lightenedColor = new THREE.Color().setHSL(
-      hsl.h,
-      hsl.s,
-      Math.min(hsl.l + this.hoverLightnessBoost, 0.95)
-    );
-
-    const hoverMat = new THREE.MeshStandardMaterial({
-      color: lightenedColor,
-      emissive: lightenedColor,
-      emissiveIntensity: 0.3,
-      transparent: true,
-      opacity: 0.9,
-    });
-
-    mesh.material = hoverMat;
-    this._hoverMesh = mesh;
-    this._hoverMat = hoverMat;
+    // HOVER VISUAL EFFECT DISABLED.
+    // To re-enable: uncomment the block below. It lightens the object's color
+    // and applies slight transparency (opacity 0.9) while the cursor is over it.
+    //
+    // if (!this.originalMaterials.has(mesh.uuid)) {
+    //   this.originalMaterials.set(mesh.uuid, mesh.material);
+    // }
+    // const origColor = mesh.material.color || new THREE.Color(0xcccccc);
+    // const hsl = {};
+    // origColor.getHSL(hsl);
+    // const lightenedColor = new THREE.Color().setHSL(
+    //   hsl.h,
+    //   hsl.s,
+    //   Math.min(hsl.l + this.hoverLightnessBoost, 0.95)
+    // );
+    // const hoverMat = new THREE.MeshStandardMaterial({
+    //   color: lightenedColor,
+    //   emissive: lightenedColor,
+    //   emissiveIntensity: 0.3,
+    //   transparent: true,
+    //   opacity: 0.9,
+    // });
+    // mesh.material = hoverMat;
+    // this._hoverMesh = mesh;
+    // this._hoverMat = hoverMat;
   }
 
   removeHover(mesh) {

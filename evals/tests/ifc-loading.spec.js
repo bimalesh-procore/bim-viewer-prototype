@@ -8,10 +8,16 @@ import { test, expect } from '@playwright/test';
 test.describe('IFC Model Loading', () => {
 
   test.beforeEach(async ({ page }) => {
-    // Navigate to the demo page
-    await page.goto('/');
-    // Wait for viewer to initialize
+    // Use test-page.html, NOT the Chrome UI ('/'). ChromeApp's useEffect calls
+    // viewer.loadModel(...) on mount to load the default model, which races
+    // with these tests — by the time waitForFunction(window.viewer) resolves,
+    // a load is already in flight, so the listeners attached below miss
+    // load-start, and a second loadModel call collides with the in-progress
+    // one. test-page.html instantiates the same real ModelViewer + IFCLoader
+    // but does not trigger any IFC load on its own.
+    await page.goto('/test-page.html');
     await page.waitForFunction(() => window.viewer !== undefined, { timeout: 15000 });
+    await page.waitForFunction(() => window.__sceneReady === true, { timeout: 10000 });
   });
 
   test('WASM files are accessible from the server', async ({ page }) => {
@@ -65,9 +71,10 @@ test.describe('IFC Model Loading', () => {
   });
 
   test('Sample IFC model file is accessible', async ({ page }) => {
-    // Verify the Condos.ifc file can be fetched
+    // Verify the condos.frag.gz file can be fetched. IFC source files are not
+    // committed (see CLAUDE.md §4b); pre-converted .frag.gz files ship instead.
     const modelResponse = await page.evaluate(async () => {
-      const res = await fetch('/models/Condos.ifc');
+      const res = await fetch('/models/condos.frag.gz');
       return {
         status: res.status,
         ok: res.ok,
@@ -78,8 +85,11 @@ test.describe('IFC Model Loading', () => {
     expect(modelResponse.status).toBe(200);
   });
 
-  test('Sample IFC model loads successfully via button click', async ({ page }) => {
-    // Set up event tracking before loading
+  test('Sample IFC model loads successfully via API', async ({ page }) => {
+    // The legacy `.sample-model-btn` is gone — Chrome UI uses the header model
+    // picker. Drive the load programmatically via loadModel() instead, which
+    // exercises the same pipeline (load-start → load-complete events) without
+    // depending on a chrome-layer selector.
     await page.evaluate(() => {
       window.__loadEvents = [];
       window.__loadError = null;
@@ -96,8 +106,11 @@ test.describe('IFC Model Loading', () => {
       });
     });
 
-    // Click the sample model button
-    await page.click('.sample-model-btn');
+    // Fire-and-forget: the page.evaluate must return immediately so the
+    // surrounding waitForFunction can poll the load-complete event. Awaiting
+    // the inner loadModel promise would block past Playwright's default 180s
+    // test timeout on slow headless software-WebGL runs.
+    await page.evaluate(() => { window.viewer.loadModel('/models/condos.frag.gz', 'Condos'); });
 
     // Wait for either load-complete or load-error (up to 120 seconds for large model)
     const result = await page.waitForFunction(
@@ -133,8 +146,11 @@ test.describe('IFC Model Loading', () => {
       window.viewer.on('load-error', (data) => { window.__loadError = data.error; });
     });
 
-    // Click sample model button
-    await page.click('.sample-model-btn');
+    // Fire-and-forget: the page.evaluate must return immediately so the
+    // surrounding waitForFunction can poll the load-complete event. Awaiting
+    // the inner loadModel promise would block past Playwright's default 180s
+    // test timeout on slow headless software-WebGL runs.
+    await page.evaluate(() => { window.viewer.loadModel('/models/condos.frag.gz', 'Condos'); });
 
     // Wait for load to finish
     await page.waitForFunction(
@@ -182,8 +198,11 @@ test.describe('IFC Model Loading', () => {
       window.viewer.on('load-error', (data) => { window.__loadError = data.error; });
     });
 
-    // Click sample model button
-    await page.click('.sample-model-btn');
+    // Fire-and-forget: the page.evaluate must return immediately so the
+    // surrounding waitForFunction can poll the load-complete event. Awaiting
+    // the inner loadModel promise would block past Playwright's default 180s
+    // test timeout on slow headless software-WebGL runs.
+    await page.evaluate(() => { window.viewer.loadModel('/models/condos.frag.gz', 'Condos'); });
 
     // Wait for load to finish
     await page.waitForFunction(
@@ -208,10 +227,11 @@ test.describe('IFC Model Loading', () => {
   });
 
   test('loadModel API works programmatically', async ({ page }) => {
-    // Test the programmatic API directly
+    // Test the programmatic API directly. Use the pre-converted .frag.gz file
+    // that actually ships (CLAUDE.md §4b: .ifc sources are gitignored).
     const result = await page.evaluate(async () => {
       try {
-        const modelId = await window.viewer.loadModel('/models/Condos.ifc', 'Test Model');
+        const modelId = await window.viewer.loadModel('/models/condos.frag.gz', 'Test Model');
         return { success: true, modelId, error: null };
       } catch (error) {
         return { success: false, modelId: null, error: error.message };
@@ -249,7 +269,11 @@ test.describe('IFC Model Loading', () => {
       });
     });
 
-    await page.click('.sample-model-btn');
+    // Fire-and-forget: the page.evaluate must return immediately so the
+    // surrounding waitForFunction can poll the load-complete event. Awaiting
+    // the inner loadModel promise would block past Playwright's default 180s
+    // test timeout on slow headless software-WebGL runs.
+    await page.evaluate(() => { window.viewer.loadModel('/models/condos.frag.gz', 'Condos'); });
 
     await page.waitForFunction(
       () => window.__streamDone || window.__streamFailed,

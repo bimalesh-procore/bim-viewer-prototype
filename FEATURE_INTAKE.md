@@ -96,7 +96,20 @@ Check all that apply:
 
 ---
 
-### 10. Anything else?
+### 10. Does it look different on tablet or phone?
+
+Pick one:
+
+- [ ] **Looks the same on all devices** — Same JSX works across desktop, tablet, and phone (most simple buttons fall here)
+- [ ] **Looks different on phone/tablet** — Structural changes (different layout, repositioned, repurposed). Will need variant files
+- [ ] **Phone/tablet only** — Doesn't exist on desktop (like a touch-only joystick)
+- [ ] **Not sure** — Describe the situation and we'll figure it out
+
+> If "looks different" or "phone/tablet only," include Figma links or screenshots for each form factor that diverges. See [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) for what variant work currently looks like.
+
+---
+
+### 11. Anything else?
 
 > *Any special requirements, edge cases, or references (Figma links, screenshots, similar features in other apps)?*
 
@@ -165,13 +178,17 @@ Based on the questionnaire answers, map to the correct implementation:
 | "Information is displayed" | Chrome panel that reads from adapter |
 | "Reset clears it" | Feature must implement cleanup in `viewer.resetView()` |
 | "Keyboard shortcut" | Add to keyboard handler in `src/features/Keyboard.js` |
+| "Looks different on phone/tablet" | Variant files inside the feature dir: `Feature.desktop.tsx` / `Feature.tablet.tsx` / `Feature.phone.tsx` + `index.tsx` selector + `types.ts`. See [CLAUDE.md §3a](./CLAUDE.md). Don't preemptively triplicate — start with desktop and add variant stubs when divergence appears |
+| "Phone/tablet only" | New feature dir with `index.tsx` returning `null` for unsupported form factors. Phone-only example: `src/chrome/features/movement-joystick/` (planned, see [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md)) |
 
 Test file location:
 - Engine feature → `evals/tests/[feature-name].spec.js`
 - Chrome feature → `evals/tests/chrome-[feature-name].spec.js`
+- Variant-specific tests (when needed) → `evals/tests/tablet/` or `evals/tests/phone/`, navigating to `?form=tablet`/`?form=phone` directly
 
 Always follow:
 1. Plugin pattern with `enable()`, `disable()`, `destroy()`
 2. No imports into `src/core/ModelViewer.js`
 3. Chrome uses ViewerAdapter only (no direct engine imports)
 4. Tests written before or alongside implementation
+5. The viewer container must survive variant switches — `ChromeApp.tsx` uses a callback ref pattern; do not regress to plain `useRef` (see CLAUDE.md §3c)

@@ -112,11 +112,21 @@ export class SceneManager {
 
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    if (this.resizeHook) this.resizeHook(width, height);
   }
 
   animate() {
     this.animationId = requestAnimationFrame(() => this.animate());
-    this.renderer.render(this.scene, this.camera);
+    if (this.renderOverride) this.renderOverride();
+    else this.renderer.render(this.scene, this.camera);
+  }
+
+  setRenderOverride(fn) {
+    this.renderOverride = fn || null;
+  }
+
+  setResizeHook(fn) {
+    this.resizeHook = fn || null;
   }
 
   add(object) {

@@ -4164,25 +4164,49 @@ export class Sectioning {
         return;
       }
 
-      // Click is on model → create a new plane. The gizmo appears immediately;
-      // dragging is initiated only by clicking the gizmo, not by this click.
+      // Click is on model → create a new plane and immediately begin dragging it
+      // so the user can position it in one mousedown-move-mouseup motion.
+      let newPlaneId;
       if (this.activeTool === 'section-plane') {
         const inwardNormal = this._resolveInwardSectionPlaneNormal(hit.point, hitNormal);
         const outwardNormal = inwardNormal.clone().negate();
         const placementPoint = this._getSectionPlanePlacementPoint(hit.point, inwardNormal);
-        const planeId = this.addClipPlane(outwardNormal, placementPoint, { creatorTool: 'section-plane' });
-        this._showPlaneGizmo(planeId);
-        this._selectSectionPlane(planeId);
+        newPlaneId = this.addClipPlane(outwardNormal, placementPoint, { creatorTool: 'section-plane' });
       } else {
         // section-cut: normal perpendicular to the surface normal so the cut
         // slices through the model rather than along the surface.
         const cutNormal = this._computeSectionCutNormal(hitNormal);
-        const planeId = this.addClipPlane(cutNormal, hit.point, { creatorTool: 'section-cut' });
-        this.clearCutHoverMarker();
-        this._removeCutSurfaceHighlight();
-        this._showPlaneGizmo(planeId);
-        this._selectSectionPlane(planeId);
+        newPlaneId = this.addClipPlane(cutNormal, hit.point, { creatorTool: 'section-cut' });
       }
+
+      // Clear ALL placement hover visuals now that the plane is created and
+      // the drag is about to start. Without this, the crosshair/scissors icon
+      // stays frozen at the click point for the entire drag.
+      this.clearCutHoverMarker();
+      this.clearPlaneHoverMarker();
+      this._removeCutSurfaceHighlight();
+      this.clearHoverHighlight();
+
+      this._showPlaneGizmo(newPlaneId);
+      this._selectSectionPlane(newPlaneId);
+
+      // Immediately begin the drag so the mouse can slide the plane without
+      // releasing. _beginPlaneDrag emits 'drag-start' which ModelViewer picks
+      // up to call navigation.setControlsEnabled(false) — this disables
+      // OrbitControls before the first pointermove fires, so the camera stays
+      // still for the duration of the drag.
+      const gizmoData = this._planeGizmos.get(newPlaneId);
+      if (gizmoData?.currentPos) gizmoData.dragStartPos = gizmoData.currentPos.clone();
+      this._beginPlaneDrag(newPlaneId, hit.point);
+
+      // Capture mouseup on the window so the drag ends cleanly even if the
+      // cursor leaves the canvas before the button is released.
+      const onCreateDragUp = (upEvent) => {
+        window.removeEventListener('mouseup', onCreateDragUp, { capture: true });
+        if (this.isDragging) this.onMouseUp(upEvent);
+      };
+      window.addEventListener('mouseup', onCreateDragUp, { capture: true });
+
       event.stopPropagation();
       event.preventDefault();
       return;

@@ -21,6 +21,9 @@ turns directional-light cast shadows on.
 | Anti-aliasing | renderer's MSAA | inherited via base RenderPass |
 | Gamma | renderer's `outputColorSpace = SRGB` | gammaPass at composer end |
 | Cast shadows | off (`renderer.shadowMap.enabled = false`) | on (PCFSoftShadowMap, 2K) |
+| Fill light intensity | scene default | ambient + hemisphere ×`LIGHT_BOOST` (1.3) |
+| Edge pass tuning | n/a | `opacity 0.2`, `tolerance 6`, `lineColor 0xbbbbbb` (softer than package) |
+| N8AO tuning | n/a | `intensity 2.5` (down from package `newSaoPass` default 4) |
 
 We use [`@thatopen/components-front@^2.4.12`](https://www.npmjs.com/package/@thatopen/components-front)'s
 inner `Postproduction` class — NOT its `PostproductionRenderer` wrapper. See
@@ -45,6 +48,10 @@ restored on disable:
 - `renderer.toneMapping`
 - `renderer.toneMappingExposure`
 - `renderer.shadowMap.enabled`
+- `AmbientLight.intensity` and `HemisphereLight.intensity` (per-light snapshot
+  in `_lightSnapshots`, multiplied by `LIGHT_BOOST` on enable, restored on
+  disable). `DirectionalLight` is intentionally left alone so the shadow cast
+  doesn't shift between modes.
 
 (Postproduction's `initialize()` overrides the first three. We snapshot before
 calling enable so disable can put them back.)
@@ -178,6 +185,14 @@ this.postproduction._settings.ao = true;
 // and gate "is realism on" via setRenderOverride() — composer.render() is
 // only called when the override is installed.
 this.postproduction.enabled = true;
+
+// Post-init tuning. The customEffects + n8ao getters throw before initialize()
+// runs, so this MUST come after `enabled = true`. The package defaults are too
+// aggressive for dense BIM geometry — see "Post-process tuning" below.
+this.postproduction.customEffects.opacity = EDGE_OPACITY;     // 0.4 → 0.2
+this.postproduction.customEffects.tolerance = EDGE_TOLERANCE; // 3   → 6
+this.postproduction.customEffects.lineColor = EDGE_LINE_COLOR;// 0x999999 → 0xbbbbbb
+this.postproduction.n8ao.configuration.intensity = AO_INTENSITY; // 4 → 2.5
 ```
 
 In `enable()` / `resize()`:
@@ -206,6 +221,48 @@ _resizePostproduction(width, height) {
 | [src/chrome/features/viewer-adapter/modelViewerAdapter.ts](src/chrome/features/viewer-adapter/modelViewerAdapter.ts) | One-line delegate to `viewer.setRenderStyle` |
 | [src/chrome/features/viewer-adapter/mockViewerAdapter.ts](src/chrome/features/viewer-adapter/mockViewerAdapter.ts) | No-op log for the mock |
 | [src/chrome/features/bottom-toolbar/BottomToolbar.tsx](src/chrome/features/bottom-toolbar/BottomToolbar.tsx) | `handleSelectStyle` + `[adapter]`-keyed mount effect for URL survival |
+
+## Post-process tuning (current)
+
+All tuning constants live as `static` fields on `RealismRenderer` so adjusting
+them is one place, not a code hunt. Numbers reflect the current ship values:
+
+| Constant | Value | Package default | Why we changed it |
+|---|---|---|---|
+| `EDGE_OPACITY` | `0.2` | `0.4` | Sobel-detected edges on dense BIM joins read as a wireframe overlay; halving opacity keeps the silhouette hint without the crosshatch noise. |
+| `EDGE_TOLERANCE` | `6` | `3` | Higher tolerance = the Sobel filter only triggers on stronger depth/normal discontinuities, so coplanar slab+finish joins stop producing false-positive edges. |
+| `EDGE_LINE_COLOR` | `0xbbbbbb` | `0x999999` | Lighter grey reduces contrast against the Lambert-shaded surfaces, especially on the dark side of the directional light. |
+| `AO_INTENSITY` | `2.5` | `4` (set by `newSaoPass`) | Package's `newSaoPass` overrides the N8AO class default of `5` to `4`. We drop further so AO doesn't compound darkness with the edge pass and the cast shadow. `aoRadius` stays at `1` — at this radius, perceived darkness is intensity-dominated. |
+| `LIGHT_BOOST` | `1.3` | n/a | Compensates for the perceived brightness loss from NoToneMapping + N8AO + edge pass. Applied to ambient + hemisphere only; directional is left alone so shadow strength is identical between Default and Realism. |
+
+**Where the edge pass actually comes from:** the `CustomEffectsPass`
+depth+normal Sobel runs **regardless of `outlineEnabled`**. That boolean only
+controls a separate selection-highlight outline path (the `outlinedMeshes`
+map). The "boundary lines" users see are always-on Sobel; only `opacity` /
+`tolerance` / `lineColor` quiet them.
+
+### Edge-style alternatives (deferred)
+
+We picked "softened" because it preserves silhouette readability on flat-shaded
+Lambert geometry. If feedback turns against that choice, the two parked
+alternatives are:
+
+**Option B — Edges off entirely.** Set `EDGE_OPACITY = 0` (cheapest), or
+gate the customEffects pass out of the composer at build time
+(`postproduction._settings.custom = false` before `enabled = true`). Cleanest
+photo-real look. Trade-off: flat-shaded walls under uniform fill light lose
+the cue that distinguishes adjacent surfaces, so reading geometry in low-
+contrast areas gets harder. Worth A/B-ing in front of stakeholders before
+committing.
+
+**Option C — User-facing edge toggle.** Add a "edges on/off" sub-control to
+the Realism chip in BottomToolbar, route through the adapter, expose
+`setEdgeStyle('soft' | 'off')` on `RealismRenderer`. Implementation note: at
+runtime, toggling `customEffects.opacity` between `EDGE_OPACITY` and `0` is
+safe and immediate — no composer rebuild needed. Toggling pass membership
+via `setPasses` would hit the iteration bug ([§Gotchas](#that-open-components-gotchas)).
+Skip this until at least one stakeholder asks for it; otherwise it's
+yet-another-toggle for no observed user need.
 
 ## Things we tried and dropped
 

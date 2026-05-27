@@ -27,7 +27,25 @@ export class RealismRenderer {
     // ChromeApp; Realism flips them on.
     this._savedShadowMapEnabled = null;
     this._onCameraChange = null;
+    // Phase 3 — lighting boost while Realism is on. We snapshot Ambient +
+    // Hemisphere intensities on enable() and multiply by LIGHT_BOOST so the
+    // post-processed image isn't visibly darker than Default mode. NoToneMapping
+    // (forced by Postproduction.initialize) + N8AO + edge pass all subtract
+    // perceived brightness; boosting fill light compensates without touching the
+    // DirectionalLight (which would also shift the shadow look).
+    this._lightSnapshots = [];
   }
+
+  // Tuning constants for the post-process chain. Defaults inherited from the
+  // package are too aggressive for dense BIM geometry — edges read as a
+  // wireframe overlay and AO darkens every join. See REALISM.md for the package
+  // defaults we're overriding and the rationale.
+  static EDGE_OPACITY = 0.2;       // package default 0.4
+  static EDGE_TOLERANCE = 6;       // package default 3 — higher = fewer edges
+  static EDGE_LINE_COLOR = 0xbbbbbb; // package default 0x999999
+  static AO_INTENSITY = 2.5;       // newSaoPass default 4
+  static AO_RADIUS = 1;            // newSaoPass default 1 (unchanged; left here for visibility)
+  static LIGHT_BOOST = 1.3;        // ambient + hemisphere multiplier
 
   _build() {
     const sm = this.viewer.sceneManager;
@@ -67,6 +85,26 @@ export class RealismRenderer {
     // composer only runs when the override is installed.
     this.postproduction.enabled = true;
 
+    // Post-init tuning. The customEffects + n8ao getters throw before
+    // initialize() runs, so this MUST happen after `enabled = true`.
+    // CustomEffectsPass: tame the always-on depth+normal Sobel edge pass so
+    // dense BIM joins don't read as a wireframe overlay. (Sobel runs regardless
+    // of `outlineEnabled`, which controls a separate selection-highlight path.)
+    const ce = this.postproduction.customEffects;
+    if (ce) {
+      ce.opacity = RealismRenderer.EDGE_OPACITY;
+      ce.tolerance = RealismRenderer.EDGE_TOLERANCE;
+      ce.lineColor = RealismRenderer.EDGE_LINE_COLOR;
+    }
+    // N8AO: soften the package's newSaoPass override (intensity 4 → 2.5) so AO
+    // compounds less with the edge pass and the shadow cast. aoRadius stays at
+    // 1; the visible darkness is intensity-dominated at this radius.
+    const ao = this.postproduction.n8ao;
+    if (ao && ao.configuration) {
+      ao.configuration.intensity = RealismRenderer.AO_INTENSITY;
+      ao.configuration.aoRadius = RealismRenderer.AO_RADIUS;
+    }
+
     // Re-point the post-processing camera when the user swaps ortho/perspective.
     this._onCameraChange = () => {
       if (this.enabled && this.postproduction) {
@@ -78,13 +116,19 @@ export class RealismRenderer {
 
   enable() {
     if (this.enabled) return;
-    if (!this.postproduction) this._build();
 
+    // Snapshot BEFORE _build(). _build() calls postproduction.enabled = true,
+    // which runs Postproduction.initialize() and overwrites renderer.toneMapping
+    // (→ NoToneMapping) and outputColorSpace (→ "srgb"). Snapshotting after
+    // would capture the overridden values, so disable() could never restore
+    // Default mode's original tone-mapping curve.
     const sm = this.viewer.sceneManager;
     this._savedColorSpace = sm.renderer.outputColorSpace;
     this._savedToneMapping = sm.renderer.toneMapping;
     this._savedToneMappingExposure = sm.renderer.toneMappingExposure;
     this._savedShadowMapEnabled = sm.renderer.shadowMap.enabled;
+
+    if (!this.postproduction) this._build();
 
     // Sync passes to current viewport size (the renderer may have resized
     // between _build and enable, especially if Realism is the URL default).
@@ -99,6 +143,17 @@ export class RealismRenderer {
     // castShadow/receiveShadow flags are set by IFCLoader.finalizeMeshAfterReveal.
     sm.renderer.shadowMap.enabled = true;
     sm.renderer.shadowMap.needsUpdate = true;
+
+    // Boost ambient + hemisphere intensities to compensate for the post-process
+    // chain darkening the image. DirectionalLight is intentionally left alone
+    // so the shadow contribution doesn't shift.
+    this._lightSnapshots = [];
+    sm.scene.traverse((obj) => {
+      if (obj.isAmbientLight || obj.isHemisphereLight) {
+        this._lightSnapshots.push({ light: obj, intensity: obj.intensity });
+        obj.intensity = obj.intensity * RealismRenderer.LIGHT_BOOST;
+      }
+    });
 
     sm.setRenderOverride(() => this.postproduction.composer.render());
     this.enabled = true;
@@ -120,6 +175,12 @@ export class RealismRenderer {
     // Restore the shadow-map enabled flag (Default mode has it off).
     sm.renderer.shadowMap.enabled = this._savedShadowMapEnabled ?? false;
     sm.renderer.shadowMap.needsUpdate = true;
+
+    // Restore pre-boost light intensities so Default mode matches a fresh load.
+    for (const snap of this._lightSnapshots) {
+      snap.light.intensity = snap.intensity;
+    }
+    this._lightSnapshots = [];
 
     this.enabled = false;
   }

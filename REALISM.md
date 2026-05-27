@@ -168,6 +168,32 @@ shader pass. It does not honor `renderer.toneMapping`. We tried swapping it
 for three's `OutputPass` (which does honor toneMapping) to get ACES Filmic
 in Realism — see "Things we tried and dropped" below.
 
+### `EffectComposer` does not auto-inherit the renderer's `pixelRatio`
+
+`Postproduction` constructs an `EffectComposer` internally and never calls
+`composer.setPixelRatio(...)`. EffectComposer's default `_pixelRatio` is `1`,
+so its render targets — and every pass's render targets — get created at
+**CSS-pixel** dimensions, not drawing-buffer dimensions.
+
+On a retina display where `renderer.setPixelRatio(2)` is in effect, the
+canvas's drawing buffer is e.g. 1768×1832 but the composer's render targets
+sit at 884×916. The composer's final pass blits its quarter-resolution
+result up to the full-resolution canvas — which reads as a soft / blurry
+image vs Default mode (Default bypasses the composer entirely, so it draws
+directly to the full-resolution drawing buffer).
+
+We sync this in `_build()` immediately after `postproduction.enabled = true`:
+
+```js
+this.postproduction.composer.setPixelRatio(renderer.getPixelRatio());
+```
+
+And re-sync in `_resizePostproduction` in case the canvas moves between
+screens with different DPRs.
+
+**Do not remove this.** It's invisible until you put the build next to the
+old build on a retina screen — at which point the regression is obvious.
+
 ## How we work around all of the above
 
 In `_build()`:
@@ -198,16 +224,25 @@ this.postproduction.n8ao.configuration.intensity = AO_INTENSITY; // 4 → 2.5
 In `enable()` / `resize()`:
 
 ```js
-// Bypass the broken Postproduction.setSize. Resize each pass individually.
+// Bypass the broken Postproduction.setSize. EffectComposer.setSize is safe:
+// it iterates this.passes without mutating, calling pass.setSize(w*dpr, h*dpr)
+// on each. Because we sync composer.setPixelRatio to the renderer's DPR in
+// _build(), composer.setSize alone produces correctly-sized render targets
+// for every pass — no manual per-pass setSize calls needed.
 _resizePostproduction(width, height) {
   const pp = this.postproduction;
+  if (!pp || !pp.composer) return;
+  const dpr = this.viewer.sceneManager.renderer.getPixelRatio();
+  if (pp.composer._pixelRatio !== dpr) pp.composer.setPixelRatio(dpr);
   pp.composer.setSize(width, height);
-  pp.basePass?.setSize?.(width, height);
-  pp.n8ao?.setSize?.(width, height);
-  pp.customEffects?.setSize?.(width, height);
-  pp.gammaPass?.setSize?.(width, height);
 }
 ```
+
+**Earlier versions** of this method called `setSize(width, height)` on each
+pass manually as a "belt and suspenders" measure, before we realized
+`composer.setSize` already does that — and that the manual calls were
+*overwriting* the DPR-scaled dimensions with CSS dimensions, producing
+quarter-resolution render targets on retina screens. Don't add them back.
 
 ## File layout
 
@@ -361,6 +396,15 @@ the same thing can't recur. See [`CLAUDE.md`](./CLAUDE.md) → "NPM registry".
 - **Cast shadow quality is OK at the model scale we tested with**, but the
   2K directional shadow map will alias on very large IFC files. Bump to 4K
   in [SceneManager.js:64-65](src/core/SceneManager.js:64) if needed.
+- **Realism's GPU cost scales with `devicePixelRatio`** since the fix that
+  syncs `composer.setPixelRatio` to the renderer's. On retina (DPR=2) every
+  post-process pass — N8AO, Sobel edge, gamma — runs over 4× the pixels of
+  the CSS viewport. Fine on the models we ship, but if performance complaints
+  ever surface on a low-end GPU or a much larger IFC, the obvious knobs are
+  (a) cap the composer's pixel ratio below the renderer's (e.g. `Math.min(dpr,
+  1.5)` — visible softening but big perf win), or (b) flip N8AO's `halfRes`
+  config flag (AO at half res, base + edge still full res — usually
+  imperceptible quality hit, decent perf win).
 
 ## If you want to push Realism further
 

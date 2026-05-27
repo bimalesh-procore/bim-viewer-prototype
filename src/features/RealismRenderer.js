@@ -85,6 +85,15 @@ export class RealismRenderer {
     // composer only runs when the override is installed.
     this.postproduction.enabled = true;
 
+    // Sync the composer's pixel ratio to the renderer's. EffectComposer does
+    // NOT auto-inherit pixelRatio from the renderer it wraps — left at its
+    // default (1.0), its internal render targets are sized at CSS pixels.
+    // On a retina display (DPR=2), that's a quarter of the canvas pixel count;
+    // the upscale to the canvas reads as a soft/blurry image vs Default mode.
+    // Setting it here means composer.setSize(w, h) creates render targets at
+    // (w * dpr, h * dpr) — matching the renderer's drawing buffer exactly.
+    this.postproduction.composer.setPixelRatio(renderer.getPixelRatio());
+
     // Post-init tuning. The customEffects + n8ao getters throw before
     // initialize() runs, so this MUST happen after `enabled = true`.
     // CustomEffectsPass: tame the always-on depth+normal Sobel edge pass so
@@ -193,15 +202,19 @@ export class RealismRenderer {
   // around the resize and triggers updatePasses each time — that method has a
   // bug in @thatopen/components-front@2.4.12 where it removes passes from
   // composer.passes while iterating with for...of, so passes get duplicated.
-  // Resize the individual passes directly instead.
+  //
+  // EffectComposer.setSize is safe: it iterates this.passes without mutating,
+  // calling pass.setSize(width * pixelRatio, height * pixelRatio) on each.
+  // Because we sync composer.setPixelRatio to the renderer's DPR in _build(),
+  // composer.setSize alone produces correctly-sized render targets for every
+  // pass — no manual per-pass setSize calls needed. (Re-syncing pixelRatio on
+  // resize too, in case the canvas is moved to a screen with a different DPR.)
   _resizePostproduction(width, height) {
     const pp = this.postproduction;
     if (!pp || !pp.composer) return;
+    const dpr = this.viewer.sceneManager.renderer.getPixelRatio();
+    if (pp.composer._pixelRatio !== dpr) pp.composer.setPixelRatio(dpr);
     pp.composer.setSize(width, height);
-    pp.basePass?.setSize?.(width, height);
-    pp.n8ao?.setSize?.(width, height);
-    pp.customEffects?.setSize?.(width, height);
-    pp.gammaPass?.setSize?.(width, height);
   }
 
   dispose() {

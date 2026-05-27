@@ -224,8 +224,11 @@ The short version:
   `WebGLRenderer`.
 - `@thatopen/components-front@2.4.12` has multiple footguns (iteration bug in
   `updatePasses`, getters that throw before `initialize`, `setSize` corrupts
-  the pass list). The workarounds in `RealismRenderer.js` look odd in isolation
-  — read `REALISM.md` before refactoring.
+  the pass list, the internal `EffectComposer` doesn't inherit the renderer's
+  `pixelRatio` so its render targets default to CSS dimensions and produce a
+  blurry retina render unless we sync it ourselves). The workarounds in
+  `RealismRenderer.js` look odd in isolation — read `REALISM.md` before
+  refactoring.
 - Realism enables `renderer.shadowMap.enabled = true` and restores on disable.
   The directional light + shadow map are already set up in `SceneManager.js`.
   Mesh `castShadow`/`receiveShadow` flags are set in `IFCLoader.finalizeMeshAfterReveal`.

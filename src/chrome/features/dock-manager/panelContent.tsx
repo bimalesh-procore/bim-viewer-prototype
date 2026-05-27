@@ -942,6 +942,36 @@ function ViewsToolbar() {
   );
 }
 
+// ─── Drag-and-drop types + helpers ───────────────────────────────────────────
+
+type DragTarget = { id: string; position: 'before' | 'after' | 'inside' };
+
+interface DragProps {
+  draggingId: string | null;
+  dropTarget: DragTarget | null;
+  onDragStart: (id: string) => void;
+  onDragEnd: () => void;
+  onDragOver: (id: string, position: 'before' | 'after' | 'inside') => void;
+  onDragLeave: (id: string) => void;
+  onDrop: (id: string) => void;
+}
+
+function reorderItems<T extends { id: string }>(
+  items: T[],
+  dragId: string,
+  targetId: string,
+  position: 'before' | 'after',
+): T[] {
+  const result = [...items];
+  const dragIdx = result.findIndex((i) => i.id === dragId);
+  if (dragIdx === -1) return result;
+  const [dragged] = result.splice(dragIdx, 1);
+  const targetIdx = result.findIndex((i) => i.id === targetId);
+  if (targetIdx === -1) return [...result, dragged];
+  result.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, dragged);
+  return result;
+}
+
 function ViewFolderRow({
   folder,
   views,
@@ -964,6 +994,7 @@ function ViewFolderRow({
   onSelectFolder,
   onDoubleClickView,
   onContextMenu,
+  dragProps,
 }: {
   folder: ViewFolder;
   views: ViewData[];
@@ -986,6 +1017,7 @@ function ViewFolderRow({
   onSelectFolder: (id: string) => void;
   onDoubleClickView: (id: string, currentName: string) => void;
   onContextMenu: (e: React.MouseEvent, viewId: string) => void;
+  dragProps?: DragProps;
 }) {
   const childFolders = folders.filter((f) => f.parentFolderId === folder.id);
   const childViews = views.filter((v) => v.folderId === folder.id);
@@ -1010,6 +1042,19 @@ function ViewFolderRow({
       onCheckedChange={onFolderCheckedChange}
       selected={folder.id === selectedItemId}
       onClick={onSelectFolder}
+      draggable={!!dragProps}
+      onDragStart={dragProps?.onDragStart}
+      onDragEnd={dragProps?.onDragEnd}
+      onDragOver={dragProps?.onDragOver}
+      onDragLeave={dragProps?.onDragLeave}
+      onDrop={dragProps?.onDrop}
+      isDragging={dragProps?.draggingId === folder.id}
+      dropIndicator={
+        dragProps?.dropTarget?.id === folder.id && dragProps.dropTarget.position !== 'inside'
+          ? (dragProps.dropTarget.position as 'before' | 'after')
+          : undefined
+      }
+      isDropTarget={dragProps?.dropTarget?.id === folder.id && dragProps.dropTarget?.position === 'inside'}
     >
       {childFolders.map((cf) => (
         <ViewFolderRow
@@ -1035,6 +1080,7 @@ function ViewFolderRow({
           onSelectFolder={onSelectFolder}
           onDoubleClickView={onDoubleClickView}
           onContextMenu={onContextMenu}
+          dragProps={dragProps}
         />
       ))}
       {childViews.map((v) => (
@@ -1053,6 +1099,7 @@ function ViewFolderRow({
           onSelect={onSelectView}
           onDoubleClick={onDoubleClickView}
           onContextMenu={onContextMenu}
+          dragProps={dragProps}
         />
       ))}
     </TreeNode>
@@ -1073,6 +1120,7 @@ function ViewRow({
   onSelect,
   onDoubleClick,
   onContextMenu,
+  dragProps,
 }: {
   view: ViewData;
   checked?: boolean;
@@ -1087,6 +1135,7 @@ function ViewRow({
   onSelect: (id: string) => void;
   onDoubleClick: (id: string, currentName: string) => void;
   onContextMenu: (e: React.MouseEvent, viewId: string) => void;
+  dragProps?: DragProps;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -1129,9 +1178,21 @@ function ViewRow({
       onClick={onSelect}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
+      draggable={!!dragProps}
+      onDragStart={dragProps?.onDragStart}
+      onDragEnd={dragProps?.onDragEnd}
+      onDragOver={dragProps?.onDragOver}
+      onDragLeave={dragProps?.onDragLeave}
+      onDrop={dragProps?.onDrop}
+      isDragging={dragProps?.draggingId === view.id}
+      dropIndicator={
+        dragProps?.dropTarget?.id === view.id
+          ? (dragProps.dropTarget.position as 'before' | 'after')
+          : undefined
+      }
       actions={
         <>
-{view.isProjectView && (
+          {view.isProjectView && (
             <span className="text-[11px] text-gray-500 border border-gray-300 rounded px-1.5 py-0.5 shrink-0">Project View</span>
           )}
         </>
@@ -1152,6 +1213,8 @@ function ViewsContent() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; viewId: string } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<DragTarget | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1219,6 +1282,100 @@ function ViewsContent() {
     setSelectedViewId(null);
     adapter.deselectView?.();
   }, [adapter]);
+
+  // ── Drag and drop ──────────────────────────────────────────────────────────
+
+  const handleDragStart = useCallback((id: string) => {
+    setDraggingId(id);
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDraggingId(null);
+    setDropTarget(null);
+  }, []);
+
+  const handleDragOver = useCallback((id: string, position: 'before' | 'after' | 'inside') => {
+    if (!draggingId || id === draggingId) return;
+    setDropTarget({ id, position });
+  }, [draggingId]);
+
+  const handleDragLeave = useCallback((id: string) => {
+    setDropTarget((prev) => (prev?.id === id ? null : prev));
+  }, []);
+
+  const handleDrop = useCallback((targetId: string) => {
+    if (!draggingId || !dropTarget || dropTarget.id !== targetId) return;
+    const { position } = dropTarget;
+
+    // Helper: check if nodeId is a descendant of ancestorId in the folder tree
+    const isDescendant = (ancestorId: string, nodeId: string): boolean => {
+      let current: string | null = nodeId;
+      while (current) {
+        if (current === ancestorId) return true;
+        current = folders.find((f) => f.id === current)?.parentFolderId ?? null;
+      }
+      return false;
+    };
+
+    if (position === 'inside') {
+      // Explicit drop onto a collapsed/empty folder header
+      if (!folders.some((f) => f.id === targetId)) return;
+      if (folders.some((f) => f.id === draggingId) && isDescendant(draggingId, targetId)) return;
+
+      setViews((prev) => prev.map((v) => v.id === draggingId ? { ...v, folderId: targetId } : v));
+      setFolders((prev) => prev.map((f) => f.id === draggingId ? { ...f, parentFolderId: targetId } : f));
+    } else {
+      // Drop before/after a row: place item at that position AND inherit the
+      // target's parent folder — dropping between a folder's children
+      // implicitly moves the dragged item into that folder.
+      const targetView = views.find((v) => v.id === targetId);
+      const targetFolder = folders.find((f) => f.id === targetId);
+      const newParentFolderId = targetView?.folderId ?? targetFolder?.parentFolderId ?? null;
+
+      const draggingView = views.find((v) => v.id === draggingId);
+      const draggingFolder = folders.find((f) => f.id === draggingId);
+
+      // Circular reference guard when moving a folder
+      if (draggingFolder && newParentFolderId && isDescendant(draggingId, newParentFolderId)) return;
+
+      if (draggingView) {
+        setViews((prev) => {
+          const without = prev.filter((v) => v.id !== draggingId);
+          const updated = { ...draggingView, folderId: newParentFolderId };
+          const targetIdx = without.findIndex((v) => v.id === targetId);
+          if (targetIdx !== -1) {
+            without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, updated);
+            return without;
+          }
+          return [...without, updated];
+        });
+      } else if (draggingFolder) {
+        setFolders((prev) => {
+          const without = prev.filter((f) => f.id !== draggingId);
+          const updated = { ...draggingFolder, parentFolderId: newParentFolderId };
+          const targetIdx = without.findIndex((f) => f.id === targetId);
+          if (targetIdx !== -1) {
+            without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, updated);
+            return without;
+          }
+          return [...without, updated];
+        });
+      }
+    }
+
+    setDraggingId(null);
+    setDropTarget(null);
+  }, [draggingId, dropTarget, views, folders]);
+
+  const dragProps: DragProps = {
+    draggingId,
+    dropTarget,
+    onDragStart: handleDragStart,
+    onDragEnd: handleDragEnd,
+    onDragOver: handleDragOver,
+    onDragLeave: handleDragLeave,
+    onDrop: handleDrop,
+  };
 
   const handleContextMenu = useCallback((e: React.MouseEvent, viewId: string) => {
     e.preventDefault();
@@ -1319,6 +1476,7 @@ function ViewsContent() {
           onSelectFolder={handleSelectFolder}
           onDoubleClickView={handleDoubleClick}
           onContextMenu={handleContextMenu}
+          dragProps={dragProps}
         />
       ))}
 
@@ -1338,6 +1496,7 @@ function ViewsContent() {
           onSelect={handleSelectView}
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
+          dragProps={dragProps}
         />
       ))}
 

@@ -17,6 +17,59 @@ export class ViewsManager {
     this._isCameraTransitioning = false;
     this._cameraTransitionUntil = 0;
     this.eventListeners = new Map();
+
+    this._seedDefaultData();
+  }
+
+  _seedDefaultData() {
+    // ── Folders (alphabetical) ────────────────────────────────────────────────
+    const level01  = { id: 'folder-level-01',  name: 'Level 01',   parentFolderId: null };
+    const level02  = { id: 'folder-level-02',  name: 'Level 02',   parentFolderId: null };
+    const mep      = { id: 'folder-mep',       name: 'MEP',        parentFolderId: null };
+    const structural = { id: 'folder-structural', name: 'Structural', parentFolderId: null };
+    this.folders = [level01, level02, mep, structural];
+
+    // ── Placeholder camera (origin → origin) used for all seed views ──────────
+    const cam = { position: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 } };
+
+    // ── Views ─────────────────────────────────────────────────────────────────
+    this.views = [
+      // Level 01
+      { id: 'view-l01-lobby',    name: 'Entry Lobby',          folderId: 'folder-level-01', ...cam, isOrthographic: false, markups: [], createdAt: 1, isProjectView: false },
+      { id: 'view-l01-corridor', name: 'Main Corridor',        folderId: 'folder-level-01', ...cam, isOrthographic: false, markups: [], createdAt: 2, isProjectView: false },
+      { id: 'view-l01-stair',    name: 'Stairwell A',          folderId: 'folder-level-01', ...cam, isOrthographic: false, markups: [], createdAt: 3, isProjectView: false },
+      { id: 'view-l01-plan',     name: 'Floor Plan Overview',  folderId: 'folder-level-01', ...cam, isOrthographic: true,  markups: [], createdAt: 4, isProjectView: false },
+
+      // Level 02
+      { id: 'view-l02-office',   name: 'Open Office',          folderId: 'folder-level-02', ...cam, isOrthographic: false, markups: [], createdAt: 5, isProjectView: false },
+      { id: 'view-l02-conf',     name: 'Conference Room 2A',   folderId: 'folder-level-02', ...cam, isOrthographic: false, markups: [], createdAt: 6, isProjectView: false },
+      { id: 'view-l02-mech',     name: 'Mechanical Room',      folderId: 'folder-level-02', ...cam, isOrthographic: false, markups: [], createdAt: 7, isProjectView: false },
+      { id: 'view-l02-terrace',  name: 'Roof Terrace Access',  folderId: 'folder-level-02', ...cam, isOrthographic: false, markups: [], createdAt: 8, isProjectView: false },
+      { id: 'view-l02-plan',     name: 'Floor Plan Overview',  folderId: 'folder-level-02', ...cam, isOrthographic: true,  markups: [], createdAt: 9, isProjectView: false },
+
+      // MEP
+      { id: 'view-mep-hvac',     name: 'HVAC Routing',         folderId: 'folder-mep',      ...cam, isOrthographic: false, markups: [], createdAt: 10, isProjectView: false },
+      { id: 'view-mep-plumb',    name: 'Plumbing Layout',      folderId: 'folder-mep',      ...cam, isOrthographic: false, markups: [], createdAt: 11, isProjectView: false },
+      { id: 'view-mep-elec',     name: 'Electrical Panels',    folderId: 'folder-mep',      ...cam, isOrthographic: false, markups: [], createdAt: 12, isProjectView: false },
+      { id: 'view-mep-fire',     name: 'Fire Suppression',     folderId: 'folder-mep',      ...cam, isOrthographic: false, markups: [], createdAt: 13, isProjectView: false },
+      { id: 'view-mep-duct',     name: 'Duct Coordination',    folderId: 'folder-mep',      ...cam, isOrthographic: true,  markups: [], createdAt: 14, isProjectView: false },
+      { id: 'view-mep-sprink',   name: 'Sprinkler Heads',      folderId: 'folder-mep',      ...cam, isOrthographic: false, markups: [], createdAt: 15, isProjectView: false },
+
+      // Structural
+      { id: 'view-str-grid',     name: 'Column Grid',          folderId: 'folder-structural', ...cam, isOrthographic: true,  markups: [], createdAt: 16, isProjectView: false },
+      { id: 'view-str-beam',     name: 'Beam Framing Plan',    folderId: 'folder-structural', ...cam, isOrthographic: true,  markups: [], createdAt: 17, isProjectView: false },
+      { id: 'view-str-found',    name: 'Foundation Detail',    folderId: 'folder-structural', ...cam, isOrthographic: false, markups: [], createdAt: 18, isProjectView: false },
+      { id: 'view-str-slab',     name: 'Slab Edge Condition',  folderId: 'folder-structural', ...cam, isOrthographic: false, markups: [], createdAt: 19, isProjectView: false },
+
+      // Root-level views (after folders)
+      { id: 'view-root-iso',     name: 'Site Isometric',       folderId: null,              ...cam, isOrthographic: false, markups: [], createdAt: 20, isProjectView: false },
+      { id: 'view-root-north',   name: 'North Elevation',      folderId: null,              ...cam, isOrthographic: true,  markups: [], createdAt: 21, isProjectView: false },
+      { id: 'view-root-section', name: 'Building Section A-A', folderId: null,              ...cam, isOrthographic: true,  markups: [], createdAt: 22, isProjectView: false },
+    ];
+
+    // Set counters past the seeded IDs so new views/folders get unique IDs
+    this._viewCounter = 100;
+    this._folderCounter = 100;
   }
 
   _cancelCameraTransition() {

@@ -77,7 +77,7 @@ export function TreeNode({
           <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#2066DF] z-10 pointer-events-none" />
         )}
         <div
-          className={`flex items-center gap-2 cursor-pointer select-none ${
+          className={`flex ${subtitle ? 'items-start' : 'items-center'} gap-2 cursor-pointer select-none ${
             selected || isDropTarget ? '' : 'hover:bg-gray-50'
           } ${isDragging ? 'opacity-40' : ''}`}
           style={{ paddingLeft, paddingRight: 12, paddingTop: 8, paddingBottom: 8, backgroundColor: selected || isDropTarget ? '#EDF2FC' : undefined }}
@@ -111,7 +111,7 @@ export function TreeNode({
             aria-checked={checkboxState === 'indeterminate' ? 'mixed' : checkboxState === 'checked'}
             disabled={loading}
             onClick={(e) => { e.stopPropagation(); onCheckedChange?.(id, !checked); }}
-            className={`shrink-0 size-5 rounded-[2px] flex items-center justify-center transition-colors ${
+            className={`shrink-0 size-5 rounded-[2px] flex items-center justify-center transition-colors ${subtitle ? 'mt-0.5' : ''} ${
               checkboxState === 'unchecked' ? 'bg-white border-2 border-[#6A767C]' : 'bg-[#2066DF]'
             } ${loading ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
           >

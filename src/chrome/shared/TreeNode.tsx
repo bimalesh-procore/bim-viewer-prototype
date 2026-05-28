@@ -137,7 +137,7 @@ export function TreeNode({
               <p className="text-xs truncate" style={{ color: '#6A767C' }}>{subtitle}</p>
             </div>
           ) : (
-            <span className={`text-sm truncate flex-1 ml-1 ${selected || labelBold ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : '#374151' }}>
+            <span className={`truncate flex-1 ml-1 ${labelBold ? 'text-base' : 'text-sm'} ${selected || labelBold ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : '#374151' }}>
               {label}
             </span>
           )}

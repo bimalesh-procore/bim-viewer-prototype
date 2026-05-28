@@ -1323,8 +1323,8 @@ interface SheetData {
   folderId: string;
   number: string; // e.g. "A-101"
   name: string;   // e.g. "Architectural Floor Plan"
-  status: string; // e.g. "Current"
-  version: string; // e.g. "Rev 4"
+  status: 'Approved' | 'Approved with Comments';
+  version: string; // e.g. "Version 4"
 }
 
 const SHEET_FOLDERS: SheetFolder[] = [
@@ -1336,27 +1336,27 @@ const SHEET_FOLDERS: SheetFolder[] = [
 
 const SHEETS: SheetData[] = [
   // Building A > Level 01
-  { id: 's-a-l01-01', folderId: 'sf-a-l01', number: 'A-101', name: 'Architectural Floor Plan',  status: 'Current',   version: 'Rev 4' },
-  { id: 's-a-l01-02', folderId: 'sf-a-l01', number: 'A-102', name: 'Reflected Ceiling Plan',    status: 'Current',   version: 'Rev 2' },
-  { id: 's-a-l01-03', folderId: 'sf-a-l01', number: 'A-103', name: 'Room Finish Schedule',      status: 'In Review', version: 'Rev 1' },
-  { id: 's-a-l01-04', folderId: 'sf-a-l01', number: 'S-101', name: 'Structural Framing Plan',   status: 'In Review', version: 'Rev 3' },
+  { id: 's-a-l01-01', folderId: 'sf-a-l01', number: 'A-101', name: 'Architectural Floor Plan',  status: 'Approved',                version: 'Version 4' },
+  { id: 's-a-l01-02', folderId: 'sf-a-l01', number: 'A-102', name: 'Reflected Ceiling Plan',    status: 'Approved',                version: 'Version 2' },
+  { id: 's-a-l01-03', folderId: 'sf-a-l01', number: 'A-103', name: 'Room Finish Schedule',      status: 'Approved with Comments',  version: 'Version 1' },
+  { id: 's-a-l01-04', folderId: 'sf-a-l01', number: 'S-101', name: 'Structural Framing Plan',   status: 'Approved with Comments',  version: 'Version 3' },
 
   // Building A > Level 02
-  { id: 's-a-l02-01', folderId: 'sf-a-l02', number: 'A-201', name: 'Floor Plan',                status: 'Current',   version: 'Rev 5' },
-  { id: 's-a-l02-02', folderId: 'sf-a-l02', number: 'A-202', name: 'Reflected Ceiling Plan',    status: 'Draft',     version: 'Rev 1' },
-  { id: 's-a-l02-03', folderId: 'sf-a-l02', number: 'M-201', name: 'Mechanical Layout',         status: 'Current',   version: 'Rev 2' },
-  { id: 's-a-l02-04', folderId: 'sf-a-l02', number: 'E-201', name: 'Electrical Plan',           status: 'In Review', version: 'Rev 2' },
+  { id: 's-a-l02-01', folderId: 'sf-a-l02', number: 'A-201', name: 'Floor Plan',                status: 'Approved',                version: 'Version 5' },
+  { id: 's-a-l02-02', folderId: 'sf-a-l02', number: 'A-202', name: 'Reflected Ceiling Plan',    status: 'Approved with Comments',  version: 'Version 1' },
+  { id: 's-a-l02-03', folderId: 'sf-a-l02', number: 'M-201', name: 'Mechanical Layout',         status: 'Approved',                version: 'Version 2' },
+  { id: 's-a-l02-04', folderId: 'sf-a-l02', number: 'E-201', name: 'Electrical Plan',           status: 'Approved with Comments',  version: 'Version 2' },
 
   // Building B > Level 01
-  { id: 's-b-l01-01', folderId: 'sf-b-l01', number: 'A-101', name: 'Architectural Floor Plan',  status: 'Current',   version: 'Rev 3' },
-  { id: 's-b-l01-02', folderId: 'sf-b-l01', number: 'S-101', name: 'Foundation Plan',           status: 'Current',   version: 'Rev 2' },
-  { id: 's-b-l01-03', folderId: 'sf-b-l01', number: 'M-101', name: 'Plumbing Layout',           status: 'Draft',     version: 'Rev 1' },
-  { id: 's-b-l01-04', folderId: 'sf-b-l01', number: 'E-101', name: 'Electrical Single Line',    status: 'In Review', version: 'Rev 1' },
+  { id: 's-b-l01-01', folderId: 'sf-b-l01', number: 'A-101', name: 'Architectural Floor Plan',  status: 'Approved',                version: 'Version 3' },
+  { id: 's-b-l01-02', folderId: 'sf-b-l01', number: 'S-101', name: 'Foundation Plan',           status: 'Approved',                version: 'Version 2' },
+  { id: 's-b-l01-03', folderId: 'sf-b-l01', number: 'M-101', name: 'Plumbing Layout',           status: 'Approved with Comments',  version: 'Version 1' },
+  { id: 's-b-l01-04', folderId: 'sf-b-l01', number: 'E-101', name: 'Electrical Single Line',    status: 'Approved with Comments',  version: 'Version 1' },
 
   // Building B > Level 02
-  { id: 's-b-l02-01', folderId: 'sf-b-l02', number: 'A-201', name: 'Floor Plan',                status: 'Current',   version: 'Rev 2' },
-  { id: 's-b-l02-02', folderId: 'sf-b-l02', number: 'A-202', name: 'Ceiling Plan',              status: 'Draft',     version: 'Rev 1' },
-  { id: 's-b-l02-03', folderId: 'sf-b-l02', number: 'S-201', name: 'Structural Framing',        status: 'Current',   version: 'Rev 4' },
+  { id: 's-b-l02-01', folderId: 'sf-b-l02', number: 'A-201', name: 'Floor Plan',                status: 'Approved',                version: 'Version 2' },
+  { id: 's-b-l02-02', folderId: 'sf-b-l02', number: 'A-202', name: 'Ceiling Plan',              status: 'Approved with Comments',  version: 'Version 1' },
+  { id: 's-b-l02-03', folderId: 'sf-b-l02', number: 'S-201', name: 'Structural Framing',        status: 'Approved',                version: 'Version 4' },
 ];
 
 // SheetsToolbar renders nothing — search lives inside SheetsContent so it can filter the list.

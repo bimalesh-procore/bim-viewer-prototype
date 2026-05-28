@@ -151,7 +151,7 @@ export function TreeNode({
                 : undefined,
           }}
           draggable={draggable}
-          onClick={() => { if (isFolder) onToggle?.(id); onClick?.(id); }}
+          onClick={() => onClick?.(id)}
           onDoubleClick={() => !isFolder && onDoubleClick?.(id, label)}
           onContextMenu={(e) => !isFolder && onContextMenu?.(e, id)}
           onDragStart={onDragStart ? (e) => { e.stopPropagation(); onDragStart(id); } : undefined}
@@ -191,7 +191,12 @@ export function TreeNode({
           )}
 
           {isFolder && (
-            <button type="button" className="w-6 h-6 flex items-center justify-center shrink-0" style={{ color: '#232729' }}>
+            <button
+              type="button"
+              className="w-6 h-6 flex items-center justify-center shrink-0"
+              style={{ color: '#232729' }}
+              onClick={(e) => { e.stopPropagation(); onToggle?.(id); }}
+            >
               {expanded ? <ChevronDown /> : <ChevronRight />}
             </button>
           )}

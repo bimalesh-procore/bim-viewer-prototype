@@ -288,7 +288,7 @@ The short version:
 
 ### 4e. Viewpoint Persistence (`public/viewpoints.json` + `scripts/vite-plugin-viewpoints-writer.mjs`)
 
-The chrome's "Home View" — and, later, the Viewpoints panel's custom views —
+The chrome's "Home View" and the Views panel's custom saved views both
 persist to a JSON file committed to the repo. The file is the single source
 of truth; localStorage is **not** used.
 
@@ -300,7 +300,7 @@ of truth; localStorage is **not** used.
   "models": {
     "condos": {
       "homeView": { /* Viewpoint */ } | null,
-      "customViews": [ /* Viewpoint, ... */ ]   // reserved for the Viewpoints panel
+      "customViews": [ /* Viewpoint, ... */ ]   // user-saved views from the Views panel
     },
     ...
   }
@@ -310,8 +310,7 @@ of truth; localStorage is **not** used.
 Each `Viewpoint` captures the camera (`cameraPosition`, `cameraTarget`,
 `isOrthographic`), the hidden-objects list (`hiddenObjects: string[]`),
 sectioning state (`sectioning: SectioningSnapshot | null` — planes + box),
-and `markups: MarkupData[]` (currently always `[]`; the Viewpoints panel
-will populate). Types live in
+and `markups: MarkupData[]` (always `[]` for now — reserved for future markup capture). Types live in
 `src/chrome/features/viewpoints/types.ts`.
 
 **Reading** — the chrome fetches `/viewpoints.json` with `cache: 'no-cache'`
@@ -321,11 +320,18 @@ once on app boot via the module-level promise-cached `viewpointStore`
 the bottom-toolbar Home button) reads from this cache. Schema v2 entries
 are migrated to v3 on read.
 
-**Writing** — `scripts/vite-plugin-viewpoints-writer.mjs` registers a
-`POST /__viewpoints/home` middleware on the Vite dev server. The Settings
-panel's "Update Home View" button calls this endpoint, the plugin merges
-the new viewpoint into the file on disk, and the in-memory cache is
-updated. **Active only under `npm run dev`** (`apply: 'serve'`).
+**Writing** — `scripts/vite-plugin-viewpoints-writer.mjs` registers two
+middleware endpoints on the Vite dev server:
+
+- `POST /__viewpoints/home` — used by Settings "Update Home View"; replaces
+  `homeView` for the given `modelId`.
+- `POST /__viewpoints/custom` — used by the Views panel; supports actions
+  `add`, `delete`, `rename`, and `reorder` against `customViews`.
+
+Both endpoints read the file, apply the mutation, write back, and respond
+with the updated JSON. The in-memory cache in `viewpointStore.ts` is updated
+from the response so the next read is immediate. **Active only under
+`npm run dev`** (`apply: 'serve'`).
 
 **On a Vercel build, the endpoint does not exist.** Saves return 404; the
 chrome shows an error toast ("Saving a home view is only available when
@@ -333,6 +339,24 @@ running locally"). This is intentional — saves require an authenticated
 write back to the GitHub repo, which we don't want to wire up for a
 prototype. To update a saved home from prod: run the dev server locally,
 save, commit the resulting `public/viewpoints.json` change, push.
+
+**Custom views (Views panel)** — `ViewpointsContext` owns live `customViews: Viewpoint[]` state,
+loaded from the store on mount and on `activeModelId` change. Every write calls the matching
+store function (`addCustomView`, `deleteCustomView`, `renameCustomView`, `reorderCustomViews`)
+then calls `refreshCustomViews()` to sync the local state from the updated cache.
+
+The Views panel (`panelContent.tsx → ViewsContent + ViewsToolbar`) wires to this context:
+
+- **Save** (`+` button in toolbar) — calls `adapter.getViewpointState()` to capture camera +
+  hiddenObjects + sectioning, then `viewpoints.addCustomView(viewpoint)`. Auto-names as
+  "View N" (1-based, based on current list length). Shows success/error toast.
+- **Restore** (click a row) — calls `adapter.setViewpointState(state, { animate: true })`.
+  Sectioning → visibility → camera, same as home-view restore.
+- **Rename** (double-click row, or context menu → Rename) — inline `<input>` replaces the
+  label; Enter commits, Escape cancels, blur commits. Calls `viewpoints.renameCustomView`.
+- **Delete** (context menu → Delete) — calls `viewpoints.deleteCustomView`.
+- **Reorder** (drag-and-drop) — `localViews` state mirrors context for optimistic UI; on drop
+  calls `viewpoints.reorderCustomViews` to persist the new order.
 
 **Apply order on home restore** (camera + visibility + sectioning):
 

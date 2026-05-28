@@ -60,37 +60,73 @@ export function viewpointsWriter(opts = {}) {
     return body ? JSON.parse(body) : {};
   }
 
+  function ensureModelEntry(json, modelId) {
+    if (!json.models[modelId]) {
+      json.models[modelId] = { homeView: null, customViews: [] };
+    }
+  }
+
+  async function handleRequest(req, res, handler) {
+    try {
+      const body = await readBody(req);
+      const json = await readFile();
+      const result = handler(json, body);
+      if (result?.error) {
+        res.statusCode = 400;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ error: result.error }));
+        return;
+      }
+      await writeFile(json);
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify(json));
+    } catch (err) {
+      console.error('[viewpoints-writer] error:', err);
+      res.statusCode = 500;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+  }
+
   return {
     name: 'viewpoints-writer',
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use('/__viewpoints/home', async (req, res, next) => {
         if (req.method !== 'POST') return next();
-        try {
-          const { modelId, viewpoint } = await readBody(req);
-          if (!modelId || !viewpoint) {
-            res.statusCode = 400;
-            res.setHeader('content-type', 'application/json');
-            res.end(JSON.stringify({ error: 'missing modelId or viewpoint' }));
-            return;
-          }
-
-          const json = await readFile();
-          if (!json.models[modelId]) {
-            json.models[modelId] = { homeView: null, customViews: [] };
-          }
+        await handleRequest(req, res, (json, { modelId, viewpoint }) => {
+          if (!modelId || !viewpoint) return { error: 'missing modelId or viewpoint' };
+          ensureModelEntry(json, modelId);
           json.models[modelId].homeView = viewpoint;
-          await writeFile(json);
+        });
+      });
 
-          res.statusCode = 200;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify(json));
-        } catch (err) {
-          console.error('[viewpoints-writer] error:', err);
-          res.statusCode = 500;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: String(err) }));
-        }
+      server.middlewares.use('/__viewpoints/custom', async (req, res, next) => {
+        if (req.method !== 'POST') return next();
+        await handleRequest(req, res, (json, { modelId, action, viewpoint, viewpointId, name, viewpoints }) => {
+          if (!modelId || !action) return { error: 'missing modelId or action' };
+          ensureModelEntry(json, modelId);
+          const entry = json.models[modelId];
+
+          if (action === 'add') {
+            if (!viewpoint) return { error: 'missing viewpoint' };
+            entry.customViews = [...(entry.customViews ?? []), viewpoint];
+          } else if (action === 'delete') {
+            if (!viewpointId) return { error: 'missing viewpointId' };
+            entry.customViews = (entry.customViews ?? []).filter((v) => v.id !== viewpointId);
+          } else if (action === 'rename') {
+            if (!viewpointId || !name) return { error: 'missing viewpointId or name' };
+            entry.customViews = (entry.customViews ?? []).map((v) =>
+              v.id === viewpointId ? { ...v, name } : v,
+            );
+          } else if (action === 'reorder') {
+            if (!Array.isArray(viewpoints)) return { error: 'missing viewpoints array' };
+            entry.customViews = viewpoints;
+          } else {
+            return { error: `unknown action: ${action}` };
+          }
+        });
       });
     },
   };

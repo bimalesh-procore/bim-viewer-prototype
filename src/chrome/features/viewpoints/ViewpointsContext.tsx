@@ -1,14 +1,16 @@
-import { createContext, useCallback, useContext, useMemo } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as store from './viewpointStore';
 import type { Viewpoint, WriteResult } from './types';
 
 interface ViewpointsApi {
-  // The model the chrome currently considers active. May be null before a model is loaded.
   activeModelId: string | null;
-  // Async because the source of truth is a file fetched from the dev/static server.
   getHomeView: () => Promise<Viewpoint | null>;
   setHomeView: (viewpoint: Viewpoint) => Promise<WriteResult>;
-  getCustomViews: () => Promise<Viewpoint[]>;
+  customViews: Viewpoint[];
+  addCustomView: (viewpoint: Viewpoint) => Promise<WriteResult>;
+  deleteCustomView: (id: string) => Promise<WriteResult>;
+  renameCustomView: (id: string, name: string) => Promise<WriteResult>;
+  reorderCustomViews: (viewpoints: Viewpoint[]) => Promise<WriteResult>;
 }
 
 const ViewpointsContext = createContext<ViewpointsApi | null>(null);
@@ -19,6 +21,18 @@ interface ProviderProps {
 }
 
 export function ViewpointsProvider({ activeModelId, children }: ProviderProps) {
+  const [customViews, setCustomViews] = useState<Viewpoint[]>([]);
+
+  useEffect(() => {
+    if (!activeModelId) { setCustomViews([]); return; }
+    store.getCustomViews(activeModelId).then(setCustomViews);
+  }, [activeModelId]);
+
+  const refreshCustomViews = useCallback(async () => {
+    if (!activeModelId) return;
+    setCustomViews(await store.getCustomViews(activeModelId));
+  }, [activeModelId]);
+
   const getHomeView = useCallback(async () => {
     if (!activeModelId) return null;
     return store.getHomeView(activeModelId);
@@ -29,14 +43,37 @@ export function ViewpointsProvider({ activeModelId, children }: ProviderProps) {
     return store.setHomeView(activeModelId, viewpoint);
   }, [activeModelId]);
 
-  const getCustomViews = useCallback(async () => {
-    if (!activeModelId) return [];
-    return store.getCustomViews(activeModelId);
-  }, [activeModelId]);
+  const addCustomView = useCallback(async (viewpoint: Viewpoint): Promise<WriteResult> => {
+    if (!activeModelId) return { ok: false, reason: 'no-active-model' };
+    const result = await store.addCustomView(activeModelId, viewpoint);
+    if (result.ok) await refreshCustomViews();
+    return result;
+  }, [activeModelId, refreshCustomViews]);
+
+  const deleteCustomView = useCallback(async (id: string): Promise<WriteResult> => {
+    if (!activeModelId) return { ok: false, reason: 'no-active-model' };
+    const result = await store.deleteCustomView(activeModelId, id);
+    if (result.ok) await refreshCustomViews();
+    return result;
+  }, [activeModelId, refreshCustomViews]);
+
+  const renameCustomView = useCallback(async (id: string, name: string): Promise<WriteResult> => {
+    if (!activeModelId) return { ok: false, reason: 'no-active-model' };
+    const result = await store.renameCustomView(activeModelId, id, name);
+    if (result.ok) await refreshCustomViews();
+    return result;
+  }, [activeModelId, refreshCustomViews]);
+
+  const reorderCustomViews = useCallback(async (viewpoints: Viewpoint[]): Promise<WriteResult> => {
+    if (!activeModelId) return { ok: false, reason: 'no-active-model' };
+    const result = await store.reorderCustomViews(activeModelId, viewpoints);
+    if (result.ok) await refreshCustomViews();
+    return result;
+  }, [activeModelId, refreshCustomViews]);
 
   const api = useMemo<ViewpointsApi>(
-    () => ({ activeModelId, getHomeView, setHomeView, getCustomViews }),
-    [activeModelId, getHomeView, setHomeView, getCustomViews],
+    () => ({ activeModelId, getHomeView, setHomeView, customViews, addCustomView, deleteCustomView, renameCustomView, reorderCustomViews }),
+    [activeModelId, getHomeView, setHomeView, customViews, addCustomView, deleteCustomView, renameCustomView, reorderCustomViews],
   );
 
   return <ViewpointsContext.Provider value={api}>{children}</ViewpointsContext.Provider>;

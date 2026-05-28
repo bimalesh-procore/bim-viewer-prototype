@@ -6,6 +6,7 @@ import {
   FileQuestion,
   Home,
   ListChecks,
+  Plus,
   ShieldCheck,
   Wrench,
   ChevronRight,
@@ -14,9 +15,12 @@ import {
   Star,
 } from 'lucide-react';
 import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
-import type { SearchSet, ViewData, ViewFolder, PropertyGroup, ObjectProperty } from '../viewer-adapter/types';
+import type { SearchSet, ViewData, PropertyGroup, ObjectProperty } from '../viewer-adapter/types';
 import { TreeNode } from '../../shared/TreeNode';
 import type { PanelId } from './useDockStore';
+import { useViewpoints } from '../viewpoints';
+import type { Viewpoint } from '../viewpoints';
+import { useToast } from '../toast/ToastContext';
 import searchFieldIcon from '../../assets/icons/panel/searchField.svg';
 import filterButtonIcon from '../../assets/icons/panel/filterButton.svg';
 import propertiesEmptyIllustration from '../../assets/icons/panel/properties-empty.svg';
@@ -217,10 +221,6 @@ function collectLeafIds(node: ObjNode): string[] {
   return node.children.flatMap(collectLeafIds);
 }
 
-function collectDescendantFolderIds(folderId: string, allFolders: ViewFolder[]): string[] {
-  const children = allFolders.filter((f) => f.parentFolderId === folderId);
-  return [folderId, ...children.flatMap((c) => collectDescendantFolderIds(c.id, allFolders))];
-}
 
 const IFC_TYPE_DISPLAY: Record<string, string> = {
   IFCBEAM: 'Beams',
@@ -929,15 +929,59 @@ export function PropertiesToolbar({
 // ─── Views & Markups ─────────────────────────────────────────────────────────
 
 function ViewsToolbar() {
+  const adapter = useViewerAdapter();
+  const viewpoints = useViewpoints();
+  const toast = useToast();
   const [query, setQuery] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSaveView = useCallback(async () => {
+    const state = adapter.getViewpointState?.();
+    if (!state) {
+      toast.show({ kind: 'error', message: 'Cannot capture view state.' });
+      return;
+    }
+    setSaving(true);
+    const now = Date.now();
+    const viewpoint: Viewpoint = {
+      id: `view-${now}`,
+      name: `View ${viewpoints.customViews.length + 1}`,
+      cameraPosition: state.camera.position,
+      cameraTarget: state.camera.target,
+      isOrthographic: state.camera.isOrthographic,
+      hiddenObjects: state.hiddenObjects,
+      sectioning: state.sectioning,
+      markups: [],
+      createdAt: now,
+    };
+    const result = await viewpoints.addCustomView(viewpoint);
+    setSaving(false);
+    if (result.ok) {
+      toast.show({ kind: 'success', message: `"${viewpoint.name}" saved.` });
+    } else if (result.reason === 'writer-unavailable') {
+      toast.show({ kind: 'error', message: 'Saving views is only available when running locally.' });
+    } else {
+      toast.show({ kind: 'error', message: 'Failed to save view. Try again.' });
+    }
+  }, [adapter, viewpoints, toast]);
+
   return (
-    <div className="px-4 py-2 border-b border-[#d6dadc]">
+    <div className="px-4 py-2 border-b border-[#d6dadc] flex items-center gap-2">
       <PanelSearchBar
         value={query}
         onChange={setQuery}
         placeholder="Search viewpoints"
         onFilter={() => {}}
       />
+      <button
+        type="button"
+        onClick={handleSaveView}
+        disabled={saving}
+        title="Save current view"
+        className="shrink-0 w-7 h-7 flex items-center justify-center rounded hover:bg-[#EEF0F1] disabled:opacity-40 transition-colors"
+      >
+        <Plus size={16} className="text-[#232729]" />
+      </button>
     </div>
   );
 }
@@ -972,139 +1016,6 @@ function reorderItems<T extends { id: string }>(
   return result;
 }
 
-function ViewFolderRow({
-  folder,
-  views,
-  folders,
-  selectedViewId,
-  selectedItemId,
-  renamingId,
-  renameValue,
-  onRenameChange,
-  onRenameCommit,
-  onRenameCancel,
-  depth,
-  expandedFolders,
-  toggleFolder,
-  checkedFolderIds,
-  onFolderCheckedChange,
-  checkedViewIds,
-  onViewCheckedChange,
-  onSelectView,
-  onSelectFolder,
-  onDoubleClickView,
-  onContextMenu,
-  dragProps,
-}: {
-  folder: ViewFolder;
-  views: ViewData[];
-  folders: ViewFolder[];
-  selectedViewId: string | null;
-  selectedItemId: string | null;
-  renamingId: string | null;
-  renameValue: string;
-  onRenameChange: (val: string) => void;
-  onRenameCommit: () => void;
-  onRenameCancel: () => void;
-  depth: number;
-  expandedFolders: Set<string>;
-  toggleFolder: (id: string) => void;
-  checkedFolderIds: Set<string>;
-  onFolderCheckedChange: (id: string, checked: boolean) => void;
-  checkedViewIds: Set<string>;
-  onViewCheckedChange: (id: string, checked: boolean) => void;
-  onSelectView: (id: string) => void;
-  onSelectFolder: (id: string) => void;
-  onDoubleClickView: (id: string, currentName: string) => void;
-  onContextMenu: (e: React.MouseEvent, viewId: string) => void;
-  dragProps?: DragProps;
-}) {
-  const childFolders = folders.filter((f) => f.parentFolderId === folder.id);
-  const childViews = views.filter((v) => v.folderId === folder.id);
-
-  const totalChildren = childFolders.length + childViews.length;
-  const checkedChildCount =
-    childFolders.filter((cf) => checkedFolderIds.has(cf.id)).length +
-    childViews.filter((v) => checkedViewIds.has(v.id)).length;
-  const checked = totalChildren > 0 ? checkedChildCount === totalChildren : checkedFolderIds.has(folder.id);
-  const indeterminate = totalChildren > 0 && checkedChildCount > 0 && checkedChildCount < totalChildren;
-
-  return (
-    <TreeNode
-      id={folder.id}
-      label={folder.name}
-      depth={depth}
-      type="folder"
-      expanded={expandedFolders.has(folder.id)}
-      onToggle={toggleFolder}
-      checked={checked}
-      indeterminate={indeterminate}
-      onCheckedChange={onFolderCheckedChange}
-      selected={folder.id === selectedItemId}
-      onClick={onSelectFolder}
-      draggable={!!dragProps}
-      onDragStart={dragProps?.onDragStart}
-      onDragEnd={dragProps?.onDragEnd}
-      onDragOver={dragProps?.onDragOver}
-      onDragLeave={dragProps?.onDragLeave}
-      onDrop={dragProps?.onDrop}
-      isDragging={dragProps?.draggingId === folder.id}
-      dropIndicator={
-        dragProps?.dropTarget?.id === folder.id && dragProps.dropTarget.position !== 'inside'
-          ? (dragProps.dropTarget.position as 'before' | 'after')
-          : undefined
-      }
-      isDropTarget={dragProps?.dropTarget?.id === folder.id && dragProps.dropTarget?.position === 'inside'}
-    >
-      {childFolders.map((cf) => (
-        <ViewFolderRow
-          key={cf.id}
-          folder={cf}
-          views={views}
-          folders={folders}
-          selectedViewId={selectedViewId}
-          selectedItemId={selectedItemId}
-          renamingId={renamingId}
-          renameValue={renameValue}
-          onRenameChange={onRenameChange}
-          onRenameCommit={onRenameCommit}
-          onRenameCancel={onRenameCancel}
-          depth={depth + 1}
-          expandedFolders={expandedFolders}
-          toggleFolder={toggleFolder}
-          checkedFolderIds={checkedFolderIds}
-          onFolderCheckedChange={onFolderCheckedChange}
-          checkedViewIds={checkedViewIds}
-          onViewCheckedChange={onViewCheckedChange}
-          onSelectView={onSelectView}
-          onSelectFolder={onSelectFolder}
-          onDoubleClickView={onDoubleClickView}
-          onContextMenu={onContextMenu}
-          dragProps={dragProps}
-        />
-      ))}
-      {childViews.map((v) => (
-        <ViewRow
-          key={v.id}
-          view={v}
-          checked={checkedViewIds.has(v.id)}
-          onCheckedChange={onViewCheckedChange}
-          selected={v.id === selectedItemId}
-          depth={depth + 1}
-          isRenaming={renamingId === v.id}
-          renameValue={renameValue}
-          onRenameChange={onRenameChange}
-          onRenameCommit={onRenameCommit}
-          onRenameCancel={onRenameCancel}
-          onSelect={onSelectView}
-          onDoubleClick={onDoubleClickView}
-          onContextMenu={onContextMenu}
-          dragProps={dragProps}
-        />
-      ))}
-    </TreeNode>
-  );
-}
 
 function ViewRow({
   view,
@@ -1203,96 +1114,63 @@ function ViewRow({
 
 function ViewsContent() {
   const adapter = useViewerAdapter();
-  const [views, setViews] = useState<ViewData[]>([]);
-  const [folders, setFolders] = useState<ViewFolder[]>([]);
-  const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
+  const viewpoints = useViewpoints();
+  const toast = useToast();
+  const { customViews } = viewpoints;
+
+  const views = useMemo<ViewData[]>(
+    () => customViews.map((vp) => ({
+      id: vp.id,
+      name: vp.name,
+      folderId: null,
+      cameraPosition: vp.cameraPosition,
+      cameraTarget: vp.cameraTarget,
+      isOrthographic: vp.isOrthographic,
+      markups: vp.markups,
+      createdAt: vp.createdAt,
+      isProjectView: false,
+    })),
+    [customViews],
+  );
+
+  // Local copy drives visual drag-and-drop order; syncs from context on external changes.
+  const [localViews, setLocalViews] = useState<ViewData[]>(views);
+  useEffect(() => { setLocalViews(views); }, [views]);
+
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [checkedFolderIds, setCheckedFolderIds] = useState<Set<string>>(new Set());
-  const [checkedViewIds, setCheckedViewIds] = useState<Set<string>>(new Set());
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; viewId: string } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; viewId: string } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DragTarget | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const unsub = adapter.subscribeViews?.((v, selId) => {
-      setViews(v);
-      setSelectedViewId(selId);
-    });
-    const loadedFolders = adapter.getFolders?.() ?? [];
-    setFolders(loadedFolders);
-    setExpandedFolders(new Set(loadedFolders.map((f) => f.id)));
-    return () => unsub?.();
-  }, [adapter]);
-
-  const toggleFolderChecked = useCallback((id: string, checked: boolean) => {
-    const allFolderIds = collectDescendantFolderIds(id, folders);
-    const folderIdSet = new Set(allFolderIds);
-    const allViewIds = views.filter((v) => v.folderId !== null && folderIdSet.has(v.folderId)).map((v) => v.id);
-    setCheckedFolderIds((prev) => {
-      const next = new Set(prev);
-      allFolderIds.forEach((fid) => (checked ? next.add(fid) : next.delete(fid)));
-      return next;
-    });
-    setCheckedViewIds((prev) => {
-      const next = new Set(prev);
-      allViewIds.forEach((vid) => (checked ? next.add(vid) : next.delete(vid)));
-      return next;
-    });
-  }, [folders, views]);
-
-  const toggleViewChecked = useCallback((id: string, checked: boolean) => {
-    setCheckedViewIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id); else next.delete(id);
-      return next;
-    });
-  }, []);
-
-  const toggleFolder = useCallback((id: string) => {
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
-
   const clickTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   const handleSelectView = useCallback((id: string) => {
     clearTimeout(clickTimerRef.current);
     clickTimerRef.current = setTimeout(() => {
-      if (id === selectedViewId) {
-        setSelectedViewId(null);
+      const vp = customViews.find((v) => v.id === id);
+      if (!vp) return;
+      if (id === selectedItemId) {
         setSelectedItemId(null);
-        adapter.deselectView?.();
-      } else {
-        setSelectedViewId(id);
-        setSelectedItemId(id);
-        adapter.selectView?.(id);
+        return;
       }
+      setSelectedItemId(id);
+      adapter.setViewpointState?.(
+        {
+          camera: { position: vp.cameraPosition, target: vp.cameraTarget, isOrthographic: vp.isOrthographic },
+          hiddenObjects: vp.hiddenObjects,
+          sectioning: vp.sectioning,
+        },
+        { animate: true },
+      );
     }, 250);
-  }, [adapter, selectedViewId]);
-
-  const handleSelectFolder = useCallback((id: string) => {
-    setSelectedItemId((prev) => (prev === id ? null : id));
-    setSelectedViewId(null);
-    adapter.deselectView?.();
-  }, [adapter]);
+  }, [adapter, customViews, selectedItemId]);
 
   // ── Drag and drop ──────────────────────────────────────────────────────────
 
-  const handleDragStart = useCallback((id: string) => {
-    setDraggingId(id);
-  }, []);
-
-  const handleDragEnd = useCallback(() => {
-    setDraggingId(null);
-    setDropTarget(null);
-  }, []);
+  const handleDragStart = useCallback((id: string) => { setDraggingId(id); }, []);
+  const handleDragEnd = useCallback(() => { setDraggingId(null); setDropTarget(null); }, []);
 
   const handleDragOver = useCallback((id: string, position: 'before' | 'after' | 'inside') => {
     if (!draggingId || id === draggingId) return;
@@ -1306,83 +1184,31 @@ function ViewsContent() {
   const handleDrop = useCallback((targetId: string) => {
     if (!draggingId || !dropTarget || dropTarget.id !== targetId) return;
     const { position } = dropTarget;
+    if (position === 'inside') { setDraggingId(null); setDropTarget(null); return; }
 
-    // Helper: check if nodeId is a descendant of ancestorId in the folder tree
-    const isDescendant = (ancestorId: string, nodeId: string): boolean => {
-      let current: string | null = nodeId;
-      while (current) {
-        if (current === ancestorId) return true;
-        current = folders.find((f) => f.id === current)?.parentFolderId ?? null;
-      }
-      return false;
-    };
-
-    if (position === 'inside') {
-      // Explicit drop onto a collapsed/empty folder header
-      if (!folders.some((f) => f.id === targetId)) return;
-      if (folders.some((f) => f.id === draggingId) && isDescendant(draggingId, targetId)) return;
-
-      setViews((prev) => prev.map((v) => v.id === draggingId ? { ...v, folderId: targetId } : v));
-      setFolders((prev) => prev.map((f) => f.id === draggingId ? { ...f, parentFolderId: targetId } : f));
-    } else {
-      // Drop before/after a row: place item at that position AND inherit the
-      // target's parent folder — dropping between a folder's children
-      // implicitly moves the dragged item into that folder.
-      const targetView = views.find((v) => v.id === targetId);
-      const targetFolder = folders.find((f) => f.id === targetId);
-      const newParentFolderId = targetView?.folderId ?? targetFolder?.parentFolderId ?? null;
-
-      const draggingView = views.find((v) => v.id === draggingId);
-      const draggingFolder = folders.find((f) => f.id === draggingId);
-
-      // Circular reference guard when moving a folder
-      if (draggingFolder && newParentFolderId && isDescendant(draggingId, newParentFolderId)) return;
-
-      if (draggingView) {
-        setViews((prev) => {
-          const without = prev.filter((v) => v.id !== draggingId);
-          const updated = { ...draggingView, folderId: newParentFolderId };
-          const targetIdx = without.findIndex((v) => v.id === targetId);
-          if (targetIdx !== -1) {
-            without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, updated);
-            return without;
-          }
-          return [...without, updated];
-        });
-      } else if (draggingFolder) {
-        setFolders((prev) => {
-          const without = prev.filter((f) => f.id !== draggingId);
-          const updated = { ...draggingFolder, parentFolderId: newParentFolderId };
-          const targetIdx = without.findIndex((f) => f.id === targetId);
-          if (targetIdx !== -1) {
-            without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, updated);
-            return without;
-          }
-          return [...without, updated];
-        });
-      }
-    }
-
+    const reordered = reorderItems(localViews, draggingId, targetId, position);
+    setLocalViews(reordered);
     setDraggingId(null);
     setDropTarget(null);
-  }, [draggingId, dropTarget, views, folders]);
 
-  const dragProps: DragProps = {
-    draggingId,
-    dropTarget,
-    onDragStart: handleDragStart,
-    onDragEnd: handleDragEnd,
-    onDragOver: handleDragOver,
-    onDragLeave: handleDragLeave,
-    onDrop: handleDrop,
-  };
+    // Persist reorder — map back to Viewpoint objects in new order.
+    const reorderedViewpoints = reordered
+      .map((v) => customViews.find((vp) => vp.id === v.id))
+      .filter((vp): vp is Viewpoint => vp !== undefined);
+    viewpoints.reorderCustomViews(reorderedViewpoints).then((result) => {
+      if (!result.ok && result.reason === 'writer-unavailable') {
+        toast.show({ kind: 'error', message: 'Reordering is only available when running locally.' });
+      }
+    });
+  }, [draggingId, dropTarget, localViews, customViews, viewpoints, toast]);
+
+  const dragProps: DragProps = { draggingId, dropTarget, onDragStart: handleDragStart, onDragEnd: handleDragEnd, onDragOver: handleDragOver, onDragLeave: handleDragLeave, onDrop: handleDrop };
 
   const handleContextMenu = useCallback((e: React.MouseEvent, viewId: string) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, viewId });
   }, []);
 
-  // Close context menu on outside click
   useEffect(() => {
     if (!contextMenu) return;
     const handleClick = (e: MouseEvent) => {
@@ -1394,28 +1220,25 @@ function ViewsContent() {
     return () => window.removeEventListener('mousedown', handleClick);
   }, [contextMenu]);
 
-  const handleEdit = useCallback(() => {
-    if (!contextMenu) return;
-    const viewId = contextMenu.viewId;
-    setContextMenu(null);
-    window.dispatchEvent(new CustomEvent('mv:activate-right-tool', { detail: { sourceId: 'mode:markup', viewId } }));
-  }, [contextMenu]);
-
   const handleRename = useCallback(() => {
     if (!contextMenu) return;
-    const view = views.find((v) => v.id === contextMenu.viewId);
+    const view = localViews.find((v) => v.id === contextMenu.viewId);
     setRenamingId(contextMenu.viewId);
     setRenameValue(view?.name ?? '');
     setContextMenu(null);
-  }, [contextMenu, views]);
+  }, [contextMenu, localViews]);
 
-  const commitRename = useCallback(() => {
-    if (renamingId && renameValue.trim()) {
-      adapter.renameView?.(renamingId, renameValue.trim());
-    }
+  const commitRename = useCallback(async () => {
+    const id = renamingId;
+    const name = renameValue.trim();
     setRenamingId(null);
     setRenameValue('');
-  }, [renamingId, renameValue, adapter]);
+    if (!id || !name) return;
+    const result = await viewpoints.renameCustomView(id, name);
+    if (!result.ok && result.reason === 'writer-unavailable') {
+      toast.show({ kind: 'error', message: 'Renaming is only available when running locally.' });
+    }
+  }, [renamingId, renameValue, viewpoints, toast]);
 
   const handleDoubleClick = useCallback((id: string, currentName: string) => {
     clearTimeout(clickTimerRef.current);
@@ -1423,69 +1246,37 @@ function ViewsContent() {
     setRenameValue(currentName);
   }, []);
 
-  const cancelRename = useCallback(() => {
-    setRenamingId(null);
-    setRenameValue('');
-  }, []);
+  const cancelRename = useCallback(() => { setRenamingId(null); setRenameValue(''); }, []);
 
-  const handleDelete = useCallback(() => {
+  const handleDelete = useCallback(async () => {
     if (!contextMenu) return;
-    adapter.deleteView?.(contextMenu.viewId);
+    const { viewId } = contextMenu;
     setContextMenu(null);
-  }, [contextMenu, adapter]);
-
-  // Separate root-level folders and views (folderId is null)
-  const rootFolders = folders.filter((f) => !f.parentFolderId);
-  const rootViews = views.filter((v) => !v.folderId);
+    if (selectedItemId === viewId) setSelectedItemId(null);
+    const result = await viewpoints.deleteCustomView(viewId);
+    if (!result.ok && result.reason === 'writer-unavailable') {
+      toast.show({ kind: 'error', message: 'Deleting is only available when running locally.' });
+    }
+  }, [contextMenu, selectedItemId, viewpoints, toast]);
 
   const handleBackgroundClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     if (target.closest('[data-view-row]') || target.closest('[data-context-menu]')) return;
-    if (selectedViewId) adapter.deselectView?.();
-  }, [adapter, selectedViewId]);
+    setSelectedItemId(null);
+  }, []);
 
   return (
     <div className="bg-white rounded-md overflow-hidden py-1 relative min-h-full" onClick={handleBackgroundClick}>
-      {views.length === 0 && folders.length === 0 && (
+      {localViews.length === 0 && (
         <p className="px-3 py-6 text-sm text-gray-400 text-center">
-          No views yet. Enter markup mode to create one.
+          No saved views yet. Use the + button in the toolbar to save the current view.
         </p>
       )}
 
-      {rootFolders.map((folder) => (
-        <ViewFolderRow
-          key={folder.id}
-          folder={folder}
-          views={views}
-          folders={folders}
-          selectedViewId={selectedViewId}
-          selectedItemId={selectedItemId}
-          renamingId={renamingId}
-          renameValue={renameValue}
-          onRenameChange={setRenameValue}
-          onRenameCommit={commitRename}
-          onRenameCancel={cancelRename}
-          depth={0}
-          expandedFolders={expandedFolders}
-          toggleFolder={toggleFolder}
-          checkedFolderIds={checkedFolderIds}
-          onFolderCheckedChange={toggleFolderChecked}
-          checkedViewIds={checkedViewIds}
-          onViewCheckedChange={toggleViewChecked}
-          onSelectView={handleSelectView}
-          onSelectFolder={handleSelectFolder}
-          onDoubleClickView={handleDoubleClick}
-          onContextMenu={handleContextMenu}
-          dragProps={dragProps}
-        />
-      ))}
-
-      {rootViews.map((view) => (
+      {localViews.map((view) => (
         <ViewRow
           key={view.id}
           view={view}
-          checked={checkedViewIds.has(view.id)}
-          onCheckedChange={toggleViewChecked}
           selected={view.id === selectedItemId}
           depth={0}
           isRenaming={renamingId === view.id}
@@ -1500,7 +1291,6 @@ function ViewsContent() {
         />
       ))}
 
-      {/* Right-click context menu */}
       {contextMenu && (
         <div
           ref={contextMenuRef}
@@ -1508,9 +1298,6 @@ function ViewsContent() {
           className="fixed bg-white rounded-lg shadow-[0_4px_12px_0_rgba(0,0,0,0.2)] py-1 z-[300] min-w-[120px]"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
-          <button type="button" onClick={handleEdit} className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100">
-            Edit
-          </button>
           <button type="button" onClick={handleRename} className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100">
             Rename
           </button>

@@ -2,6 +2,7 @@ import type { ModelViewpoints, Viewpoint, ViewpointsFile, WriteResult } from './
 
 const FILE_URL = '/viewpoints.json';
 const WRITE_HOME_URL = '/__viewpoints/home';
+const WRITE_CUSTOM_URL = '/__viewpoints/custom';
 const EMPTY_FILE: ViewpointsFile = { schemaVersion: 3, models: {} };
 
 let cachePromise: Promise<ViewpointsFile> | null = null;
@@ -84,30 +85,43 @@ export async function getCustomViews(modelId: string): Promise<Viewpoint[]> {
   return (await getModelEntry(modelId)).customViews;
 }
 
-export async function setHomeView(modelId: string, viewpoint: Viewpoint): Promise<WriteResult> {
+async function postAndUpdateCache(url: string, body: object): Promise<WriteResult> {
   let res: Response;
   try {
-    res = await fetch(WRITE_HOME_URL, {
+    res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ modelId, viewpoint }),
+      body: JSON.stringify(body),
     });
   } catch {
     return { ok: false, reason: 'server-error' };
   }
-  if (res.status === 404) {
-    return { ok: false, reason: 'writer-unavailable', status: 404 };
-  }
-  if (!res.ok) {
-    return { ok: false, reason: 'server-error', status: res.status };
-  }
+  if (res.status === 404) return { ok: false, reason: 'writer-unavailable', status: 404 };
+  if (!res.ok) return { ok: false, reason: 'server-error', status: res.status };
   try {
-    const newState = normalize(await res.json());
-    cachePromise = Promise.resolve(newState);
+    cachePromise = Promise.resolve(normalize(await res.json()));
   } catch {
-    // Server returned something we can't parse — invalidate so the next
-    // read pulls fresh.
     cachePromise = null;
   }
   return { ok: true };
+}
+
+export async function setHomeView(modelId: string, viewpoint: Viewpoint): Promise<WriteResult> {
+  return postAndUpdateCache(WRITE_HOME_URL, { modelId, viewpoint });
+}
+
+export async function addCustomView(modelId: string, viewpoint: Viewpoint): Promise<WriteResult> {
+  return postAndUpdateCache(WRITE_CUSTOM_URL, { modelId, action: 'add', viewpoint });
+}
+
+export async function deleteCustomView(modelId: string, viewpointId: string): Promise<WriteResult> {
+  return postAndUpdateCache(WRITE_CUSTOM_URL, { modelId, action: 'delete', viewpointId });
+}
+
+export async function renameCustomView(modelId: string, viewpointId: string, name: string): Promise<WriteResult> {
+  return postAndUpdateCache(WRITE_CUSTOM_URL, { modelId, action: 'rename', viewpointId, name });
+}
+
+export async function reorderCustomViews(modelId: string, viewpoints: Viewpoint[]): Promise<WriteResult> {
+  return postAndUpdateCache(WRITE_CUSTOM_URL, { modelId, action: 'reorder', viewpoints });
 }

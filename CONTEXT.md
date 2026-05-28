@@ -84,9 +84,10 @@ src/chrome/
 │   │                          close X, Escape to close, no auto-dismiss. See CLAUDE.md §4f.
 │   ├── toast/               ← Reusable toast surface (success/error/info/warning,
 │   │                          bottom-center, auto-dismiss). See CLAUDE.md §4g.
-│   ├── viewpoints/          ← Persistent home view + (future) saved viewpoints.
+│   ├── viewpoints/          ← Persistent home view + custom saved viewpoints.
 │   │                          Source of truth is public/viewpoints.json (committed),
 │   │                          dev-only writes via scripts/vite-plugin-viewpoints-writer.mjs.
+│   │                          ViewpointsContext provides live customViews state + CRUD.
 │   │                          See CLAUDE.md §4e.
 │   ├── left-toolbar/        ← Object Tree, Search Sets, Views, Items, Properties, Deviation
 │   ├── right-toolbar/       ← View group, Tools group, History group
@@ -220,12 +221,13 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Orientation toggle** → rotate button on tablet/phone swaps `?orient=portrait`/`?orient=landscape`. Tablet default = landscape; phone default = portrait. URL omits `?orient=` when it matches the default
 - **Bottom toolbar ↔ right toolbar sync (Ortho / Render Settings / X-Ray)** → `ViewerSettingsContext` owns `isOrthographic`, `isXRayActive`, and `renderToggles`; both toolbars read/write through `useViewerSettings()`. Ortho/X-Ray delegate to the adapter; render-settings state is context-only until the engine has a concept for it
 - **Render style picker** → bottom toolbar dropdown (Default / Realism). Selection persists in URL via `?style=realism` (URL omitted when Default) using `URLSearchParams` + `history.replaceState` — preserves `?model=`, `?form=`, `?orient=` per [CLAUDE.md §3d](./CLAUDE.md). Visual-only — no adapter call yet
+- **Views panel** → full custom-viewpoint CRUD. `+` button in the toolbar captures current camera + hiddenObjects + sectioning and saves to `public/viewpoints.json` via `POST /__viewpoints/custom`. Click a row to restore the viewpoint (camera + visibility + sectioning via `adapter.setViewpointState`). Double-click to rename inline (Enter commits, Escape cancels). Context menu (right-click) offers Rename and Delete. Drag-to-reorder persists order to file. Empty state shown when no views saved. Dev-write only — prod shows an error toast on save. State lives in `ViewpointsContext` (`customViews` array updated reactively after every write). See CLAUDE.md §4e.
 
 ### Wired to stubs (engine feature not built)
 - Properties, Measure, Undo, Redo — log to console
 
 ### Not wired yet
-- Search Sets, Views & Markups, Items, Deviation, Render Modes (mesh/lines/terrain/point-cloud toggles — context-only, no engine concept), Markup, Quick Create, ViewCube faces, Header Search, MiniMap
+- Search Sets, Items, Deviation, Render Modes (mesh/lines/terrain/point-cloud toggles — context-only, no engine concept), Markup, Quick Create, ViewCube faces, Header Search, MiniMap
 
 ## React StrictMode Consideration
 

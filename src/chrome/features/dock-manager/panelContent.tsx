@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { DropdownMenu, DropdownMenuItem } from '../../shared/DropdownMenu';
 import {
   AlertTriangle,
   Binoculars,
@@ -950,16 +950,6 @@ function ViewsToolbar() {
 
 type DragTarget = { id: string; position: 'before' | 'after' | 'inside' };
 
-interface DragProps {
-  draggingId: string | null;
-  dropTarget: DragTarget | null;
-  onDragStart: (id: string) => void;
-  onDragEnd: () => void;
-  onDragOver: (id: string, position: 'before' | 'after' | 'inside') => void;
-  onDragLeave: (id: string) => void;
-  onDrop: (id: string) => void;
-}
-
 function reorderItems<T extends { id: string }>(
   items: T[],
   dragId: string,
@@ -977,129 +967,6 @@ function reorderItems<T extends { id: string }>(
 }
 
 
-function ViewRow({
-  view,
-  checked,
-  onCheckedChange,
-  selected,
-  depth,
-  isRenaming,
-  renameValue,
-  onRenameChange,
-  onRenameCommit,
-  onRenameCancel,
-  onSelect,
-  onDoubleClick,
-  onMore,
-  dragProps,
-}: {
-  view: ViewData;
-  checked?: boolean;
-  onCheckedChange?: (id: string, checked: boolean) => void;
-  selected: boolean;
-  depth: number;
-  isRenaming: boolean;
-  renameValue: string;
-  onRenameChange: (val: string) => void;
-  onRenameCommit: () => void;
-  onRenameCancel: () => void;
-  onSelect: (id: string) => void;
-  onDoubleClick: (id: string, currentName: string) => void;
-  onMore: (e: React.MouseEvent, viewId: string) => void;
-  dragProps?: DragProps;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [hovered, setHovered] = useState(false);
-
-  useEffect(() => {
-    if (isRenaming && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isRenaming]);
-
-  if (isRenaming) {
-    return (
-      <div
-        data-view-row
-        className="flex items-center gap-1 bg-blue-50"
-        style={{ paddingLeft: 28 + depth * 20, paddingRight: 8, paddingTop: 4, paddingBottom: 4 }}
-      >
-        <input
-          ref={inputRef}
-          type="text"
-          value={renameValue}
-          onChange={(e) => onRenameChange(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') onRenameCommit(); if (e.key === 'Escape') onRenameCancel(); }}
-          onBlur={onRenameCommit}
-          className="text-sm flex-1 border border-blue-400 rounded px-1.5 py-0.5 outline-none"
-        />
-      </div>
-    );
-  }
-
-  const showActions = hovered || selected;
-
-  return (
-    <div data-view-row onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <TreeNode
-        id={view.id}
-        label={view.name}
-        depth={depth}
-        type="leaf"
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-        selected={selected}
-        isHovered={hovered}
-        hoverBg="#E3E6E8"
-        onClick={onSelect}
-        onDoubleClick={onDoubleClick}
-        draggable={!!dragProps}
-        onDragStart={dragProps?.onDragStart}
-        onDragEnd={dragProps?.onDragEnd}
-        onDragOver={dragProps?.onDragOver}
-        onDragLeave={dragProps?.onDragLeave}
-        onDrop={dragProps?.onDrop}
-        isDragging={dragProps?.draggingId === view.id}
-        dropIndicator={
-          dragProps?.dropTarget?.id === view.id
-            ? (dragProps.dropTarget.position as 'before' | 'after')
-            : undefined
-        }
-        actions={
-          // Always reserve the 3-button slot so the label width never jumps.
-          // Visibility hidden keeps the space but hides the buttons when idle.
-          <div className={`flex items-center gap-0.5 shrink-0 ${showActions ? '' : 'invisible'}`}>
-            <button
-              type="button"
-              title="Edit name"
-              onClick={(e) => { e.stopPropagation(); onDoubleClick(view.id, view.name); }}
-              className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showActions ? 'bg-[#E3E6E8] hover:bg-[#CDD1D4]' : ''}`}
-            >
-              <img src={editIcon} alt="" width={14} height={14} />
-            </button>
-            <button
-              type="button"
-              title="Share"
-              onClick={(e) => e.stopPropagation()}
-              className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showActions ? 'bg-[#E3E6E8] hover:bg-[#CDD1D4]' : ''}`}
-            >
-              <img src={shareIcon} alt="" width={14} height={14} />
-            </button>
-            <button
-              type="button"
-              title="More"
-              onClick={(e) => { e.stopPropagation(); onMore(e, view.id); }}
-              className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showActions ? 'bg-[#E3E6E8] hover:bg-[#CDD1D4]' : ''}`}
-            >
-              <img src={moreIcon} alt="" width={14} height={14} />
-            </button>
-          </div>
-        }
-      />
-    </div>
-  );
-}
 
 function ViewsContent() {
   const adapter = useViewerAdapter();
@@ -1134,8 +1001,8 @@ function ViewsContent() {
   const [createMenuPos, setCreateMenuPos] = useState({ x: 0, y: 0 });
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DragTarget | null>(null);
-  const moreMenuRef = useRef<HTMLDivElement>(null);
-  const createMenuRef = useRef<HTMLDivElement>(null);
+  const closeCreateMenu = useCallback(() => setCreateMenuOpen(false), []);
+  const closeMoreMenu = useCallback(() => setMoreMenu(null), []);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Cooldown prevents camera-change during the restore animation from deselecting the row.
   const restoringUntilRef = useRef<number>(0);
@@ -1179,25 +1046,18 @@ function ViewsContent() {
   }, [adapter, customViews, viewpoints, toast]);
 
   useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { x: number; y: number } | undefined;
-      if (detail) setCreateMenuPos(detail);
+    const handler = () => {
+      const btn = document.querySelector('[data-add="views"]');
+      if (btn) {
+        const rect = btn.getBoundingClientRect();
+        setCreateMenuPos({ x: rect.right, y: rect.bottom + 6 });
+      }
       setCreateMenuOpen((prev) => !prev);
     };
     window.addEventListener('mv:views-open-create', handler);
     return () => window.removeEventListener('mv:views-open-create', handler);
   }, []);
 
-  useEffect(() => {
-    if (!createMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
-        setCreateMenuOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', handler);
-    return () => window.removeEventListener('mousedown', handler);
-  }, [createMenuOpen]);
 
   // ── Select / restore view ─────────────────────────────────────────────────
   const handleSelectView = useCallback((id: string) => {
@@ -1255,24 +1115,12 @@ function ViewsContent() {
     });
   }, [draggingId, dropTarget, localViews, customViews, viewpoints, toast]);
 
-  const dragProps: DragProps = { draggingId, dropTarget, onDragStart: handleDragStart, onDragEnd: handleDragEnd, onDragOver: handleDragOver, onDragLeave: handleDragLeave, onDrop: handleDrop };
-
   // ── More menu (per-row actions) ────────────────────────────────────────────
   const handleMoreClick = useCallback((e: React.MouseEvent, viewId: string) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setMoreMenu({ x: rect.right, y: rect.bottom + 4, viewId });
   }, []);
 
-  useEffect(() => {
-    if (!moreMenu) return;
-    const handler = (e: MouseEvent) => {
-      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
-        setMoreMenu(null);
-      }
-    };
-    window.addEventListener('mousedown', handler);
-    return () => window.removeEventListener('mousedown', handler);
-  }, [moreMenu]);
 
   const handleUpdate = useCallback(async () => {
     if (!moreMenu) return;
@@ -1345,45 +1193,18 @@ function ViewsContent() {
   const cancelRename = useCallback(() => { setRenamingId(null); setRenameValue(''); }, []);
 
   const handleBackgroundClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('[data-view-row]') || target.closest('[data-more-menu]') || target.closest('[data-create-menu]')) return;
+    if ((e.target as HTMLElement).closest('[data-tree-node]')) return;
     setSelectedItemId(null);
   }, []);
 
   return (
     <div className="relative">
-      {/* Create-viewpoint dropdown — portaled to body so fixed positioning is viewport-relative */}
-      {createMenuOpen && createPortal(
-        <div
-          ref={createMenuRef}
-          data-create-menu
-          className="fixed bg-white rounded-lg shadow-[0_4px_16px_0_rgba(0,0,0,0.18)] py-1 z-[9999] min-w-[200px]"
-          style={{ left: createMenuPos.x, top: createMenuPos.y, transform: 'translateX(-100%)' }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            onClick={() => { setCreateMenuOpen(false); handleSaveView(); }}
-            className="w-full text-left px-4 py-2.5 text-[14px] text-[#232729] hover:bg-[#F4F5F6]"
-          >
-            Create Viewpoint
-          </button>
-          <button
-            type="button"
-            onClick={() => setCreateMenuOpen(false)}
-            className="w-full text-left px-4 py-2.5 text-[14px] text-[#9DA7AD] cursor-default"
-          >
-            Create Folder
-          </button>
-          <button
-            type="button"
-            onClick={() => setCreateMenuOpen(false)}
-            className="w-full text-left px-4 py-2.5 text-[14px] text-[#9DA7AD] cursor-default"
-          >
-            Import Viewpoints
-          </button>
-        </div>,
-        document.body,
+      {createMenuOpen && (
+        <DropdownMenu position={createMenuPos} onClose={closeCreateMenu}>
+          <DropdownMenuItem onClick={() => { closeCreateMenu(); handleSaveView(); }}>Create Viewpoint</DropdownMenuItem>
+          <DropdownMenuItem disabled>Create Folder</DropdownMenuItem>
+          <DropdownMenuItem disabled>Import Viewpoints</DropdownMenuItem>
+        </DropdownMenu>
       )}
 
       <div className="bg-white rounded-md overflow-hidden py-1 relative min-h-full" onClick={handleBackgroundClick}>
@@ -1394,52 +1215,55 @@ function ViewsContent() {
         )}
 
         {localViews.map((view) => (
-          <ViewRow
+          <TreeNode
             key={view.id}
-            view={view}
-            selected={view.id === selectedItemId}
+            id={view.id}
+            label={view.name}
             depth={0}
+            type="leaf"
+            selected={view.id === selectedItemId}
+            hoverBg="#F4F5F6"
+            showActionsOnHover
             isRenaming={renamingId === view.id}
             renameValue={renameValue}
             onRenameChange={setRenameValue}
             onRenameCommit={commitRename}
             onRenameCancel={cancelRename}
-            onSelect={handleSelectView}
+            onClick={handleSelectView}
             onDoubleClick={handleDoubleClick}
-            onMore={handleMoreClick}
-            dragProps={dragProps}
+            draggable
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            isDragging={draggingId === view.id}
+            dropIndicator={dropTarget?.id === view.id ? (dropTarget.position as 'before' | 'after') : undefined}
+            actions={
+              <>
+                <button type="button" title="Edit name" onClick={(e) => { e.stopPropagation(); handleDoubleClick(view.id, view.name); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                  <img src={editIcon} alt="" width={14} height={14} />
+                </button>
+                <button type="button" title="Share" onClick={(e) => e.stopPropagation()} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                  <img src={shareIcon} alt="" width={14} height={14} />
+                </button>
+                <button type="button" title="More" onClick={(e) => { e.stopPropagation(); handleMoreClick(e, view.id); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                  <img src={moreIcon} alt="" width={14} height={14} />
+                </button>
+              </>
+            }
           />
         ))}
       </div>
 
-      {/* Per-row More dropdown — portaled to body so fixed positioning is viewport-relative */}
-      {moreMenu && createPortal(
-        <div
-          ref={moreMenuRef}
-          data-more-menu
-          className="fixed bg-white rounded-xl shadow-[0_4px_16px_0_rgba(0,0,0,0.18)] py-1 z-[9999] min-w-[200px]"
-          style={{ left: moreMenu.x, top: moreMenu.y, transform: 'translateX(-100%)' }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button type="button" onClick={handleUpdate} className="w-full text-left px-4 py-2.5 text-[14px] text-[#232729] hover:bg-[#F4F5F6]">
-            Update
-          </button>
-          <button type="button" onClick={handleRenameFromMenu} className="w-full text-left px-4 py-2.5 text-[14px] text-[#232729] hover:bg-[#F4F5F6]">
-            Rename
-          </button>
-          <button type="button" className="w-full flex items-center justify-between px-4 py-2.5 text-[14px] text-[#9DA7AD] cursor-default">
-            <span>Move to Folder</span>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="shrink-0"><path d="M5 3l4 4-4 4" stroke="#9DA7AD" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </button>
-          <button type="button" className="w-full text-left px-4 py-2.5 text-[14px] text-[#9DA7AD] cursor-default">
-            Add to Project Views
-          </button>
-          <div className="mx-4 border-t border-[#E3E6E8]" />
-          <button type="button" onClick={handleDeleteFromMenu} className="w-full text-left px-4 py-2.5 text-[14px] text-[#D92626] hover:bg-[#FEF2F2]">
-            Delete
-          </button>
-        </div>,
-        document.body,
+      {moreMenu && (
+        <DropdownMenu position={{ x: moreMenu.x, y: moreMenu.y }} onClose={closeMoreMenu}>
+          <DropdownMenuItem onClick={handleUpdate}>Update</DropdownMenuItem>
+          <DropdownMenuItem onClick={handleRenameFromMenu}>Rename</DropdownMenuItem>
+          <DropdownMenuItem disabled trailingIcon={<ChevronRight size={14} className="text-[#9DA7AD]" />}>Move to Folder</DropdownMenuItem>
+          <DropdownMenuItem disabled>Add to Project Views</DropdownMenuItem>
+          <DropdownMenuItem onClick={handleDeleteFromMenu}>Delete</DropdownMenuItem>
+        </DropdownMenu>
       )}
     </div>
   );

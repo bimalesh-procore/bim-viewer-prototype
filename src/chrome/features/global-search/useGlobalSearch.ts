@@ -63,7 +63,7 @@ export function useGlobalSearch() {
       });
     }
 
-    pushPanelEntity('view::views', 'view', 'Views', 'views', ['views', 'saved views', 'camera']);
+    pushPanelEntity('view::views', 'view', 'Viewpoints', 'views', ['viewpoints', 'views', 'saved views', 'camera']);
     pushPanelEntity('item::items', 'item', 'Related Items', 'items', ['items', 'related items']);
     pushPanelEntity('material::sheets', 'material', 'Sheets', 'sheets', ['materials', 'sheets', 'map']);
     pushPanelEntity('group::search-sets', 'group', 'Search Sets', 'search-sets', ['groups', 'search sets']);

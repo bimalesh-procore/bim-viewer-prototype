@@ -89,7 +89,7 @@ src/chrome/
 │   │                          dev-only writes via scripts/vite-plugin-viewpoints-writer.mjs.
 │   │                          ViewpointsContext provides live customViews state + CRUD.
 │   │                          See CLAUDE.md §4e.
-│   ├── left-toolbar/        ← Object Tree, Search Sets, Views, Items, Properties, Deviation
+│   ├── left-toolbar/        ← Object Tree, Search Sets, Viewpoints, Items, Properties, Deviation
 │   ├── right-toolbar/       ← View group, Tools group, History group
 │   ├── view-cube/           ← 3D orientation indicator
 │   ├── minimap/             ← Floor plan overview
@@ -100,7 +100,9 @@ src/chrome/
 │   │                          truth so right & bottom toolbars stay in sync
 │   ├── viewer-canvas/       ← Mount point for 3D engine (callback ref)
 │   └── viewer-adapter/      ← Interface, mock, real adapter, React Context
-├── shared/                  ← For shared UI primitives (currently empty)
+├── shared/                  ← Shared UI primitives: TreeNode (extensible tree row with opt-in
+│                              actions/rename/DnD), DropdownMenu + DropdownMenuItem (portaled
+│                              context menus, right-aligned to anchor, outside-click dismiss)
 ├── assets/icons/            ← SVGs for all toolbars and header
 ├── index.css                ← Tailwind directives + dark-theme CSS overrides
 └── main.tsx                 ← Entry point (loads ChromeApp)
@@ -221,7 +223,7 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Orientation toggle** → rotate button on tablet/phone swaps `?orient=portrait`/`?orient=landscape`. Tablet default = landscape; phone default = portrait. URL omits `?orient=` when it matches the default
 - **Bottom toolbar ↔ right toolbar sync (Ortho / Render Settings / X-Ray)** → `ViewerSettingsContext` owns `isOrthographic`, `isXRayActive`, and `renderToggles`; both toolbars read/write through `useViewerSettings()`. Ortho/X-Ray delegate to the adapter; render-settings state is context-only until the engine has a concept for it
 - **Render style picker** → bottom toolbar dropdown (Default / Realism). Selection persists in URL via `?style=realism` (URL omitted when Default) using `URLSearchParams` + `history.replaceState` — preserves `?model=`, `?form=`, `?orient=` per [CLAUDE.md §3d](./CLAUDE.md). Visual-only — no adapter call yet
-- **Views panel** → full custom-viewpoint CRUD. Orange `+` in panel header opens a Create dropdown (Create Viewpoint wired; Create Folder and Import stubs). "Create Viewpoint" captures current camera + hiddenObjects + sectioning and saves to `public/viewpoints.json` via `POST /__viewpoints/custom`. Click a row to restore (camera + visibility + sectioning animated). Selected row auto-deselects on camera move (700ms cooldown after restore animation). Hover or selected state reveals Edit Name, Share, and More icon buttons; More dropdown offers Update (re-save to existing viewpoint in-place), Rename, Delete (all wired) plus Move to Folder and Add to Project Views (stubs). Double-click or Edit Name button renames inline (Enter/blur commits, Escape cancels). Drag-to-reorder persists order to file. Empty state shown when no views saved. Dev-write only — prod shows error toast on save. State lives in `ViewpointsContext`. See CLAUDE.md §4e.
+- **Viewpoints panel** → full custom-viewpoint CRUD. Orange `+` in panel header opens a Create dropdown (Create Viewpoint wired; Create Folder and Import stubs). "Create Viewpoint" captures current camera + hiddenObjects + sectioning and saves to `public/viewpoints.json` via `POST /__viewpoints/custom`. Click a row to restore (camera + visibility + sectioning animated). Selected row auto-deselects on camera move (700ms cooldown after restore animation). Hover or selected state reveals Edit Name, Share, and More icon buttons; More dropdown offers Update (re-save to existing viewpoint in-place), Rename, Delete (all wired) plus Move to Folder and Add to Project Views (stubs). Double-click or Edit Name button renames inline (Enter/blur commits, Escape cancels). Drag-to-reorder persists order to file. Empty state shown when no viewpoints saved. Dev-write only — prod shows error toast on save. State lives in `ViewpointsContext`. Rows render via `TreeNode` directly (no `ViewRow` wrapper); both the Create and More dropdowns use the shared `DropdownMenu` component. See CLAUDE.md §4e and §4f.
 
 ### Wired to stubs (engine feature not built)
 - Properties, Measure, Undo, Redo — log to console

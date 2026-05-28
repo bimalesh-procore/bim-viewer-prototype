@@ -39,7 +39,7 @@ interface DockedPanelProps {
   onToggleMinimize(): void;
   onDragStart(e: React.PointerEvent<HTMLDivElement>): void;
   onToggleDock(): void;
-  onAdd?(e: React.MouseEvent): void;
+  onAdd?(): void;
   onDetach?(): void;
   onReattach?(): void;
   onResizeHeight?(height: number): void;
@@ -54,6 +54,7 @@ const MIN_HEIGHT = 120;
 const MIN_WIDTH = 240;
 
 export function DockedPanel({
+  id,
   title,
   subheader,
   titleIcon,
@@ -310,7 +311,8 @@ export function DockedPanel({
               {onAdd && (
                 <button
                   type="button"
-                  onClick={(e) => onAdd(e)}
+                  data-add={id}
+                  onClick={onAdd}
                   aria-label="Add"
                   className="w-6 h-6 flex items-center justify-center rounded bg-[#FF5100] hover:bg-[#E64900]"
                 >

@@ -411,7 +411,7 @@ export function RightToolbar() {
     setActiveMode('markup');
     setActiveMarkupTool('freehand');
     adapter.setMarkupTool?.('freehand');
-    window.dispatchEvent(new CustomEvent('mv:open-panel', { detail: { panelId: 'views', label: 'Views' } }));
+    window.dispatchEvent(new CustomEvent('mv:open-panel', { detail: { panelId: 'views', label: 'Viewpoints' } }));
   };
 
   const modeButtons = [

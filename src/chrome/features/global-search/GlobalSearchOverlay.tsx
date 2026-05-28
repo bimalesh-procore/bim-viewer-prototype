@@ -240,7 +240,7 @@ export function GlobalSearchOverlay() {
       adapter.selectAndFocusObject?.(entity.sourceId);
       openPanel('properties', 'Properties');
     } else if (entity.type === 'view') {
-      openPanel('views', 'Views');
+      openPanel('views', 'Viewpoints');
     } else if (entity.type === 'item') {
       openPanel('items', 'Related Items');
     } else if (entity.type === 'material') {

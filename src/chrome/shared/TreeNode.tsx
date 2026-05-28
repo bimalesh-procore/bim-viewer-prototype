@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Check, Folder } from 'lucide-react';
 
 export interface TreeNodeProps {
@@ -11,6 +12,8 @@ export interface TreeNodeProps {
   indeterminate?: boolean;
   children?: React.ReactNode;
   // shared
+  /** Show the checkbox. Default true. Pass false for list-style panels (e.g. Viewpoints). */
+  showCheckbox?: boolean;
   checked?: boolean;
   onCheckedChange?: (id: string, checked: boolean) => void;
   loading?: boolean;
@@ -19,13 +22,24 @@ export interface TreeNodeProps {
   // leaf
   onDoubleClick?: (id: string, label: string) => void;
   onContextMenu?: (e: React.MouseEvent, id: string) => void;
+  /** Trailing action slot. */
   actions?: React.ReactNode;
-  subtitle?: string;
-  // folder display overrides
-  hideFolderIcon?: boolean;
-  labelBold?: boolean;
-  isHovered?: boolean;
+  /** When true, actions are hidden until the row is hovered or selected. Default false. */
+  showActionsOnHover?: boolean;
+  /** Custom hover background color. When omitted, falls back to a subtle gray. */
   hoverBg?: string;
+  /** Optional subtitle rendered below the label (switches row to top-align). */
+  subtitle?: string;
+  /** Hide the folder icon (folder rows only). Default false. */
+  hideFolderIcon?: boolean;
+  /** Render the label at base size and bold, regardless of selection state. */
+  labelBold?: boolean;
+  // inline rename — all three props required together to enable rename mode
+  isRenaming?: boolean;
+  renameValue?: string;
+  onRenameChange?: (val: string) => void;
+  onRenameCommit?: () => void;
+  onRenameCancel?: () => void;
   // drag and drop (optional — omit all to disable D&D on this node)
   draggable?: boolean;
   onDragStart?: (id: string) => void;
@@ -47,6 +61,7 @@ export function TreeNode({
   onToggle,
   indeterminate = false,
   children,
+  showCheckbox = true,
   checked = false,
   onCheckedChange,
   loading = false,
@@ -55,8 +70,16 @@ export function TreeNode({
   onDoubleClick,
   onContextMenu,
   actions,
-  isHovered = false,
+  showActionsOnHover = false,
   hoverBg,
+  subtitle,
+  hideFolderIcon = false,
+  labelBold = false,
+  isRenaming = false,
+  renameValue = '',
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
   draggable = false,
   onDragStart,
   onDragEnd,
@@ -66,29 +89,66 @@ export function TreeNode({
   dropIndicator,
   isDropTarget = false,
   isDragging = false,
-  subtitle,
-  hideFolderIcon = false,
-  labelBold = false,
 }: TreeNodeProps) {
   const isFolder = type === 'folder';
   const paddingLeft = 16 + depth * 20 + (!isFolder && depth > 0 ? 8 : 0);
   const checkboxState = indeterminate ? 'indeterminate' : checked ? 'checked' : 'unchecked';
+  const [hovered, setHovered] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isRenaming && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [isRenaming]);
+
+  // Rename mode — renders in place of the normal row, same height (40px) to prevent layout shift.
+  if (isRenaming) {
+    return (
+      <div
+        data-tree-node
+        className="flex items-center bg-[#EDF2FC]"
+        style={{ paddingLeft, paddingRight: 8, height: 40 }}
+      >
+        <input
+          ref={renameInputRef}
+          type="text"
+          value={renameValue}
+          onChange={(e) => onRenameChange?.(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onRenameCommit?.();
+            if (e.key === 'Escape') onRenameCancel?.();
+          }}
+          onBlur={onRenameCommit}
+          className="text-sm flex-1 min-w-0 border border-blue-400 rounded px-1.5 py-0 outline-none bg-white"
+        />
+      </div>
+    );
+  }
+
+  const actionsVisible = !showActionsOnHover || hovered || selected;
 
   return (
     <>
-      <div className="relative">
+      <div
+        className="relative"
+        data-tree-node
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
         {dropIndicator === 'before' && (
           <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#2066DF] z-10 pointer-events-none" />
         )}
         <div
-          className={`flex ${subtitle ? 'items-start' : 'items-center'} gap-2 cursor-pointer select-none ${
-            hoverBg ? '' : (selected || isDropTarget ? '' : 'hover:bg-gray-50')
-          } ${isDragging ? 'opacity-40' : ''}`}
+          className={`flex ${subtitle ? 'items-start' : 'items-center'} gap-2 cursor-pointer select-none transition-colors ${isDragging ? 'opacity-40' : ''}`}
           style={{
             paddingLeft, paddingRight: 12, paddingTop: 8, paddingBottom: 8,
             backgroundColor: selected || isDropTarget
               ? '#EDF2FC'
-              : (isHovered && hoverBg ? hoverBg : undefined),
+              : hovered
+                ? (hoverBg ?? 'rgba(0,0,0,0.03)')
+                : undefined,
           }}
           draggable={draggable}
           onClick={() => { if (isFolder) onToggle?.(id); onClick?.(id); }}
@@ -114,19 +174,21 @@ export function TreeNode({
           onDragLeave={onDragLeave ? (e) => { e.stopPropagation(); onDragLeave(id); } : undefined}
           onDrop={onDrop ? (e) => { e.preventDefault(); e.stopPropagation(); onDrop(id); } : undefined}
         >
-          <button
-            type="button"
-            role="checkbox"
-            aria-checked={checkboxState === 'indeterminate' ? 'mixed' : checkboxState === 'checked'}
-            disabled={loading}
-            onClick={(e) => { e.stopPropagation(); onCheckedChange?.(id, !checked); }}
-            className={`shrink-0 size-5 rounded-[2px] flex items-center justify-center transition-colors ${subtitle ? 'mt-0.5' : ''} ${
-              checkboxState === 'unchecked' ? 'bg-white border-2 border-[#6A767C]' : 'bg-[#2066DF]'
-            } ${loading ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
-          >
-            {checkboxState === 'checked' && <Check size={10} strokeWidth={3} className="text-white" />}
-            {checkboxState === 'indeterminate' && <span className="block w-[6px] h-[1.5px] bg-white" />}
-          </button>
+          {showCheckbox && (
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={checkboxState === 'indeterminate' ? 'mixed' : checkboxState === 'checked'}
+              disabled={loading}
+              onClick={(e) => { e.stopPropagation(); onCheckedChange?.(id, !checked); }}
+              className={`shrink-0 size-5 rounded-[2px] flex items-center justify-center transition-colors ${subtitle ? 'mt-0.5' : ''} ${
+                checkboxState === 'unchecked' ? 'bg-white border-2 border-[#6A767C]' : 'bg-[#2066DF]'
+              } ${loading ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
+            >
+              {checkboxState === 'checked' && <Check size={10} strokeWidth={3} className="text-white" />}
+              {checkboxState === 'indeterminate' && <span className="block w-[6px] h-[1.5px] bg-white" />}
+            </button>
+          )}
 
           {isFolder && (
             <button type="button" className="w-6 h-6 flex items-center justify-center shrink-0" style={{ color: '#232729' }}>
@@ -151,7 +213,11 @@ export function TreeNode({
             </span>
           )}
 
-          {!loading && !isFolder && actions}
+          {!loading && !isFolder && actions && (
+            <div className={`flex items-center gap-0.5 shrink-0 ${actionsVisible ? '' : 'invisible'}`}>
+              {actions}
+            </div>
+          )}
         </div>
         {dropIndicator === 'after' && (
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#2066DF] z-10 pointer-events-none" />

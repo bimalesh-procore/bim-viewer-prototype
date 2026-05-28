@@ -109,12 +109,9 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
     closePanel(panelId);
   }, [adapter, closePanel]);
 
-  const handleAddForPanel = useCallback((panelId: PanelId, e: React.MouseEvent) => {
+  const handleAddForPanel = useCallback((panelId: PanelId) => {
     if (panelId === 'views') {
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      window.dispatchEvent(new CustomEvent('mv:views-open-create', {
-        detail: { x: rect.right, y: rect.bottom + 6 },
-      }));
+      window.dispatchEvent(new CustomEvent('mv:views-open-create'));
     }
   }, []);
 
@@ -647,7 +644,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
                   onTabChange={panel.id === 'properties'
                     ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
                     : undefined}
-                  onAdd={panel.id === 'views' || panel.id === 'sheets' ? (e) => handleAddForPanel(panel.id, e) : undefined}
+                  onAdd={panel.id === 'views' || panel.id === 'sheets' ? () => handleAddForPanel(panel.id) : undefined}
                   onClose={()         => handleClosePanel(panel.id)}
                   onToggleMinimize={()  => toggleMinimized(panel.id)}
                   onDragStart={(ev)   => handleDragStart(panel.id, ev)}
@@ -775,7 +772,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
             onTabChange={panel.id === 'properties'
               ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
               : undefined}
-            onAdd={panel.id === 'views' ? (e) => handleAddForPanel(panel.id, e) : undefined}
+            onAdd={panel.id === 'views' ? () => handleAddForPanel(panel.id) : undefined}
             onClose={()        => handleClosePanel(panel.id)}
             onToggleMinimize={() => toggleMinimized(panel.id)}
             onDragStart={(ev)  => handleDragStart(panel.id, ev)}

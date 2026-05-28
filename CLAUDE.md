@@ -340,7 +340,7 @@ write back to the GitHub repo, which we don't want to wire up for a
 prototype. To update a saved home from prod: run the dev server locally,
 save, commit the resulting `public/viewpoints.json` change, push.
 
-**Custom views (Views panel)** — `ViewpointsContext` owns live `customViews: Viewpoint[]` state,
+**Custom views (Viewpoints panel)** — `ViewpointsContext` owns live `customViews: Viewpoint[]` state,
 loaded from the store on mount and on `activeModelId` change. Every write calls the matching
 store function (`addCustomView`, `deleteCustomView`, `renameCustomView`, `reorderCustomViews`,
 `updateCustomView`) then calls `refreshCustomViews()` to sync the local state from the updated
@@ -349,7 +349,7 @@ cache.
 `POST /__viewpoints/custom` supports 5 actions: `add`, `delete`, `rename`, `reorder`, `update`.
 `update` replaces a viewpoint in-place by `id` — used by the "Update" action in the More menu.
 
-The Views panel (`panelContent.tsx → ViewsContent + ViewsToolbar`) wires to this context:
+The Viewpoints panel (`panelContent.tsx → ViewsContent + ViewsToolbar`) wires to this context:
 
 - **Create** (orange `+` in the panel header) — opens a Create dropdown with three options:
   - **Create Viewpoint** (wired) — calls `adapter.getViewpointState()` to capture camera +
@@ -358,9 +358,12 @@ The Views panel (`panelContent.tsx → ViewsContent + ViewsToolbar`) wires to th
   - **Create Folder** (stub — not yet implemented)
   - **Import Viewpoints** (stub — not yet implemented)
 
-  The dropdown is triggered via `window.dispatchEvent(new CustomEvent('mv:views-open-create'))`,
-  fired from `DockManager.tsx` `handleAddForPanel('views')`. `ViewsContent` listens for this
-  event and toggles the dropdown open/closed.
+  The `+` button in `DockedPanel` carries `data-add={id}`. `DockManager.handleAddForPanel`
+  dispatches `mv:views-open-create` with no payload. `ViewsContent` listens for the event and
+  queries `document.querySelector('[data-add="views"]').getBoundingClientRect()` directly to get
+  accurate coordinates — avoids `e.currentTarget` unreliability across panel transforms. Both
+  Create and More dropdowns use the shared `DropdownMenu` + `DropdownMenuItem` components
+  (`src/chrome/shared/DropdownMenu.tsx`) — see §4f.
 
 - **Restore** (click a row) — calls `adapter.setViewpointState(state, { animate: true })`.
   Sectioning → visibility → camera, same as home-view restore.
@@ -371,23 +374,26 @@ The Views panel (`panelContent.tsx → ViewsContent + ViewsToolbar`) wires to th
   `restoringUntilRef` is set to `Date.now() + 700` when a restore begins, preventing the
   550ms animate transition itself from triggering a deselect.
 
-- **Row hover / selected actions** — `ViewRow` tracks hover state (`onMouseEnter` /
-  `onMouseLeave`). When `hovered` or `selected`, three icon buttons appear in the row's
-  trailing slot:
-  - **Edit Name** (pencil icon) — triggers the inline rename input (same as double-click).
+- **Row hover / selected actions** — `ViewsContent` renders `TreeNode` directly with
+  `showActionsOnHover` and `hoverBg="#F4F5F6"`. `TreeNode` owns the hover state internally;
+  the three icon buttons (Edit Name, Share, More) are passed as the `actions` slot and are
+  automatically hidden (`invisible`) until the row is hovered or selected. There is no separate
+  `ViewRow` wrapper — all row behavior (hover bg, action visibility, inline rename, drag-and-drop)
+  is handled by `TreeNode` props:
+  - **Edit Name** (pencil icon) — triggers inline rename (same as double-click).
   - **Share** (stub — no-op for now).
-  - **More** (`⋯` icon) — opens a positioned dropdown anchored to the button via
-    `e.currentTarget.getBoundingClientRect()`. Dropdown items:
-    - **Update** (wired) — re-saves the current camera + hiddenObjects + sectioning state to
-      the existing viewpoint in-place via `viewpoints.updateCustomView`.
+  - **More** (`⋯` icon) — opens a `DropdownMenu` anchored to the button via
+    `e.currentTarget.getBoundingClientRect()`. Items:
+    - **Update** (wired) — re-saves current camera + hiddenObjects + sectioning in-place.
     - **Rename** (wired) — triggers inline rename.
-    - **Move to Folder** (stub — no-op for now).
-    - **Add to Project Views** (stub — no-op for now).
+    - **Move to Folder** (stub).
+    - **Add to Project Views** (stub).
     - **Delete** (wired) — calls `viewpoints.deleteCustomView` with a success toast.
 
-- **Rename** (double-click a row, Edit Name button, or More → Rename) — inline `<input>`
-  replaces the label; Enter commits, Escape cancels, blur commits. Calls
-  `viewpoints.renameCustomView`.
+- **Rename** (double-click a row, Edit Name button, or More → Rename) — `TreeNode`'s built-in
+  rename mode (`isRenaming` + `renameValue` + `onRenameChange` + `onRenameCommit` +
+  `onRenameCancel`). Renders an inline `<input>` at the same 40px row height to prevent layout
+  shift. Enter/blur commits, Escape cancels. Calls `viewpoints.renameCustomView`.
 
 - **Reorder** (drag-and-drop) — `localViews` state mirrors context for optimistic UI; on drop
   calls `viewpoints.reorderCustomViews` to persist the new order.
@@ -443,13 +449,14 @@ queue-and-apply fix that would mirror what sectioning already does.
 
 ### 4f. FloatingWindow vs Panels vs Dropdowns
 
-Four floating-UI patterns coexist in the chrome. Pick the right one when
+Five floating-UI patterns coexist in the chrome. Pick the right one when
 building a new piece:
 
 | Pattern | Where | Use when |
 |---|---|---|
-| **Dropdown / popover** | Header menus, header buttons | Small menu anchored to a button, auto-dismiss on outside click |
-| **DockedPanel** | `dock-manager/DockedPanel.tsx` | Persistent feature panel that lives in the layout (Views, Properties, etc.). Can be undocked into a floating in-page panel. |
+| **DropdownMenu** | `src/chrome/shared/DropdownMenu.tsx` | Context menu or action list anchored to any button. Portals to `document.body`, right-aligns to anchor via `left: rect.right; transform: translateX(-100%)`, auto-dismiss on outside click. Use `DropdownMenuItem` for rows. |
+| **Dropdown / popover** | Header menus, header buttons | Small menu anchored to a button that manages its own open/close state inline (no shared component needed for one-off header popovers). |
+| **DockedPanel** | `dock-manager/DockedPanel.tsx` | Persistent feature panel that lives in the layout (Viewpoints, Properties, etc.). Can be undocked into a floating in-page panel. |
 | **DetachedPanel** | `dock-manager/DetachedPanelPortal.tsx` + `usePopupWindow.ts` | Open a panel in a **real OS popup window** via `window.open()`. Heavy — separate browser window, separate event loop. |
 | **FloatingWindow** | `src/chrome/features/floating-window/` | Free-floating in-page dialog with title bar + close X + drag. No auto-dismiss. Non-modal. Centered on first open unless `initialPosition` given. |
 

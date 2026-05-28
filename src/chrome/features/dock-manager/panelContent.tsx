@@ -1436,6 +1436,7 @@ function SheetsContent() {
                 checked={allChecked}
                 indeterminate={checkedCount > 0 && !allChecked}
                 onCheckedChange={handleFolderChecked}
+                selected={allChecked}
                 hideFolderIcon
                 labelBold
               >

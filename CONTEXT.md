@@ -190,8 +190,8 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 ## Current Wiring Status
 
 ### Wired and working
-- **Reset** → `viewer.resetView()`
-- **Object Tree** → `viewer.treePanel.toggle()`
+- **Reset** → `viewer.resetView()`. The right-toolbar reset button shows a **ModificationPill** badge — a small circle displaying the total count of active modifications (sectioning + hidden objects + isolate + markups + measurements). When any count increases the pill expands into an orange label (e.g., "Sectioning") for 3 seconds before collapsing back to the count circle. The label re-fires at the moment you exit sectioning mode (when the pill was hidden), so Section Plane/Cut actions always get their label even though they're placed inside the sectioning UI. When all modifications are cleared the pill plays a reverse pop-out animation (`mv-badge-pop-out` CSS keyframe, `cubic-bezier(0.34,1.56,0.64,1)`) before unmounting. Pill position: `-translate-y-[135%] translate-x-[15%]` relative to the reset button.
+- **Object Tree** → `viewer.treePanel.toggle()`. Each leaf node in the Object Tree panel shows a **hide icon button** on hover. Clicking it calls `adapter.hideObjects([expressID])`. Hidden objects show an always-visible **show icon button** instead. Clicking it calls `adapter.showObjects([expressID])`. The panel subscribes to `adapter.subscribeHiddenObjects` to keep `hiddenIds` in sync with the engine. New adapter methods: `showObjects`, `subscribeHiddenObjects` (backed by `visibility.on('visibility-change', ...)` + `visibility.off`). Icon assets: `src/chrome/assets/icons/panel/hide.svg`, `src/chrome/assets/icons/panel/show.svg`.
 - **Sectioning** → `viewer.sectioning.clearClipPlanes()`
 - **Bottom toolbar Home button** → restores the saved home view (camera + sectioning + visibility) with a 550ms ease-in-out animation; falls back to `zoomToFit()` if no home view is saved
 - **Settings → Update Home View** → saves current camera + isOrthographic + hiddenObjects + sectioning to `public/viewpoints.json`. Dev-write only; prod shows an error toast. See CLAUDE.md §4e.

@@ -52,11 +52,13 @@ interface ModelViewerInstance {
   };
   visibility: {
     showAll(): void;
+    show(ids: string[]): void;
     isolate(ids: string[]): void;
     hide(ids: string[]): void;
     getMeshByElementId(id: string): unknown | null;
     getHiddenElements(): string[];
     on(event: string, callback: (data: unknown) => void): void;
+    off(event: string, callback: (data: unknown) => void): void;
   };
   objectTree: {
     nodeMap: Map<string, {
@@ -852,6 +854,20 @@ export function createModelViewerAdapter(
       viewer.visibility.hide(expressIDs);
       viewer.selection.deselect(expressIDs);
       emitActionHistory();
+    },
+    showObjects(expressIDs: string[]) {
+      if (expressIDs.length === 0) return;
+      viewer.visibility.show(expressIDs);
+      emitActionHistory();
+    },
+    subscribeHiddenObjects(listener: (expressIDs: string[]) => void) {
+      const handler = (data: unknown) => {
+        const payload = data as { allHidden?: string[] };
+        listener(Array.isArray(payload?.allHidden) ? payload.allHidden : []);
+      };
+      viewer.visibility.on('visibility-change', handler);
+      listener(viewer.visibility.getHiddenElements());
+      return () => viewer.visibility.off('visibility-change', handler);
     },
     subscribeSelectedObjects(listener: (expressIDs: string[]) => void) {
       const onSelectionChange = (data: unknown) => {

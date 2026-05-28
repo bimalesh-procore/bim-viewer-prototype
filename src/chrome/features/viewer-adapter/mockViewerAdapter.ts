@@ -155,6 +155,13 @@ export const mockViewerAdapter: ViewerAdapter = {
   hideObjects(expressIDs: string[]) {
     log('hideObjects', expressIDs);
   },
+  showObjects(expressIDs: string[]) {
+    log('showObjects', expressIDs);
+  },
+  subscribeHiddenObjects(listener) {
+    listener([]);
+    return () => {};
+  },
   subscribeSelectedObjects(listener) {
     listener([]);
     return () => {

@@ -6,6 +6,12 @@ import { useViewpoints } from '../viewpoints';
 import { BottomToolbarButton } from './BottomToolbarButton';
 import { BottomToolbarDivider } from './BottomToolbarDivider';
 import { NavModeMenu, NAV_MODE_ICONS, type NavMode } from './NavModeMenu';
+
+const NAV_MODE_LABEL: Record<NavMode, string> = {
+  select: 'Default',
+  orbit: 'Orbit',
+  fly: 'Fly',
+};
 import { RenderSettingsFlyout } from './RenderSettingsFlyout';
 import {
   RenderStyleMenu,
@@ -151,17 +157,22 @@ export function BottomToolbar() {
             {...hoverHandlers('home')}
           />
           <div className="relative">
-            <BottomToolbarButton
-              src={activeNavIcon}
-              label="Navigation mode"
-              showTooltip={hoveredId === 'nav-mode' && openFlyout !== 'nav-mode'}
-              hasFlyout
-              isActive={openFlyout === 'nav-mode' || activeMode !== 'select'}
-              onClick={() =>
-                setOpenFlyout((prev) => (prev === 'nav-mode' ? null : 'nav-mode'))
-              }
+            <button
+              type="button"
+              aria-label="Navigation Mode"
+              aria-haspopup="menu"
+              aria-expanded={openFlyout === 'nav-mode'}
+              onClick={() => setOpenFlyout((prev) => (prev === 'nav-mode' ? null : 'nav-mode'))}
               {...hoverHandlers('nav-mode')}
-            />
+              className={`flex items-center gap-1.5 rounded px-2 py-1 transition-colors ${
+                openFlyout === 'nav-mode' || activeMode !== 'select'
+                  ? 'bg-[#D2E0F9] hover:bg-[#BCD1F5]'
+                  : 'hover:bg-[#E3E6E8]'
+              }`}
+            >
+              <img src={activeNavIcon} alt="" width={20} height={20} aria-hidden="true" />
+              <ChevronDown size={16} className="text-[#232729]" aria-hidden="true" />
+            </button>
             {openFlyout === 'nav-mode' && (
               <NavModeMenu activeMode={activeMode} onSelect={handleSelectMode} />
             )}
@@ -181,15 +192,20 @@ export function BottomToolbar() {
             {...hoverHandlers('ortho')}
           />
           <div className="relative">
-            <BottomToolbarButton
-              src={renderModesIcon}
-              label="Render Settings"
-              showTooltip={hoveredId === 'render' && openFlyout !== 'render'}
-              hasFlyout
-              isActive={openFlyout === 'render'}
+            <button
+              type="button"
+              aria-label="Render Settings"
+              aria-haspopup="menu"
+              aria-expanded={openFlyout === 'render'}
               onClick={() => setOpenFlyout((prev) => (prev === 'render' ? null : 'render'))}
               {...hoverHandlers('render')}
-            />
+              className={`flex items-center gap-1 rounded p-1.5 transition-colors ${
+                openFlyout === 'render' ? 'bg-[#D2E0F9] hover:bg-[#BCD1F5]' : 'hover:bg-[#E3E6E8]'
+              }`}
+            >
+              <img src={renderModesIcon} alt="" width={24} height={24} aria-hidden="true" />
+              <ChevronDown size={14} className="text-[#232729]" aria-hidden="true" />
+            </button>
             {openFlyout === 'render' && <RenderSettingsFlyout />}
           </div>
           <BottomToolbarButton

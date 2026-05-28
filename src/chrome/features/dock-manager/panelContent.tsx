@@ -27,6 +27,8 @@ import type { Viewpoint } from '../viewpoints';
 import { useToast } from '../toast/ToastContext';
 import searchFieldIcon from '../../assets/icons/panel/searchField.svg';
 import filterButtonIcon from '../../assets/icons/panel/filterButton.svg';
+import hideIcon from '../../assets/icons/panel/hide.svg';
+import showIcon from '../../assets/icons/panel/show.svg';
 import propertiesEmptyIllustration from '../../assets/icons/panel/properties-empty.svg';
 
 export type PropertiesTabId = 'all-properties' | 'related-items';
@@ -309,8 +311,11 @@ interface ObjTreeNodeProps {
   checkedIds: Set<string>;
   expandedIds: Set<string>;
   loadingIds?: Set<string>;
+  hiddenIds: Set<string>;
   onToggleChecked: (node: ObjNode, checked: boolean) => void;
   onToggleExpanded: (nodeId: string) => void;
+  onHide: (expressID: string) => void;
+  onShow: (expressID: string) => void;
 }
 
 function ObjTreeNode({
@@ -319,8 +324,11 @@ function ObjTreeNode({
   checkedIds,
   expandedIds,
   loadingIds,
+  hiddenIds,
   onToggleChecked,
   onToggleExpanded,
+  onHide,
+  onShow,
 }: ObjTreeNodeProps) {
   const expanded = node.children ? expandedIds.has(node.id) : false;
   const isLoading = loadingIds ? loadingIds.has(node.id) : false;
@@ -338,6 +346,8 @@ function ObjTreeNode({
     ? !folderExplicitlyChecked && checkedLeafCount > 0 && checkedLeafCount < leafIds!.length
     : false;
 
+  const isHidden = node.expressID ? hiddenIds.has(node.expressID) : false;
+
   return (
     <TreeNode
       id={node.id}
@@ -350,6 +360,21 @@ function ObjTreeNode({
       indeterminate={indeterminate}
       onCheckedChange={(_id, c) => onToggleChecked(node, c)}
       loading={isLoading}
+      showActionsOnHover={!isHidden}
+      actions={node.expressID ? (
+        <button
+          type="button"
+          aria-label={isHidden ? 'Show object' : 'Hide object'}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isHidden) onShow(node.expressID!);
+            else onHide(node.expressID!);
+          }}
+          className="flex items-center justify-center rounded p-0.5 hover:bg-[#E3E6E8] transition-colors"
+        >
+          <img src={isHidden ? showIcon : hideIcon} alt="" width={16} height={16} />
+        </button>
+      ) : undefined}
     >
       {node.children?.map((child) => (
         <ObjTreeNode
@@ -359,8 +384,11 @@ function ObjTreeNode({
           checkedIds={checkedIds}
           expandedIds={expandedIds}
           loadingIds={loadingIds}
+          hiddenIds={hiddenIds}
           onToggleChecked={onToggleChecked}
           onToggleExpanded={onToggleExpanded}
+          onHide={onHide}
+          onShow={onShow}
         />
       ))}
     </TreeNode>
@@ -412,6 +440,20 @@ function ObjectTreeContent() {
     });
     return map;
   }, [flatNodes]);
+
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const unsubscribe = adapter.subscribeHiddenObjects?.((ids) => setHiddenIds(new Set(ids)));
+    return () => unsubscribe?.();
+  }, [adapter]);
+
+  const handleHide = useCallback((expressID: string) => {
+    adapter.hideObjects?.([expressID]);
+  }, [adapter]);
+
+  const handleShow = useCallback((expressID: string) => {
+    adapter.showObjects?.([expressID]);
+  }, [adapter]);
 
   const [streamComplete, setStreamComplete] = useState(() => adapter.getObjectStreamingState?.()?.streamComplete ?? true);
   useEffect(() => {
@@ -673,8 +715,11 @@ function ObjectTreeContent() {
               checkedIds={checkedIds}
               expandedIds={expandedIds}
               loadingIds={loadingIds}
+              hiddenIds={hiddenIds}
               onToggleChecked={onToggleChecked}
               onToggleExpanded={onToggleExpanded}
+              onHide={handleHide}
+              onShow={handleShow}
             />
           ))}
         </div>

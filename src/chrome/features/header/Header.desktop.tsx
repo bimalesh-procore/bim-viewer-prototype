@@ -203,7 +203,7 @@ export function HeaderDesktop({ models = [], activeModelId = null, onSelectModel
               aria-expanded={formFactorMenuOpen}
               className="flex items-center justify-center rounded p-1 transition-colors hover:bg-gray-200 active:bg-gray-300"
             >
-              <img src={phoneIcon} alt="" className="w-6 h-6" />
+              <img src={phoneIcon} alt="" className="w-5 h-5" />
             </button>
             {formFactorMenuOpen && (
               <div ref={formFactorMenuRef} className="absolute top-full right-0 mt-1 z-40">

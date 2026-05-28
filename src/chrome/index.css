@@ -509,6 +509,11 @@ html.mv-force-selected-cursor * {
   100% { transform: scale(1); opacity: 1; }
 }
 
+@keyframes mv-badge-pop-out {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0); opacity: 0; }
+}
+
 @keyframes mv-badge-fade {
   0% { opacity: 1; }
   100% { opacity: 0; }

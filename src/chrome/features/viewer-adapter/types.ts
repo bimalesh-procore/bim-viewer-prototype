@@ -199,6 +199,8 @@ export interface ViewerAdapter {
   selectAndFocusObject?(expressID: string): void;
   setSelectedObjects?(objectIDs: string[]): void;
   hideObjects?(expressIDs: string[]): void;
+  showObjects?(expressIDs: string[]): void;
+  subscribeHiddenObjects?(listener: (expressIDs: string[]) => void): () => void;
   subscribeSelectedObjects?(
     listener: (expressIDs: string[]) => void,
   ): () => void;

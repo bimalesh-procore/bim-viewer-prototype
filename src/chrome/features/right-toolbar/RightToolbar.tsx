@@ -4,6 +4,7 @@ import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import { useViewerSettings } from '../viewer-settings/ViewerSettingsContext';
 import type { ActionHistorySummary } from '../viewer-adapter/types';
 import { useEffect, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { MoreVertical } from 'lucide-react';
 import orthographicIcon from '../../assets/icons/right-toolbar/orthographic.svg';
 import perspectiveIcon from '../../assets/icons/right-toolbar/perspective.svg';
@@ -69,20 +70,74 @@ export function RightToolbar() {
       markupsCount: 0, measurementsCount: 0,
     },
   );
-  const [saveBadgeCount, setSaveBadgeCount] = useState<number | null>(null);
-  const historySnapshot = useRef<ActionHistorySummary | null>(null);
+  const [freshLabel, setFreshLabel] = useState<string | null>(null);
+  const freshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevHistoryRef = useRef<ActionHistorySummary>(actionHistory);
+  const actionHistoryRef = useRef(actionHistory);
+  const prevModeRef = useRef<ModeId>(activeMode);
+  const [pillExiting, setPillExiting] = useState(false);
+  const [pillMounted, setPillMounted] = useState(false);
+  const prevTotalCountRef = useRef(0);
   const toolbarRef = useRef<HTMLDivElement>(null);
-  const saveBadgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (saveBadgeCount !== null) {
-      if (saveBadgeTimer.current) clearTimeout(saveBadgeTimer.current);
-      saveBadgeTimer.current = setTimeout(() => setSaveBadgeCount(null), 3000);
+    const prev = prevHistoryRef.current;
+    const checks: Array<[number, number, string]> = [
+      [actionHistory.sectioningCount, prev.sectioningCount, 'Sectioning'],
+      [actionHistory.hiddenObjectsCount, prev.hiddenObjectsCount, 'Hidden'],
+      [actionHistory.isolateCount, prev.isolateCount, 'Isolate'],
+      [actionHistory.markupsCount, prev.markupsCount, 'Markups'],
+      [actionHistory.measurementsCount, prev.measurementsCount, 'Measurements'],
+    ];
+    const changed = checks.find(([curr, prev]) => curr > prev);
+    if (changed) {
+      setFreshLabel(changed[2]);
+      if (freshTimer.current) clearTimeout(freshTimer.current);
+      freshTimer.current = setTimeout(() => setFreshLabel(null), 3000);
     }
-    return () => {
-      if (saveBadgeTimer.current) clearTimeout(saveBadgeTimer.current);
-    };
-  }, [saveBadgeCount]);
+    prevHistoryRef.current = actionHistory;
+  }, [actionHistory]);
+
+  useEffect(() => {
+    return () => { if (freshTimer.current) clearTimeout(freshTimer.current); };
+  }, []);
+
+  // Keep actionHistoryRef current so other effects can read it without stale closures.
+  useEffect(() => {
+    actionHistoryRef.current = actionHistory;
+  }, [actionHistory]);
+
+  // When exiting sectioning mode, re-trigger the fresh label if sections exist.
+  // The pill is hidden during sectioning mode, so the 3s timer often expires before
+  // the user returns to default — this ensures the animation always plays on exit.
+  useEffect(() => {
+    const prev = prevModeRef.current;
+    prevModeRef.current = activeMode;
+    if (prev === 'sectioning' && activeMode === 'default' && actionHistoryRef.current.sectioningCount > 0) {
+      setFreshLabel('Sectioning');
+      if (freshTimer.current) clearTimeout(freshTimer.current);
+      freshTimer.current = setTimeout(() => setFreshLabel(null), 3000);
+      prevHistoryRef.current = { ...prevHistoryRef.current, sectioningCount: actionHistoryRef.current.sectioningCount };
+    }
+  }, [activeMode]);
+
+  // Manage the pill's mount/exit lifecycle for the pop-out animation.
+  const totalCount =
+    actionHistory.sectioningCount + actionHistory.hiddenObjectsCount +
+    actionHistory.isolateCount + actionHistory.markupsCount + actionHistory.measurementsCount;
+
+  useEffect(() => {
+    const prev = prevTotalCountRef.current;
+    prevTotalCountRef.current = totalCount;
+    if (totalCount > 0) {
+      setPillMounted(true);
+      setPillExiting(false);
+    } else if (prev > 0 && totalCount === 0) {
+      setPillExiting(true);
+      const t = setTimeout(() => { setPillMounted(false); setPillExiting(false); }, 250);
+      return () => clearTimeout(t);
+    }
+  }, [totalCount]);
 
   const exitMarkupIfActive = () => {
     if (adapter.isMarkupModeActive?.()) {
@@ -96,23 +151,6 @@ export function RightToolbar() {
     adapter.setSectionBoxSubTool?.(tool);
   };
 
-  const snapshotHistory = () => {
-    historySnapshot.current = adapter.getActionHistory?.() ?? actionHistory;
-  };
-
-  const triggerSaveBadge = () => {
-    const snap = historySnapshot.current;
-    const current = adapter.getActionHistory?.() ?? actionHistory;
-    if (!snap) return;
-    const delta =
-      (current.sectioningCount - snap.sectioningCount) +
-      (current.hiddenObjectsCount - snap.hiddenObjectsCount) +
-      (current.isolateCount - snap.isolateCount) +
-      (current.markupsCount - snap.markupsCount) +
-      (current.measurementsCount - snap.measurementsCount);
-    if (delta > 0) setSaveBadgeCount(delta);
-    historySnapshot.current = null;
-  };
 
   useEffect(() => {
     let label: string;
@@ -200,26 +238,22 @@ export function RightToolbar() {
 
       if (sourceId === 'mode:markup') {
         const viewId = (detail as { viewId?: string })?.viewId;
-        snapshotHistory();
         enterMarkup(viewId ?? undefined);
         setOpenFlyout(null);
         return;
       }
       if (sourceId === 'mode:measure') {
-        snapshotHistory();
         setActiveMode('measure');
         setActiveMeasureTool('dimensions');
         setOpenFlyout(null);
         return;
       }
       if (sourceId === 'mode:create') {
-        snapshotHistory();
         setActiveMode('create');
         setOpenFlyout(null);
         return;
       }
       if (sourceId === 'mode:sectioning') {
-        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
         setActiveSectionTool('section-box');
@@ -231,7 +265,6 @@ export function RightToolbar() {
         return;
       }
       if (sourceId === 'sectioning:section-box') {
-        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
         setActiveSectionTool('section-box');
@@ -241,7 +274,6 @@ export function RightToolbar() {
         return;
       }
       if (sourceId === 'sectioning:section-plane') {
-        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
         setActiveSectionTool('section-plane');
@@ -251,7 +283,6 @@ export function RightToolbar() {
         return;
       }
       if (sourceId === 'sectioning:section-cut') {
-        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
         setActiveSectionTool('section-cut');
@@ -420,24 +451,24 @@ export function RightToolbar() {
       src: markupIcon,
       label: 'Markup',
       shortcut: 'P P',
-      onClick: () => { snapshotHistory(); enterMarkup(); },
-      enterMode: () => { snapshotHistory(); enterMarkup(); },
+      onClick: () => { enterMarkup(); },
+      enterMode: () => { enterMarkup(); },
     },
     {
       id: 'measure' as const,
       src: measureIcon,
       label: 'Measure',
       shortcut: 'M M',
-      onClick: () => { snapshotHistory(); setOpenFlyout((prev) => (prev === 'measure' ? null : 'measure')); },
-      enterMode: () => { snapshotHistory(); setActiveMode('measure'); setActiveMeasureTool('dimensions'); adapter.toggleMeasureTool?.(); },
+      onClick: () => { setOpenFlyout((prev) => (prev === 'measure' ? null : 'measure')); },
+      enterMode: () => { setActiveMode('measure'); setActiveMeasureTool('dimensions'); adapter.toggleMeasureTool?.(); },
     },
     {
       id: 'create' as const,
       src: quickCreateIcon,
       label: 'Create Item',
       shortcut: 'C C',
-      onClick: () => { snapshotHistory(); setOpenFlyout((prev) => (prev === 'create' ? null : 'create')); },
-      enterMode: () => { snapshotHistory(); setActiveMode('create'); },
+      onClick: () => { setOpenFlyout((prev) => (prev === 'create' ? null : 'create')); },
+      enterMode: () => { setActiveMode('create'); },
     },
     {
       id: 'sectioning' as const,
@@ -445,7 +476,6 @@ export function RightToolbar() {
       label: 'Sectioning',
       shortcut: 'X X',
       onClick: () => {
-        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
         setActiveSectionTool('section-box');
@@ -456,7 +486,6 @@ export function RightToolbar() {
         adapter.setSectionBoxSubTool?.('move');
       },
       enterMode: () => {
-        snapshotHistory();
         exitMarkupIfActive();
         setActiveMode('sectioning');
         setActiveSectionTool('section-box');
@@ -653,43 +682,13 @@ export function RightToolbar() {
             isActive={openFlyout === 'history'}
             onClick={() => setOpenFlyout(prev => prev === 'history' ? null : 'history')}
           />
-          {saveBadgeCount !== null && (
-            <div
-              key={saveBadgeCount}
-              aria-label={`${saveBadgeCount} modifications saved`}
-              className="pointer-events-none absolute top-[8px] right-full -mr-2 z-[240]"
-              style={{
-                animation: 'mv-badge-pop 0.25s cubic-bezier(0.34,1.56,0.64,1) both, mv-badge-fade 0.4s ease-in 2.6s both',
-              }}
-            >
-              <div
-                className="flex items-center bg-[#FF5100] text-white rounded-[10px]"
-                style={{ padding: '2px 8px', gap: 0 }}
-              >
-                <span
-                  style={{
-                    fontFamily: 'Inter, sans-serif',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    lineHeight: '16px',
-                    letterSpacing: '0.25px',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {saveBadgeCount}
-                </span>
-                <span
-                  style={{
-                    fontFamily: 'Inter, sans-serif',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    lineHeight: '16px',
-                    letterSpacing: '0.25px',
-                  }}
-                >
-                  +
-                </span>
-              </div>
+          {pillMounted && (
+            <div className="pointer-events-none absolute top-1/2 -translate-y-[135%] translate-x-[15%] right-full -mr-2 z-[240]">
+              <ModificationPill
+                totalCount={totalCount}
+                freshLabel={freshLabel}
+                isExiting={pillExiting}
+              />
             </div>
           )}
           {openFlyout === 'history' && (
@@ -751,7 +750,6 @@ export function RightToolbar() {
                   adapter.setActiveSectioningTool?.(null);
                   adapter.setSectioningActive?.(false);
                 }
-                triggerSaveBadge();
                 setActiveMode('default');
                 setIsOverflowOpen(false);
                 setActiveMeasureTool(null);
@@ -1071,6 +1069,60 @@ function ActionHistoryFlyout({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+const COUNT_TEXT_STYLE: CSSProperties = {
+  fontFamily: 'Inter, sans-serif',
+  fontSize: '12px',
+  fontWeight: 600,
+  lineHeight: '16px',
+  letterSpacing: '0.25px',
+  flexShrink: 0,
+};
+
+function ModificationPill({ totalCount, freshLabel, isExiting }: { totalCount: number; freshLabel: string | null; isExiting: boolean }) {
+  // Keep the last label rendered so the collapse animation has something to fade out.
+  const displayLabelRef = useRef<string | null>(null);
+  if (freshLabel !== null) displayLabelRef.current = freshLabel;
+  const displayLabel = displayLabelRef.current;
+  const isFresh = freshLabel !== null;
+
+  return (
+    <div
+      aria-label={isFresh && displayLabel ? `${displayLabel}: ${totalCount} total` : `${totalCount} modifications`}
+      className="flex items-center justify-center text-white"
+      style={{
+        height: '20px',
+        minWidth: '20px',
+        borderRadius: '10px',
+        padding: '0 6px',
+        backgroundColor: isFresh ? '#FF5100' : '#8B98A1',
+        transition: 'background-color 0.5s ease-out',
+        animation: isExiting
+          ? 'mv-badge-pop-out 0.25s cubic-bezier(0.34,1.56,0.64,1) both'
+          : 'mv-badge-pop 0.25s cubic-bezier(0.34,1.56,0.64,1) both',
+        overflow: 'hidden',
+      }}
+    >
+      {displayLabel && (
+        <span
+          style={{
+            ...COUNT_TEXT_STYLE,
+            display: 'inline-block',
+            maxWidth: isFresh ? '120px' : '0px',
+            overflow: 'hidden',
+            opacity: isFresh ? 1 : 0,
+            marginRight: isFresh ? '4px' : '0px',
+            transition: 'max-width 0.4s ease-out, opacity 0.25s ease-out, margin-right 0.4s ease-out',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {displayLabel}
+        </span>
+      )}
+      <span style={COUNT_TEXT_STYLE}>{totalCount}</span>
     </div>
   );
 }

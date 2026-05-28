@@ -1370,7 +1370,6 @@ function SheetsContent() {
     () => new Set(SHEET_FOLDERS.map((f) => f.id))
   );
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -1450,8 +1449,8 @@ function SheetsContent() {
                     type="leaf"
                     checked={checkedIds.has(sheet.id)}
                     onCheckedChange={handleSheetChecked}
-                    selected={selectedId === sheet.id}
-                    onClick={setSelectedId}
+                    selected={checkedIds.has(sheet.id)}
+                    onClick={(id) => handleSheetChecked(id, true)}
                     actions={
                       <button
                         type="button"

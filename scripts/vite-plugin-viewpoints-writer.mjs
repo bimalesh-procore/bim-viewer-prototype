@@ -123,6 +123,15 @@ export function viewpointsWriter(opts = {}) {
           } else if (action === 'reorder') {
             if (!Array.isArray(viewpoints)) return { error: 'missing viewpoints array' };
             entry.customViews = viewpoints;
+          } else if (action === 'update') {
+            if (!viewpoint || !viewpoint.id) return { error: 'missing viewpoint or viewpoint.id' };
+            const idx = (entry.customViews ?? []).findIndex((v) => v.id === viewpoint.id);
+            if (idx === -1) return { error: `viewpoint not found: ${viewpoint.id}` };
+            entry.customViews = [
+              ...(entry.customViews ?? []).slice(0, idx),
+              viewpoint,
+              ...(entry.customViews ?? []).slice(idx + 1),
+            ];
           } else {
             return { error: `unknown action: ${action}` };
           }

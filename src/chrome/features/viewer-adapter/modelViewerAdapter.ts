@@ -569,6 +569,10 @@ export function createModelViewerAdapter(
   // so subsequent setSectioningActive / setSectionBoxSubTool calls work correctly
   // without re-creating the box.
   const isolateInSectionBoxListeners = new Set<() => void>();
+  const cameraChangeListeners = new Set<() => void>();
+  viewer.on('camera-change', () => {
+    cameraChangeListeners.forEach((l) => l());
+  });
   viewer.on('isolate-in-section-box', () => {
     // Engine already called setActiveTool('section-box'), activateSectionBox, and
     // setBoxSubTool('move'). Just sync the adapter's local state and notify React.
@@ -1171,6 +1175,10 @@ export function createModelViewerAdapter(
     subscribeIsolateInSectionBox(listener: () => void) {
       isolateInSectionBoxListeners.add(listener);
       return () => isolateInSectionBoxListeners.delete(listener);
+    },
+    subscribeCameraChange(listener: () => void) {
+      cameraChangeListeners.add(listener);
+      return () => cameraChangeListeners.delete(listener);
     },
   };
 }

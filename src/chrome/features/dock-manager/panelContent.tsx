@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   Binoculars,
@@ -7,7 +8,6 @@ import {
   Home,
   ListChecks,
   MoreVertical,
-  Plus,
   ShieldCheck,
   Wrench,
   ChevronRight,
@@ -15,6 +15,9 @@ import {
   Check,
   Star,
 } from 'lucide-react';
+import editIcon from '../../assets/icons/views/edit.svg';
+import shareIcon from '../../assets/icons/views/share.svg';
+import moreIcon from '../../assets/icons/views/more.svg';
 import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import type { SearchSet, ViewData, PropertyGroup, ObjectProperty } from '../viewer-adapter/types';
 import { TreeNode } from '../../shared/TreeNode';
@@ -930,59 +933,15 @@ export function PropertiesToolbar({
 // ─── Views & Markups ─────────────────────────────────────────────────────────
 
 function ViewsToolbar() {
-  const adapter = useViewerAdapter();
-  const viewpoints = useViewpoints();
-  const toast = useToast();
   const [query, setQuery] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const handleSaveView = useCallback(async () => {
-    const state = adapter.getViewpointState?.();
-    if (!state) {
-      toast.show({ kind: 'error', message: 'Cannot capture view state.' });
-      return;
-    }
-    setSaving(true);
-    const now = Date.now();
-    const viewpoint: Viewpoint = {
-      id: `view-${now}`,
-      name: `View ${viewpoints.customViews.length + 1}`,
-      cameraPosition: state.camera.position,
-      cameraTarget: state.camera.target,
-      isOrthographic: state.camera.isOrthographic,
-      hiddenObjects: state.hiddenObjects,
-      sectioning: state.sectioning,
-      markups: [],
-      createdAt: now,
-    };
-    const result = await viewpoints.addCustomView(viewpoint);
-    setSaving(false);
-    if (result.ok) {
-      toast.show({ kind: 'success', message: `"${viewpoint.name}" saved.` });
-    } else if (result.reason === 'writer-unavailable') {
-      toast.show({ kind: 'error', message: 'Saving views is only available when running locally.' });
-    } else {
-      toast.show({ kind: 'error', message: 'Failed to save view. Try again.' });
-    }
-  }, [adapter, viewpoints, toast]);
-
   return (
-    <div className="px-4 py-2 border-b border-[#d6dadc] flex items-center gap-2">
+    <div className="px-4 py-2 border-b border-[#d6dadc]">
       <PanelSearchBar
         value={query}
         onChange={setQuery}
         placeholder="Search viewpoints"
         onFilter={() => {}}
       />
-      <button
-        type="button"
-        onClick={handleSaveView}
-        disabled={saving}
-        title="Save current view"
-        className="shrink-0 w-7 h-7 flex items-center justify-center rounded hover:bg-[#EEF0F1] disabled:opacity-40 transition-colors"
-      >
-        <Plus size={16} className="text-[#232729]" />
-      </button>
     </div>
   );
 }
@@ -1031,7 +990,7 @@ function ViewRow({
   onRenameCancel,
   onSelect,
   onDoubleClick,
-  onContextMenu,
+  onMore,
   dragProps,
 }: {
   view: ViewData;
@@ -1046,10 +1005,11 @@ function ViewRow({
   onRenameCancel: () => void;
   onSelect: (id: string) => void;
   onDoubleClick: (id: string, currentName: string) => void;
-  onContextMenu: (e: React.MouseEvent, viewId: string) => void;
+  onMore: (e: React.MouseEvent, viewId: string) => void;
   dragProps?: DragProps;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [hovered, setHovered] = useState(false);
 
   useEffect(() => {
     if (isRenaming && inputRef.current) {
@@ -1078,38 +1038,66 @@ function ViewRow({
     );
   }
 
+  const showActions = hovered || selected;
+
   return (
-    <TreeNode
-      id={view.id}
-      label={view.name}
-      depth={depth}
-      type="leaf"
-      checked={checked}
-      onCheckedChange={onCheckedChange}
-      selected={selected}
-      onClick={onSelect}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
-      draggable={!!dragProps}
-      onDragStart={dragProps?.onDragStart}
-      onDragEnd={dragProps?.onDragEnd}
-      onDragOver={dragProps?.onDragOver}
-      onDragLeave={dragProps?.onDragLeave}
-      onDrop={dragProps?.onDrop}
-      isDragging={dragProps?.draggingId === view.id}
-      dropIndicator={
-        dragProps?.dropTarget?.id === view.id
-          ? (dragProps.dropTarget.position as 'before' | 'after')
-          : undefined
-      }
-      actions={
-        <>
-          {view.isProjectView && (
-            <span className="text-[11px] text-gray-500 border border-gray-300 rounded px-1.5 py-0.5 shrink-0">Project View</span>
-          )}
-        </>
-      }
-    />
+    <div data-view-row onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <TreeNode
+        id={view.id}
+        label={view.name}
+        depth={depth}
+        type="leaf"
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        selected={selected}
+        isHovered={hovered}
+        hoverBg="#E3E6E8"
+        onClick={onSelect}
+        onDoubleClick={onDoubleClick}
+        draggable={!!dragProps}
+        onDragStart={dragProps?.onDragStart}
+        onDragEnd={dragProps?.onDragEnd}
+        onDragOver={dragProps?.onDragOver}
+        onDragLeave={dragProps?.onDragLeave}
+        onDrop={dragProps?.onDrop}
+        isDragging={dragProps?.draggingId === view.id}
+        dropIndicator={
+          dragProps?.dropTarget?.id === view.id
+            ? (dragProps.dropTarget.position as 'before' | 'after')
+            : undefined
+        }
+        actions={
+          // Always reserve the 3-button slot so the label width never jumps.
+          // Visibility hidden keeps the space but hides the buttons when idle.
+          <div className={`flex items-center gap-0.5 shrink-0 ${showActions ? '' : 'invisible'}`}>
+            <button
+              type="button"
+              title="Edit name"
+              onClick={(e) => { e.stopPropagation(); onDoubleClick(view.id, view.name); }}
+              className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showActions ? 'bg-[#E3E6E8] hover:bg-[#CDD1D4]' : ''}`}
+            >
+              <img src={editIcon} alt="" width={14} height={14} />
+            </button>
+            <button
+              type="button"
+              title="Share"
+              onClick={(e) => e.stopPropagation()}
+              className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showActions ? 'bg-[#E3E6E8] hover:bg-[#CDD1D4]' : ''}`}
+            >
+              <img src={shareIcon} alt="" width={14} height={14} />
+            </button>
+            <button
+              type="button"
+              title="More"
+              onClick={(e) => { e.stopPropagation(); onMore(e, view.id); }}
+              className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showActions ? 'bg-[#E3E6E8] hover:bg-[#CDD1D4]' : ''}`}
+            >
+              <img src={moreIcon} alt="" width={14} height={14} />
+            </button>
+          </div>
+        }
+      />
+    </div>
   );
 }
 
@@ -1141,12 +1129,77 @@ function ViewsContent() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; viewId: string } | null>(null);
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number; viewId: string } | null>(null);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [createMenuPos, setCreateMenuPos] = useState({ x: 0, y: 0 });
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DragTarget | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
-  const clickTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const createMenuRef = useRef<HTMLDivElement>(null);
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Cooldown prevents camera-change during the restore animation from deselecting the row.
+  const restoringUntilRef = useRef<number>(0);
 
+  // ── Camera change → deselect after navigate away ───────────────────────────
+  useEffect(() => {
+    const unsub = adapter.subscribeCameraChange?.(() => {
+      if (Date.now() < restoringUntilRef.current) return;
+      setSelectedItemId(null);
+    });
+    return () => { unsub?.(); };
+  }, [adapter]);
+
+  // ── Create viewpoint (triggered by orange + in panel header) ──────────────
+  const handleSaveView = useCallback(async () => {
+    const state = adapter.getViewpointState?.();
+    if (!state) {
+      toast.show({ kind: 'error', message: 'Cannot capture view state.' });
+      return;
+    }
+    const now = Date.now();
+    const viewpoint: Viewpoint = {
+      id: `view-${now}`,
+      name: `View ${customViews.length + 1}`,
+      cameraPosition: state.camera.position,
+      cameraTarget: state.camera.target,
+      isOrthographic: state.camera.isOrthographic,
+      hiddenObjects: state.hiddenObjects,
+      sectioning: state.sectioning,
+      markups: [],
+      createdAt: now,
+    };
+    const result = await viewpoints.addCustomView(viewpoint);
+    if (result.ok) {
+      toast.show({ kind: 'success', message: `"${viewpoint.name}" saved.` });
+    } else if (result.reason === 'writer-unavailable') {
+      toast.show({ kind: 'error', message: 'Saving views is only available when running locally.' });
+    } else {
+      toast.show({ kind: 'error', message: 'Failed to save view. Try again.' });
+    }
+  }, [adapter, customViews, viewpoints, toast]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { x: number; y: number } | undefined;
+      if (detail) setCreateMenuPos(detail);
+      setCreateMenuOpen((prev) => !prev);
+    };
+    window.addEventListener('mv:views-open-create', handler);
+    return () => window.removeEventListener('mv:views-open-create', handler);
+  }, []);
+
+  useEffect(() => {
+    if (!createMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
+        setCreateMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [createMenuOpen]);
+
+  // ── Select / restore view ─────────────────────────────────────────────────
   const handleSelectView = useCallback((id: string) => {
     clearTimeout(clickTimerRef.current);
     clickTimerRef.current = setTimeout(() => {
@@ -1157,6 +1210,7 @@ function ViewsContent() {
         return;
       }
       setSelectedItemId(id);
+      restoringUntilRef.current = Date.now() + 700;
       adapter.setViewpointState?.(
         {
           camera: { position: vp.cameraPosition, target: vp.cameraTarget, isOrthographic: vp.isOrthographic },
@@ -1169,7 +1223,6 @@ function ViewsContent() {
   }, [adapter, customViews, selectedItemId]);
 
   // ── Drag and drop ──────────────────────────────────────────────────────────
-
   const handleDragStart = useCallback((id: string) => { setDraggingId(id); }, []);
   const handleDragEnd = useCallback(() => { setDraggingId(null); setDropTarget(null); }, []);
 
@@ -1192,7 +1245,6 @@ function ViewsContent() {
     setDraggingId(null);
     setDropTarget(null);
 
-    // Persist reorder — map back to Viewpoint objects in new order.
     const reorderedViewpoints = reordered
       .map((v) => customViews.find((vp) => vp.id === v.id))
       .filter((vp): vp is Viewpoint => vp !== undefined);
@@ -1205,30 +1257,73 @@ function ViewsContent() {
 
   const dragProps: DragProps = { draggingId, dropTarget, onDragStart: handleDragStart, onDragEnd: handleDragEnd, onDragOver: handleDragOver, onDragLeave: handleDragLeave, onDrop: handleDrop };
 
-  const handleContextMenu = useCallback((e: React.MouseEvent, viewId: string) => {
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, viewId });
+  // ── More menu (per-row actions) ────────────────────────────────────────────
+  const handleMoreClick = useCallback((e: React.MouseEvent, viewId: string) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setMoreMenu({ x: rect.right, y: rect.bottom + 4, viewId });
   }, []);
 
   useEffect(() => {
-    if (!contextMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
-        setContextMenu(null);
+    if (!moreMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreMenu(null);
       }
     };
-    window.addEventListener('mousedown', handleClick);
-    return () => window.removeEventListener('mousedown', handleClick);
-  }, [contextMenu]);
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [moreMenu]);
 
-  const handleRename = useCallback(() => {
-    if (!contextMenu) return;
-    const view = localViews.find((v) => v.id === contextMenu.viewId);
-    setRenamingId(contextMenu.viewId);
+  const handleUpdate = useCallback(async () => {
+    if (!moreMenu) return;
+    const { viewId } = moreMenu;
+    const vp = customViews.find((v) => v.id === viewId);
+    if (!vp) { setMoreMenu(null); return; }
+    const state = adapter.getViewpointState?.();
+    if (!state) {
+      toast.show({ kind: 'error', message: 'Cannot capture view state.' });
+      setMoreMenu(null);
+      return;
+    }
+    setMoreMenu(null);
+    const updated: Viewpoint = {
+      ...vp,
+      cameraPosition: state.camera.position,
+      cameraTarget: state.camera.target,
+      isOrthographic: state.camera.isOrthographic,
+      hiddenObjects: state.hiddenObjects,
+      sectioning: state.sectioning,
+    };
+    const result = await viewpoints.updateCustomView(vp.id, updated);
+    if (result.ok) {
+      toast.show({ kind: 'success', message: `"${vp.name}" updated.` });
+    } else if (result.reason === 'writer-unavailable') {
+      toast.show({ kind: 'error', message: 'Updating is only available when running locally.' });
+    } else {
+      toast.show({ kind: 'error', message: 'Failed to update view. Try again.' });
+    }
+  }, [moreMenu, customViews, adapter, viewpoints, toast]);
+
+  const handleRenameFromMenu = useCallback(() => {
+    if (!moreMenu) return;
+    const view = localViews.find((v) => v.id === moreMenu.viewId);
+    setRenamingId(moreMenu.viewId);
     setRenameValue(view?.name ?? '');
-    setContextMenu(null);
-  }, [contextMenu, localViews]);
+    setMoreMenu(null);
+  }, [moreMenu, localViews]);
 
+  const handleDeleteFromMenu = useCallback(async () => {
+    if (!moreMenu) return;
+    const { viewId } = moreMenu;
+    setMoreMenu(null);
+    if (selectedItemId === viewId) setSelectedItemId(null);
+    const result = await viewpoints.deleteCustomView(viewId);
+    if (!result.ok && result.reason === 'writer-unavailable') {
+      toast.show({ kind: 'error', message: 'Deleting is only available when running locally.' });
+    }
+  }, [moreMenu, selectedItemId, viewpoints, toast]);
+
+  // ── Rename ────────────────────────────────────────────────────────────────
   const commitRename = useCallback(async () => {
     const id = renamingId;
     const name = renameValue.trim();
@@ -1249,63 +1344,102 @@ function ViewsContent() {
 
   const cancelRename = useCallback(() => { setRenamingId(null); setRenameValue(''); }, []);
 
-  const handleDelete = useCallback(async () => {
-    if (!contextMenu) return;
-    const { viewId } = contextMenu;
-    setContextMenu(null);
-    if (selectedItemId === viewId) setSelectedItemId(null);
-    const result = await viewpoints.deleteCustomView(viewId);
-    if (!result.ok && result.reason === 'writer-unavailable') {
-      toast.show({ kind: 'error', message: 'Deleting is only available when running locally.' });
-    }
-  }, [contextMenu, selectedItemId, viewpoints, toast]);
-
   const handleBackgroundClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
-    if (target.closest('[data-view-row]') || target.closest('[data-context-menu]')) return;
+    if (target.closest('[data-view-row]') || target.closest('[data-more-menu]') || target.closest('[data-create-menu]')) return;
     setSelectedItemId(null);
   }, []);
 
   return (
-    <div className="bg-white rounded-md overflow-hidden py-1 relative min-h-full" onClick={handleBackgroundClick}>
-      {localViews.length === 0 && (
-        <p className="px-3 py-6 text-sm text-gray-400 text-center">
-          No saved views yet. Use the + button in the toolbar to save the current view.
-        </p>
+    <div className="relative">
+      {/* Create-viewpoint dropdown — portaled to body so fixed positioning is viewport-relative */}
+      {createMenuOpen && createPortal(
+        <div
+          ref={createMenuRef}
+          data-create-menu
+          className="fixed bg-white rounded-lg shadow-[0_4px_16px_0_rgba(0,0,0,0.18)] py-1 z-[9999] min-w-[200px]"
+          style={{ left: createMenuPos.x, top: createMenuPos.y, transform: 'translateX(-100%)' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => { setCreateMenuOpen(false); handleSaveView(); }}
+            className="w-full text-left px-4 py-2.5 text-[14px] text-[#232729] hover:bg-[#F4F5F6]"
+          >
+            Create Viewpoint
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreateMenuOpen(false)}
+            className="w-full text-left px-4 py-2.5 text-[14px] text-[#9DA7AD] cursor-default"
+          >
+            Create Folder
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreateMenuOpen(false)}
+            className="w-full text-left px-4 py-2.5 text-[14px] text-[#9DA7AD] cursor-default"
+          >
+            Import Viewpoints
+          </button>
+        </div>,
+        document.body,
       )}
 
-      {localViews.map((view) => (
-        <ViewRow
-          key={view.id}
-          view={view}
-          selected={view.id === selectedItemId}
-          depth={0}
-          isRenaming={renamingId === view.id}
-          renameValue={renameValue}
-          onRenameChange={setRenameValue}
-          onRenameCommit={commitRename}
-          onRenameCancel={cancelRename}
-          onSelect={handleSelectView}
-          onDoubleClick={handleDoubleClick}
-          onContextMenu={handleContextMenu}
-          dragProps={dragProps}
-        />
-      ))}
+      <div className="bg-white rounded-md overflow-hidden py-1 relative min-h-full" onClick={handleBackgroundClick}>
+        {localViews.length === 0 && (
+          <p className="px-3 py-6 text-sm text-gray-400 text-center">
+            No saved views yet. Use the + button in the panel header to create one.
+          </p>
+        )}
 
-      {contextMenu && (
+        {localViews.map((view) => (
+          <ViewRow
+            key={view.id}
+            view={view}
+            selected={view.id === selectedItemId}
+            depth={0}
+            isRenaming={renamingId === view.id}
+            renameValue={renameValue}
+            onRenameChange={setRenameValue}
+            onRenameCommit={commitRename}
+            onRenameCancel={cancelRename}
+            onSelect={handleSelectView}
+            onDoubleClick={handleDoubleClick}
+            onMore={handleMoreClick}
+            dragProps={dragProps}
+          />
+        ))}
+      </div>
+
+      {/* Per-row More dropdown — portaled to body so fixed positioning is viewport-relative */}
+      {moreMenu && createPortal(
         <div
-          ref={contextMenuRef}
-          data-context-menu
-          className="fixed bg-white rounded-lg shadow-[0_4px_12px_0_rgba(0,0,0,0.2)] py-1 z-[300] min-w-[120px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          ref={moreMenuRef}
+          data-more-menu
+          className="fixed bg-white rounded-xl shadow-[0_4px_16px_0_rgba(0,0,0,0.18)] py-1 z-[9999] min-w-[200px]"
+          style={{ left: moreMenu.x, top: moreMenu.y, transform: 'translateX(-100%)' }}
+          onClick={(e) => e.stopPropagation()}
         >
-          <button type="button" onClick={handleRename} className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100">
+          <button type="button" onClick={handleUpdate} className="w-full text-left px-4 py-2.5 text-[14px] text-[#232729] hover:bg-[#F4F5F6]">
+            Update
+          </button>
+          <button type="button" onClick={handleRenameFromMenu} className="w-full text-left px-4 py-2.5 text-[14px] text-[#232729] hover:bg-[#F4F5F6]">
             Rename
           </button>
-          <button type="button" onClick={handleDelete} className="w-full text-left px-3 py-1.5 text-sm text-red-600 hover:bg-red-50">
+          <button type="button" className="w-full flex items-center justify-between px-4 py-2.5 text-[14px] text-[#9DA7AD] cursor-default">
+            <span>Move to Folder</span>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="shrink-0"><path d="M5 3l4 4-4 4" stroke="#9DA7AD" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </button>
+          <button type="button" className="w-full text-left px-4 py-2.5 text-[14px] text-[#9DA7AD] cursor-default">
+            Add to Project Views
+          </button>
+          <div className="mx-4 border-t border-[#E3E6E8]" />
+          <button type="button" onClick={handleDeleteFromMenu} className="w-full text-left px-4 py-2.5 text-[14px] text-[#D92626] hover:bg-[#FEF2F2]">
             Delete
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

@@ -267,6 +267,7 @@ export interface ViewerAdapter {
   subscribeViews?(
     listener: (views: ViewData[], selectedId: string | null) => void,
   ): () => void;
+  subscribeCameraChange?(listener: () => void): () => void;
   createFolder?(name: string, parentId?: string | null): ViewFolder;
   deleteFolder?(id: string): void;
   renameFolder?(id: string, name: string): void;

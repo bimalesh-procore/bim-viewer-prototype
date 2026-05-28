@@ -24,6 +24,8 @@ export interface TreeNodeProps {
   // folder display overrides
   hideFolderIcon?: boolean;
   labelBold?: boolean;
+  isHovered?: boolean;
+  hoverBg?: string;
   // drag and drop (optional — omit all to disable D&D on this node)
   draggable?: boolean;
   onDragStart?: (id: string) => void;
@@ -53,6 +55,8 @@ export function TreeNode({
   onDoubleClick,
   onContextMenu,
   actions,
+  isHovered = false,
+  hoverBg,
   draggable = false,
   onDragStart,
   onDragEnd,
@@ -78,9 +82,14 @@ export function TreeNode({
         )}
         <div
           className={`flex ${subtitle ? 'items-start' : 'items-center'} gap-2 cursor-pointer select-none ${
-            selected || isDropTarget ? '' : 'hover:bg-gray-50'
+            hoverBg ? '' : (selected || isDropTarget ? '' : 'hover:bg-gray-50')
           } ${isDragging ? 'opacity-40' : ''}`}
-          style={{ paddingLeft, paddingRight: 12, paddingTop: 8, paddingBottom: 8, backgroundColor: selected || isDropTarget ? '#EDF2FC' : undefined }}
+          style={{
+            paddingLeft, paddingRight: 12, paddingTop: 8, paddingBottom: 8,
+            backgroundColor: selected || isDropTarget
+              ? '#EDF2FC'
+              : (isHovered && hoverBg ? hoverBg : undefined),
+          }}
           draggable={draggable}
           onClick={() => { if (isFolder) onToggle?.(id); onClick?.(id); }}
           onDoubleClick={() => !isFolder && onDoubleClick?.(id, label)}

@@ -39,7 +39,7 @@ interface DockedPanelProps {
   onToggleMinimize(): void;
   onDragStart(e: React.PointerEvent<HTMLDivElement>): void;
   onToggleDock(): void;
-  onAdd?(): void;
+  onAdd?(e: React.MouseEvent): void;
   onDetach?(): void;
   onReattach?(): void;
   onResizeHeight?(height: number): void;
@@ -310,7 +310,7 @@ export function DockedPanel({
               {onAdd && (
                 <button
                   type="button"
-                  onClick={onAdd}
+                  onClick={(e) => onAdd(e)}
                   aria-label="Add"
                   className="w-6 h-6 flex items-center justify-center rounded bg-[#FF5100] hover:bg-[#E64900]"
                 >

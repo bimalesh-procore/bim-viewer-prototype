@@ -125,3 +125,7 @@ export async function renameCustomView(modelId: string, viewpointId: string, nam
 export async function reorderCustomViews(modelId: string, viewpoints: Viewpoint[]): Promise<WriteResult> {
   return postAndUpdateCache(WRITE_CUSTOM_URL, { modelId, action: 'reorder', viewpoints });
 }
+
+export async function updateCustomView(modelId: string, viewpoint: Viewpoint): Promise<WriteResult> {
+  return postAndUpdateCache(WRITE_CUSTOM_URL, { modelId, action: 'update', viewpoint });
+}

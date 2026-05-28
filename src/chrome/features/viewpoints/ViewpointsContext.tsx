@@ -8,6 +8,7 @@ interface ViewpointsApi {
   setHomeView: (viewpoint: Viewpoint) => Promise<WriteResult>;
   customViews: Viewpoint[];
   addCustomView: (viewpoint: Viewpoint) => Promise<WriteResult>;
+  updateCustomView: (id: string, viewpoint: Viewpoint) => Promise<WriteResult>;
   deleteCustomView: (id: string) => Promise<WriteResult>;
   renameCustomView: (id: string, name: string) => Promise<WriteResult>;
   reorderCustomViews: (viewpoints: Viewpoint[]) => Promise<WriteResult>;
@@ -50,6 +51,13 @@ export function ViewpointsProvider({ activeModelId, children }: ProviderProps) {
     return result;
   }, [activeModelId, refreshCustomViews]);
 
+  const updateCustomView = useCallback(async (id: string, viewpoint: Viewpoint): Promise<WriteResult> => {
+    if (!activeModelId) return { ok: false, reason: 'no-active-model' };
+    const result = await store.updateCustomView(activeModelId, { ...viewpoint, id });
+    if (result.ok) await refreshCustomViews();
+    return result;
+  }, [activeModelId, refreshCustomViews]);
+
   const deleteCustomView = useCallback(async (id: string): Promise<WriteResult> => {
     if (!activeModelId) return { ok: false, reason: 'no-active-model' };
     const result = await store.deleteCustomView(activeModelId, id);
@@ -72,8 +80,8 @@ export function ViewpointsProvider({ activeModelId, children }: ProviderProps) {
   }, [activeModelId, refreshCustomViews]);
 
   const api = useMemo<ViewpointsApi>(
-    () => ({ activeModelId, getHomeView, setHomeView, customViews, addCustomView, deleteCustomView, renameCustomView, reorderCustomViews }),
-    [activeModelId, getHomeView, setHomeView, customViews, addCustomView, deleteCustomView, renameCustomView, reorderCustomViews],
+    () => ({ activeModelId, getHomeView, setHomeView, customViews, addCustomView, updateCustomView, deleteCustomView, renameCustomView, reorderCustomViews }),
+    [activeModelId, getHomeView, setHomeView, customViews, addCustomView, updateCustomView, deleteCustomView, renameCustomView, reorderCustomViews],
   );
 
   return <ViewpointsContext.Provider value={api}>{children}</ViewpointsContext.Provider>;

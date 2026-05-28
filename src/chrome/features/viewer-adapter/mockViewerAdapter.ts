@@ -318,4 +318,7 @@ export const mockViewerAdapter: ViewerAdapter = {
   getMarkupColor() {
     return '#FF0000';
   },
+  subscribeCameraChange(_listener: () => void) {
+    return () => { log('unsubscribeCameraChange'); };
+  },
 };

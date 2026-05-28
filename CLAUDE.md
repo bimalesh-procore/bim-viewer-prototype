@@ -342,21 +342,57 @@ save, commit the resulting `public/viewpoints.json` change, push.
 
 **Custom views (Views panel)** — `ViewpointsContext` owns live `customViews: Viewpoint[]` state,
 loaded from the store on mount and on `activeModelId` change. Every write calls the matching
-store function (`addCustomView`, `deleteCustomView`, `renameCustomView`, `reorderCustomViews`)
-then calls `refreshCustomViews()` to sync the local state from the updated cache.
+store function (`addCustomView`, `deleteCustomView`, `renameCustomView`, `reorderCustomViews`,
+`updateCustomView`) then calls `refreshCustomViews()` to sync the local state from the updated
+cache.
+
+`POST /__viewpoints/custom` supports 5 actions: `add`, `delete`, `rename`, `reorder`, `update`.
+`update` replaces a viewpoint in-place by `id` — used by the "Update" action in the More menu.
 
 The Views panel (`panelContent.tsx → ViewsContent + ViewsToolbar`) wires to this context:
 
-- **Save** (`+` button in toolbar) — calls `adapter.getViewpointState()` to capture camera +
-  hiddenObjects + sectioning, then `viewpoints.addCustomView(viewpoint)`. Auto-names as
-  "View N" (1-based, based on current list length). Shows success/error toast.
+- **Create** (orange `+` in the panel header) — opens a Create dropdown with three options:
+  - **Create Viewpoint** (wired) — calls `adapter.getViewpointState()` to capture camera +
+    hiddenObjects + sectioning, then `viewpoints.addCustomView(viewpoint)`. Auto-names as
+    "View N" (1-based, based on current list length). Shows success/error toast.
+  - **Create Folder** (stub — not yet implemented)
+  - **Import Viewpoints** (stub — not yet implemented)
+
+  The dropdown is triggered via `window.dispatchEvent(new CustomEvent('mv:views-open-create'))`,
+  fired from `DockManager.tsx` `handleAddForPanel('views')`. `ViewsContent` listens for this
+  event and toggles the dropdown open/closed.
+
 - **Restore** (click a row) — calls `adapter.setViewpointState(state, { animate: true })`.
   Sectioning → visibility → camera, same as home-view restore.
-- **Rename** (double-click row, or context menu → Rename) — inline `<input>` replaces the
-  label; Enter commits, Escape cancels, blur commits. Calls `viewpoints.renameCustomView`.
-- **Delete** (context menu → Delete) — calls `viewpoints.deleteCustomView`.
+
+- **Auto-deselect on camera move** — the selected row deselects when the user navigates.
+  `ViewsContent` subscribes to `adapter.subscribeCameraChange` and calls `setSelectedId(null)`
+  on any camera-change event, unless `Date.now() < restoringUntilRef.current`. The
+  `restoringUntilRef` is set to `Date.now() + 700` when a restore begins, preventing the
+  550ms animate transition itself from triggering a deselect.
+
+- **Row hover / selected actions** — `ViewRow` tracks hover state (`onMouseEnter` /
+  `onMouseLeave`). When `hovered` or `selected`, three icon buttons appear in the row's
+  trailing slot:
+  - **Edit Name** (pencil icon) — triggers the inline rename input (same as double-click).
+  - **Share** (stub — no-op for now).
+  - **More** (`⋯` icon) — opens a positioned dropdown anchored to the button via
+    `e.currentTarget.getBoundingClientRect()`. Dropdown items:
+    - **Update** (wired) — re-saves the current camera + hiddenObjects + sectioning state to
+      the existing viewpoint in-place via `viewpoints.updateCustomView`.
+    - **Rename** (wired) — triggers inline rename.
+    - **Move to Folder** (stub — no-op for now).
+    - **Add to Project Views** (stub — no-op for now).
+    - **Delete** (wired) — calls `viewpoints.deleteCustomView` with a success toast.
+
+- **Rename** (double-click a row, Edit Name button, or More → Rename) — inline `<input>`
+  replaces the label; Enter commits, Escape cancels, blur commits. Calls
+  `viewpoints.renameCustomView`.
+
 - **Reorder** (drag-and-drop) — `localViews` state mirrors context for optimistic UI; on drop
   calls `viewpoints.reorderCustomViews` to persist the new order.
+
+**Row icons** live in `src/chrome/assets/icons/views/`: `edit.svg`, `share.svg`, `more.svg`.
 
 **Apply order on home restore** (camera + visibility + sectioning):
 

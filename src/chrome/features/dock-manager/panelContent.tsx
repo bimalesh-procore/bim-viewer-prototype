@@ -6,6 +6,7 @@ import {
   FileQuestion,
   Home,
   ListChecks,
+  MoreVertical,
   Plus,
   ShieldCheck,
   Wrench,
@@ -1312,24 +1313,163 @@ function ViewsContent() {
 
 // ─── Sheets ──────────────────────────────────────────────────────────────────
 
+interface SheetFolder {
+  id: string;
+  name: string; // breadcrumb label e.g. "Building A > Level 01"
+}
+
+interface SheetData {
+  id: string;
+  folderId: string;
+  number: string; // e.g. "A-101"
+  name: string;   // e.g. "Architectural Floor Plan"
+  status: string; // e.g. "Current"
+  version: string; // e.g. "Rev 4"
+}
+
+const SHEET_FOLDERS: SheetFolder[] = [
+  { id: 'sf-a-l01', name: 'Building A > Level 01' },
+  { id: 'sf-a-l02', name: 'Building A > Level 02' },
+  { id: 'sf-b-l01', name: 'Building B > Level 01' },
+  { id: 'sf-b-l02', name: 'Building B > Level 02' },
+];
+
+const SHEETS: SheetData[] = [
+  // Building A > Level 01
+  { id: 's-a-l01-01', folderId: 'sf-a-l01', number: 'A-101', name: 'Architectural Floor Plan',  status: 'Current',   version: 'Rev 4' },
+  { id: 's-a-l01-02', folderId: 'sf-a-l01', number: 'A-102', name: 'Reflected Ceiling Plan',    status: 'Current',   version: 'Rev 2' },
+  { id: 's-a-l01-03', folderId: 'sf-a-l01', number: 'A-103', name: 'Room Finish Schedule',      status: 'In Review', version: 'Rev 1' },
+  { id: 's-a-l01-04', folderId: 'sf-a-l01', number: 'S-101', name: 'Structural Framing Plan',   status: 'In Review', version: 'Rev 3' },
+
+  // Building A > Level 02
+  { id: 's-a-l02-01', folderId: 'sf-a-l02', number: 'A-201', name: 'Floor Plan',                status: 'Current',   version: 'Rev 5' },
+  { id: 's-a-l02-02', folderId: 'sf-a-l02', number: 'A-202', name: 'Reflected Ceiling Plan',    status: 'Draft',     version: 'Rev 1' },
+  { id: 's-a-l02-03', folderId: 'sf-a-l02', number: 'M-201', name: 'Mechanical Layout',         status: 'Current',   version: 'Rev 2' },
+  { id: 's-a-l02-04', folderId: 'sf-a-l02', number: 'E-201', name: 'Electrical Plan',           status: 'In Review', version: 'Rev 2' },
+
+  // Building B > Level 01
+  { id: 's-b-l01-01', folderId: 'sf-b-l01', number: 'A-101', name: 'Architectural Floor Plan',  status: 'Current',   version: 'Rev 3' },
+  { id: 's-b-l01-02', folderId: 'sf-b-l01', number: 'S-101', name: 'Foundation Plan',           status: 'Current',   version: 'Rev 2' },
+  { id: 's-b-l01-03', folderId: 'sf-b-l01', number: 'M-101', name: 'Plumbing Layout',           status: 'Draft',     version: 'Rev 1' },
+  { id: 's-b-l01-04', folderId: 'sf-b-l01', number: 'E-101', name: 'Electrical Single Line',    status: 'In Review', version: 'Rev 1' },
+
+  // Building B > Level 02
+  { id: 's-b-l02-01', folderId: 'sf-b-l02', number: 'A-201', name: 'Floor Plan',                status: 'Current',   version: 'Rev 2' },
+  { id: 's-b-l02-02', folderId: 'sf-b-l02', number: 'A-202', name: 'Ceiling Plan',              status: 'Draft',     version: 'Rev 1' },
+  { id: 's-b-l02-03', folderId: 'sf-b-l02', number: 'S-201', name: 'Structural Framing',        status: 'Current',   version: 'Rev 4' },
+];
+
+// SheetsToolbar renders nothing — search lives inside SheetsContent so it can filter the list.
 function SheetsToolbar() {
-  const [query, setQuery] = useState('');
-  return (
-    <div className="px-4 py-2 border-b border-[#d6dadc]">
-      <PanelSearchBar
-        value={query}
-        onChange={setQuery}
-        placeholder="Search sheets"
-      />
-    </div>
-  );
+  return null;
 }
 
 function SheetsContent() {
+  const [query, setQuery] = useState('');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(
+    () => new Set(SHEET_FOLDERS.map((f) => f.id))
+  );
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return SHEET_FOLDERS.map((f) => ({ folder: f, sheets: SHEETS.filter((s) => s.folderId === f.id) }));
+    return SHEET_FOLDERS
+      .map((f) => ({
+        folder: f,
+        sheets: SHEETS.filter(
+          (s) => s.folderId === f.id && `${s.number} ${s.name}`.toLowerCase().includes(q)
+        ),
+      }))
+      .filter(({ sheets }) => sheets.length > 0);
+  }, [query]);
+
+  const handleToggle = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSheetChecked = useCallback((id: string, checked: boolean) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      checked ? next.add(id) : next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const handleFolderChecked = useCallback((folderId: string, checked: boolean) => {
+    const folderSheetIds = SHEETS.filter((s) => s.folderId === folderId).map((s) => s.id);
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      folderSheetIds.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+      return next;
+    });
+  }, []);
+
   return (
-    <p className="px-3 py-6 text-sm text-gray-400 text-center">
-      No sheets loaded.
-    </p>
+    <div className="flex flex-col h-full">
+      {/* Search bar */}
+      <div className="px-4 py-2 border-b border-[#d6dadc]">
+        <PanelSearchBar value={query} onChange={setQuery} placeholder="Search sheets" />
+      </div>
+
+      {/* Tree */}
+      <div className="flex-1 overflow-y-auto">
+        {filtered.length === 0 ? (
+          <p className="px-3 py-6 text-sm text-gray-400 text-center">No sheets found.</p>
+        ) : (
+          filtered.map(({ folder, sheets }) => {
+            const checkedCount = sheets.filter((s) => checkedIds.has(s.id)).length;
+            const allChecked = sheets.length > 0 && checkedCount === sheets.length;
+            return (
+              <TreeNode
+                key={folder.id}
+                id={folder.id}
+                label={folder.name}
+                depth={0}
+                type="folder"
+                expanded={expandedIds.has(folder.id)}
+                onToggle={handleToggle}
+                checked={allChecked}
+                indeterminate={checkedCount > 0 && !allChecked}
+                onCheckedChange={handleFolderChecked}
+                hideFolderIcon
+                labelBold
+              >
+                {sheets.map((sheet) => (
+                  <TreeNode
+                    key={sheet.id}
+                    id={sheet.id}
+                    label={`${sheet.number} ${sheet.name}`}
+                    subtitle={`${sheet.status} · ${sheet.version}`}
+                    depth={1}
+                    type="leaf"
+                    checked={checkedIds.has(sheet.id)}
+                    onCheckedChange={handleSheetChecked}
+                    selected={selectedId === sheet.id}
+                    onClick={setSelectedId}
+                    actions={
+                      <button
+                        type="button"
+                        aria-label="More options"
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0 w-6 h-6 flex items-center justify-center rounded hover:bg-black/5 text-[#6A767C]"
+                      >
+                        <MoreVertical size={14} />
+                      </button>
+                    }
+                  />
+                ))}
+              </TreeNode>
+            );
+          })
+        )}
+      </div>
+    </div>
   );
 }
 

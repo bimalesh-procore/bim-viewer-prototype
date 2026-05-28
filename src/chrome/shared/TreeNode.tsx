@@ -20,6 +20,10 @@ export interface TreeNodeProps {
   onDoubleClick?: (id: string, label: string) => void;
   onContextMenu?: (e: React.MouseEvent, id: string) => void;
   actions?: React.ReactNode;
+  subtitle?: string;
+  // folder display overrides
+  hideFolderIcon?: boolean;
+  labelBold?: boolean;
   // drag and drop (optional — omit all to disable D&D on this node)
   draggable?: boolean;
   onDragStart?: (id: string) => void;
@@ -58,6 +62,9 @@ export function TreeNode({
   dropIndicator,
   isDropTarget = false,
   isDragging = false,
+  subtitle,
+  hideFolderIcon = false,
+  labelBold = false,
 }: TreeNodeProps) {
   const isFolder = type === 'folder';
   const paddingLeft = 16 + depth * 20 + (!isFolder && depth > 0 ? 8 : 0);
@@ -118,12 +125,19 @@ export function TreeNode({
             </button>
           )}
 
-          {isFolder && <Folder className="shrink-0" style={{ color: '#6A767C' }} />}
+          {isFolder && !hideFolderIcon && <Folder className="shrink-0" style={{ color: '#6A767C' }} />}
 
           {loading ? (
             <span className="flex-1 ml-1 h-3.5 rounded bg-gray-200 mv-skeleton-pulse" style={{ maxWidth: 120 }} />
+          ) : subtitle ? (
+            <div className="flex-1 min-w-0 ml-1">
+              <p className={`text-sm truncate ${selected || labelBold ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : '#374151' }}>
+                {label}
+              </p>
+              <p className="text-xs truncate" style={{ color: '#6A767C' }}>{subtitle}</p>
+            </div>
           ) : (
-            <span className={`text-sm truncate flex-1 ml-1 ${selected ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : '#374151' }}>
+            <span className={`text-sm truncate flex-1 ml-1 ${selected || labelBold ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : '#374151' }}>
               {label}
             </span>
           )}

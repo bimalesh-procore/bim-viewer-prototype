@@ -1180,26 +1180,44 @@ function ViewsContent() {
       };
 
       if (position === 'inside') {
-        // Drop onto a folder header: nest dragging folder inside it.
+        // Drop onto a folder header: nest dragging folder inside target, placed
+        // at the bottom of the target's existing sub-folders.
         if (!localFolders.some((f) => f.id === targetId)) { setDraggingId(null); setDropTarget(null); return; }
         if (isDescendant(draggingId, targetId)) { setDraggingId(null); setDropTarget(null); return; }
-        setLocalFolders((prev) => prev.map((f) => f.id === draggingId ? { ...f, parentFolderId: targetId } : f));
+
+        const without = localFolders.filter((f) => f.id !== draggingId);
+        const moved = { ...draggingFolder, parentFolderId: targetId };
+        // Find the last existing sub-folder of the target and insert after it.
+        // If none exist, insert right after the target folder itself.
+        const siblings = without.filter((f) => (f.parentFolderId ?? null) === targetId);
+        const anchor = siblings.length > 0 ? siblings[siblings.length - 1] : without.find((f) => f.id === targetId);
+        const insertIdx = anchor ? without.findIndex((f) => f.id === anchor.id) + 1 : without.length;
+        without.splice(insertIdx, 0, moved);
+        setLocalFolders(without);
         setDraggingId(null); setDropTarget(null);
         return;
       }
 
-      // Drop before/after: reorder and inherit the target folder's parentFolderId.
+      // Drop before/after another folder: reorder among folders, inherit parentFolderId.
+      // Drop before/after a view: snap to end of folders at that view's level.
       const targetFolder = localFolders.find((f) => f.id === targetId);
-      const newParentFolderId = targetFolder?.parentFolderId ?? null;
+      const targetView = localViews.find((v) => v.id === targetId);
+      const newParentFolderId = targetFolder ? (targetFolder.parentFolderId ?? null) : (targetView?.folderId ?? null);
       if (isDescendant(draggingId, newParentFolderId ?? '')) { setDraggingId(null); setDropTarget(null); return; }
 
       const without = localFolders.filter((f) => f.id !== draggingId);
       const moved = { ...draggingFolder, parentFolderId: newParentFolderId };
-      const targetIdx = without.findIndex((f) => f.id === targetId);
-      if (targetIdx !== -1) {
+
+      if (targetFolder) {
+        // Reorder among sibling folders.
+        const targetIdx = without.findIndex((f) => f.id === targetId);
         without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, moved);
       } else {
-        without.push(moved);
+        // Snap: insert after the last folder at this level (before first view).
+        const sibling = without.filter((f) => (f.parentFolderId ?? null) === newParentFolderId);
+        const lastSibling = sibling[sibling.length - 1];
+        const insertIdx = lastSibling ? without.findIndex((f) => f.id === lastSibling.id) + 1 : 0;
+        without.splice(insertIdx, 0, moved);
       }
       setLocalFolders(without);
       setDraggingId(null);
@@ -1217,22 +1235,30 @@ function ViewsContent() {
       }
       updated = localViews.map((v) => v.id === draggingId ? { ...v, folderId: targetId } : v);
     } else {
-      // Drop before/after: reorder AND inherit the target's folderId so
-      // dragging between folders implicitly re-assigns the view.
+      // Drop before/after a view: reorder among views, inherit folderId.
+      // Drop before/after a folder: snap to beginning of views at that folder's level.
       const targetView = localViews.find((v) => v.id === targetId);
-      const targetIsFolder = localFolders.some((f) => f.id === targetId);
-      const newFolderId = targetView?.folderId ?? (targetIsFolder ? targetId : null);
+      const targetFolder = localFolders.find((f) => f.id === targetId);
+      const newFolderId = targetView ? (targetView.folderId ?? null) : (targetFolder?.parentFolderId ?? null);
 
       const draggingView = localViews.find((v) => v.id === draggingId);
       if (!draggingView) { setDraggingId(null); setDropTarget(null); return; }
 
       const without = localViews.filter((v) => v.id !== draggingId);
       const moved = { ...draggingView, folderId: newFolderId };
-      const targetIdx = without.findIndex((v) => v.id === targetId);
-      if (targetIdx !== -1) {
+
+      if (targetView) {
+        // Reorder among sibling views.
+        const targetIdx = without.findIndex((v) => v.id === targetId);
         without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, moved);
       } else {
-        without.push(moved);
+        // Snap: insert before the first view at this level (just after all folders).
+        const firstViewIdx = without.findIndex((v) => (v.folderId ?? null) === newFolderId);
+        if (firstViewIdx === -1) {
+          without.push(moved);
+        } else {
+          without.splice(firstViewIdx, 0, moved);
+        }
       }
       updated = without;
     }

@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as store from './viewpointStore';
-import type { Viewpoint, WriteResult } from './types';
+import type { Viewpoint, ViewpointFolder, WriteResult } from './types';
 
 interface ViewpointsApi {
   activeModelId: string | null;
   getHomeView: () => Promise<Viewpoint | null>;
   setHomeView: (viewpoint: Viewpoint) => Promise<WriteResult>;
+  folders: ViewpointFolder[];
   customViews: Viewpoint[];
   addCustomView: (viewpoint: Viewpoint) => Promise<WriteResult>;
   updateCustomView: (id: string, viewpoint: Viewpoint) => Promise<WriteResult>;
@@ -22,16 +23,22 @@ interface ProviderProps {
 }
 
 export function ViewpointsProvider({ activeModelId, children }: ProviderProps) {
+  const [folders, setFolders] = useState<ViewpointFolder[]>([]);
   const [customViews, setCustomViews] = useState<Viewpoint[]>([]);
 
   useEffect(() => {
-    if (!activeModelId) { setCustomViews([]); return; }
-    store.getCustomViews(activeModelId).then(setCustomViews);
+    if (!activeModelId) { setFolders([]); setCustomViews([]); return; }
+    store.getModelEntry(activeModelId).then((entry) => {
+      setFolders(entry.folders);
+      setCustomViews(entry.customViews);
+    });
   }, [activeModelId]);
 
   const refreshCustomViews = useCallback(async () => {
     if (!activeModelId) return;
-    setCustomViews(await store.getCustomViews(activeModelId));
+    const entry = await store.getModelEntry(activeModelId);
+    setFolders(entry.folders);
+    setCustomViews(entry.customViews);
   }, [activeModelId]);
 
   const getHomeView = useCallback(async () => {
@@ -80,8 +87,8 @@ export function ViewpointsProvider({ activeModelId, children }: ProviderProps) {
   }, [activeModelId, refreshCustomViews]);
 
   const api = useMemo<ViewpointsApi>(
-    () => ({ activeModelId, getHomeView, setHomeView, customViews, addCustomView, updateCustomView, deleteCustomView, renameCustomView, reorderCustomViews }),
-    [activeModelId, getHomeView, setHomeView, customViews, addCustomView, updateCustomView, deleteCustomView, renameCustomView, reorderCustomViews],
+    () => ({ activeModelId, getHomeView, setHomeView, folders, customViews, addCustomView, updateCustomView, deleteCustomView, renameCustomView, reorderCustomViews }),
+    [activeModelId, getHomeView, setHomeView, folders, customViews, addCustomView, updateCustomView, deleteCustomView, renameCustomView, reorderCustomViews],
   );
 
   return <ViewpointsContext.Provider value={api}>{children}</ViewpointsContext.Provider>;

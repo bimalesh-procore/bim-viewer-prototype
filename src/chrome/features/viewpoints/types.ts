@@ -37,6 +37,8 @@ export interface SectioningSnapshot {
 export interface Viewpoint {
   id: string;
   name: string;
+  /** Folder this viewpoint belongs to. null / undefined = unfiled. */
+  folderId?: string | null;
   cameraPosition: Vec3;
   cameraTarget: Vec3;
   isOrthographic: boolean;
@@ -50,9 +52,14 @@ export interface Viewpoint {
   createdAt: number;
 }
 
+export interface ViewpointFolder {
+  id: string;
+  name: string;
+}
+
 export interface ModelViewpoints {
   homeView: Viewpoint | null;
-  // Reserved for the future Viewpoints panel. Settings panel doesn't touch this.
+  folders: ViewpointFolder[];
   customViews: Viewpoint[];
 }
 

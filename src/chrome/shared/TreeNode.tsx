@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Check, Folder } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check } from 'lucide-react';
+import folderIcon from '../assets/icons/shared/folder.svg';
 
 export interface TreeNodeProps {
   id: string;
@@ -201,7 +202,7 @@ export function TreeNode({
             </button>
           )}
 
-          {isFolder && !hideFolderIcon && <Folder className="shrink-0" style={{ color: '#6A767C' }} />}
+          {isFolder && !hideFolderIcon && <img src={folderIcon} alt="" width={24} height={24} className="shrink-0" />}
 
           {loading ? (
             <span className="flex-1 ml-1 h-3.5 rounded bg-gray-200 mv-skeleton-pulse" style={{ maxWidth: 120 }} />

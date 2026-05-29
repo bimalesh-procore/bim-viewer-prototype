@@ -25,9 +25,10 @@ export function viewpointsWriter(opts = {}) {
   }
 
   function migrateEntry(entry) {
-    if (!entry) return { homeView: null, customViews: [] };
+    if (!entry) return { homeView: null, folders: [], customViews: [] };
     return {
       homeView: entry.homeView ? migrateViewpoint(entry.homeView) : null,
+      folders: entry.folders ?? [],
       customViews: (entry.customViews ?? []).map(migrateViewpoint),
     };
   }
@@ -62,7 +63,7 @@ export function viewpointsWriter(opts = {}) {
 
   function ensureModelEntry(json, modelId) {
     if (!json.models[modelId]) {
-      json.models[modelId] = { homeView: null, customViews: [] };
+      json.models[modelId] = { homeView: null, folders: [], customViews: [] };
     }
   }
 

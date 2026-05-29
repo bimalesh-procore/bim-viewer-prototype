@@ -8,7 +8,7 @@ const EMPTY_FILE: ViewpointsFile = { schemaVersion: 3, models: {} };
 let cachePromise: Promise<ViewpointsFile> | null = null;
 
 function emptyEntry(): ModelViewpoints {
-  return { homeView: null, customViews: [] };
+  return { homeView: null, folders: [], customViews: [] };
 }
 
 // v2 viewpoints didn't carry hiddenObjects or sectioning; fill them in so
@@ -25,6 +25,7 @@ function migrateViewpoint(vp: Viewpoint): Viewpoint {
 function migrateEntry(entry: ModelViewpoints): ModelViewpoints {
   return {
     homeView: entry.homeView ? migrateViewpoint(entry.homeView) : null,
+    folders: entry.folders ?? [],
     customViews: (entry.customViews ?? []).map(migrateViewpoint),
   };
 }

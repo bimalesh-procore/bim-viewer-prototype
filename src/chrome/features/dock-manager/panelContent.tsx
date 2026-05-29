@@ -1055,14 +1055,21 @@ function ViewsContent() {
     });
   }, []);
 
+  // Recursively collect all descendant view IDs for a folder (across all nesting levels).
+  const getDescendantViewIds = useCallback((folderId: string): string[] => {
+    const directViews = localViews.filter((v) => v.folderId === folderId).map((v) => v.id);
+    const childFolderIds = localFolders.filter((f) => (f.parentFolderId ?? null) === folderId).map((f) => f.id);
+    return [...directViews, ...childFolderIds.flatMap((id) => getDescendantViewIds(id))];
+  }, [localViews, localFolders]);
+
   const handleFolderChecked = useCallback((folderId: string, checked: boolean) => {
-    const childIds = localViews.filter((v) => v.folderId === folderId).map((v) => v.id);
+    const descendantIds = getDescendantViewIds(folderId);
     setCheckedIds((prev) => {
       const next = new Set(prev);
-      childIds.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+      descendantIds.forEach((id) => (checked ? next.add(id) : next.delete(id)));
       return next;
     });
-  }, [localViews]);
+  }, [getDescendantViewIds]);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Cooldown prevents camera-change during the restore animation from deselecting the row.
   const restoringUntilRef = useRef<number>(0);
@@ -1162,13 +1169,37 @@ function ViewsContent() {
     // ── Folder being dragged ───────────────────────────────────────────────
     const draggingFolder = localFolders.find((f) => f.id === draggingId);
     if (draggingFolder) {
-      if (position === 'inside') { setDraggingId(null); setDropTarget(null); return; }
+      // Circular reference guard: can't drop a folder into its own descendant.
+      const isDescendant = (ancestorId: string, nodeId: string): boolean => {
+        let current: string | null | undefined = nodeId;
+        while (current) {
+          if (current === ancestorId) return true;
+          current = localFolders.find((f) => f.id === current)?.parentFolderId;
+        }
+        return false;
+      };
+
+      if (position === 'inside') {
+        // Drop onto a folder header: nest dragging folder inside it.
+        if (!localFolders.some((f) => f.id === targetId)) { setDraggingId(null); setDropTarget(null); return; }
+        if (isDescendant(draggingId, targetId)) { setDraggingId(null); setDropTarget(null); return; }
+        setLocalFolders((prev) => prev.map((f) => f.id === draggingId ? { ...f, parentFolderId: targetId } : f));
+        setDraggingId(null); setDropTarget(null);
+        return;
+      }
+
+      // Drop before/after: reorder and inherit the target folder's parentFolderId.
+      const targetFolder = localFolders.find((f) => f.id === targetId);
+      const newParentFolderId = targetFolder?.parentFolderId ?? null;
+      if (isDescendant(draggingId, newParentFolderId ?? '')) { setDraggingId(null); setDropTarget(null); return; }
+
       const without = localFolders.filter((f) => f.id !== draggingId);
+      const moved = { ...draggingFolder, parentFolderId: newParentFolderId };
       const targetIdx = without.findIndex((f) => f.id === targetId);
       if (targetIdx !== -1) {
-        without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, draggingFolder);
+        without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, moved);
       } else {
-        without.push(draggingFolder);
+        without.push(moved);
       }
       setLocalFolders(without);
       setDraggingId(null);
@@ -1324,124 +1355,96 @@ function ViewsContent() {
           </p>
         )}
 
-        {/* Folder rows with their children */}
-        {localFolders.map((folder) => {
-          const folderViews = localViews.filter((v) => v.folderId === folder.id);
-          const checkedCount = folderViews.filter((v) => checkedIds.has(v.id)).length;
-          const allChecked = folderViews.length > 0 && checkedCount === folderViews.length;
-          const indeterminate = checkedCount > 0 && !allChecked;
-          return (
+        {/* Recursive folder + view tree */}
+        {(() => {
+          const renderViewRow = (view: ViewData, depth: number) => (
             <TreeNode
-              key={folder.id}
-              id={folder.id}
-              label={folder.name}
-              depth={0}
-              type="folder"
-              expanded={expandedIds.has(folder.id)}
-              onToggle={handleToggleFolder}
-              checked={allChecked}
-              indeterminate={indeterminate}
-              onCheckedChange={handleFolderChecked}
+              key={view.id}
+              id={view.id}
+              label={view.name}
+              depth={depth}
+              type="leaf"
+              checked={checkedIds.has(view.id)}
+              onCheckedChange={handleViewChecked}
+              selected={view.id === selectedItemId}
               hoverBg="#F4F5F6"
+              showActionsOnHover
+              isRenaming={renamingId === view.id}
+              renameValue={renameValue}
+              onRenameChange={setRenameValue}
+              onRenameCommit={commitRename}
+              onRenameCancel={cancelRename}
+              onClick={handleSelectView}
+              onDoubleClick={handleDoubleClick}
               draggable
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              isDragging={draggingId === folder.id}
-              isDropTarget={dropTarget?.id === folder.id && dropTarget.position === 'inside'}
-              dropIndicator={dropTarget?.id === folder.id && dropTarget.position !== 'inside' ? (dropTarget.position as 'before' | 'after') : undefined}
-            >
-              {folderViews.map((view) => (
-                <TreeNode
-                  key={view.id}
-                  id={view.id}
-                  label={view.name}
-                  depth={1}
-                  type="leaf"
-                  checked={checkedIds.has(view.id)}
-                  onCheckedChange={handleViewChecked}
-                  selected={view.id === selectedItemId}
-                  hoverBg="#F4F5F6"
-                  showActionsOnHover
-                  isRenaming={renamingId === view.id}
-                  renameValue={renameValue}
-                  onRenameChange={setRenameValue}
-                  onRenameCommit={commitRename}
-                  onRenameCancel={cancelRename}
-                  onClick={handleSelectView}
-                  onDoubleClick={handleDoubleClick}
-                  draggable
-                  onDragStart={handleDragStart}
-                  onDragEnd={handleDragEnd}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  isDragging={draggingId === view.id}
-                  dropIndicator={dropTarget?.id === view.id ? (dropTarget.position as 'before' | 'after') : undefined}
-                  actions={
-                    <>
-                      <button type="button" title="Edit name" onClick={(e) => { e.stopPropagation(); handleDoubleClick(view.id, view.name); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                        <img src={editIcon} alt="" width={14} height={14} />
-                      </button>
-                      <button type="button" title="Share" onClick={(e) => e.stopPropagation()} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                        <img src={shareIcon} alt="" width={14} height={14} />
-                      </button>
-                      <button type="button" title="More" onClick={(e) => { e.stopPropagation(); handleMoreClick(e, view.id); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                        <img src={moreIcon} alt="" width={14} height={14} />
-                      </button>
-                    </>
-                  }
-                />
-              ))}
-            </TreeNode>
+              isDragging={draggingId === view.id}
+              dropIndicator={dropTarget?.id === view.id ? (dropTarget.position as 'before' | 'after') : undefined}
+              actions={
+                <>
+                  <button type="button" title="Edit name" onClick={(e) => { e.stopPropagation(); handleDoubleClick(view.id, view.name); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                    <img src={editIcon} alt="" width={14} height={14} />
+                  </button>
+                  <button type="button" title="Share" onClick={(e) => e.stopPropagation()} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                    <img src={shareIcon} alt="" width={14} height={14} />
+                  </button>
+                  <button type="button" title="More" onClick={(e) => { e.stopPropagation(); handleMoreClick(e, view.id); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                    <img src={moreIcon} alt="" width={14} height={14} />
+                  </button>
+                </>
+              }
+            />
           );
-        })}
 
-        {/* Unfiled views (no folderId) */}
-        {localViews.filter((v) => !v.folderId).map((view) => (
-          <TreeNode
-            key={view.id}
-            id={view.id}
-            label={view.name}
-            depth={0}
-            type="leaf"
-            checked={checkedIds.has(view.id)}
-            onCheckedChange={handleViewChecked}
-            selected={view.id === selectedItemId}
-            hoverBg="#F4F5F6"
-            showActionsOnHover
-            isRenaming={renamingId === view.id}
-            renameValue={renameValue}
-            onRenameChange={setRenameValue}
-            onRenameCommit={commitRename}
-            onRenameCancel={cancelRename}
-            onClick={handleSelectView}
-            onDoubleClick={handleDoubleClick}
-            draggable
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            isDragging={draggingId === view.id}
-            dropIndicator={dropTarget?.id === view.id ? (dropTarget.position as 'before' | 'after') : undefined}
-            actions={
-              <>
-                <button type="button" title="Edit name" onClick={(e) => { e.stopPropagation(); handleDoubleClick(view.id, view.name); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                  <img src={editIcon} alt="" width={14} height={14} />
-                </button>
-                <button type="button" title="Share" onClick={(e) => e.stopPropagation()} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                  <img src={shareIcon} alt="" width={14} height={14} />
-                </button>
-                <button type="button" title="More" onClick={(e) => { e.stopPropagation(); handleMoreClick(e, view.id); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                  <img src={moreIcon} alt="" width={14} height={14} />
-                </button>
-              </>
-            }
-          />
-        ))}
+          const renderFolder = (folder: ViewpointFolder, depth: number): React.ReactNode => {
+            const descendantViewIds = getDescendantViewIds(folder.id);
+            const checkedCount = descendantViewIds.filter((id) => checkedIds.has(id)).length;
+            const allChecked = descendantViewIds.length > 0 && checkedCount === descendantViewIds.length;
+            const indeterminate = checkedCount > 0 && !allChecked;
+            const childFolders = localFolders.filter((f) => (f.parentFolderId ?? null) === folder.id);
+            const directViews = localViews.filter((v) => v.folderId === folder.id);
+            return (
+              <TreeNode
+                key={folder.id}
+                id={folder.id}
+                label={folder.name}
+                depth={depth}
+                type="folder"
+                expanded={expandedIds.has(folder.id)}
+                onToggle={handleToggleFolder}
+                checked={allChecked}
+                indeterminate={indeterminate}
+                onCheckedChange={handleFolderChecked}
+                hoverBg="#F4F5F6"
+                draggable
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                isDragging={draggingId === folder.id}
+                isDropTarget={dropTarget?.id === folder.id && dropTarget.position === 'inside'}
+                dropIndicator={dropTarget?.id === folder.id && dropTarget.position !== 'inside' ? (dropTarget.position as 'before' | 'after') : undefined}
+              >
+                {childFolders.map((f) => renderFolder(f, depth + 1))}
+                {directViews.map((v) => renderViewRow(v, depth + 1))}
+              </TreeNode>
+            );
+          };
+
+          const rootFolders = localFolders.filter((f) => !(f.parentFolderId ?? null));
+          const unfiledViews = localViews.filter((v) => !v.folderId);
+          return (
+            <>
+              {rootFolders.map((f) => renderFolder(f, 0))}
+              {unfiledViews.map((v) => renderViewRow(v, 0))}
+            </>
+          );
+        })()}
       </div>
 
       {moreMenu && (

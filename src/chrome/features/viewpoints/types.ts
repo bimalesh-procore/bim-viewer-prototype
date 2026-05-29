@@ -55,6 +55,7 @@ export interface Viewpoint {
 export interface ViewpointFolder {
   id: string;
   name: string;
+  parentFolderId?: string | null;
 }
 
 export interface ModelViewpoints {

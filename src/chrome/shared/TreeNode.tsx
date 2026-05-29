@@ -92,7 +92,7 @@ export function TreeNode({
   isDragging = false,
 }: TreeNodeProps) {
   const isFolder = type === 'folder';
-  const paddingLeft = 16 + depth * 20 + (!isFolder && depth > 0 ? 8 : 0);
+  const paddingLeft = 16 + depth * 28;
   const checkboxState = indeterminate ? 'indeterminate' : checked ? 'checked' : 'unchecked';
   const [hovered, setHovered] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);

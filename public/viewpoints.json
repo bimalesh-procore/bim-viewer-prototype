@@ -861,42 +861,46 @@
       "folders": [
         {
           "id": "folder-level-01",
-          "name": "Level 01"
+          "name": "Level 01",
+          "parentFolderId": null
         },
         {
           "id": "folder-level-02",
-          "name": "Level 02"
+          "name": "Level 02",
+          "parentFolderId": null
         },
         {
           "id": "folder-mep",
-          "name": "MEP"
+          "name": "MEP",
+          "parentFolderId": null
         },
         {
           "id": "folder-structural",
-          "name": "Structural"
+          "name": "Structural",
+          "parentFolderId": null
+        },
+        {
+          "id": "folder-l01-unit-1a",
+          "name": "Unit 1A",
+          "parentFolderId": "folder-level-01"
+        },
+        {
+          "id": "folder-l01-unit-1b",
+          "name": "Unit 1B",
+          "parentFolderId": "folder-level-01"
+        },
+        {
+          "id": "folder-mep-mechanical",
+          "name": "Mechanical",
+          "parentFolderId": "folder-mep"
+        },
+        {
+          "id": "folder-mep-electrical",
+          "name": "Electrical",
+          "parentFolderId": "folder-mep"
         }
       ],
       "customViews": [
-        {
-          "id": "vp-l01-02",
-          "folderId": "folder-level-01",
-          "name": "Unit 1A Living Room",
-          "cameraPosition": {
-            "x": 8.4,
-            "y": 3.2,
-            "z": 12.5
-          },
-          "cameraTarget": {
-            "x": 14.1,
-            "y": 1.5,
-            "z": 12.5
-          },
-          "isOrthographic": false,
-          "hiddenObjects": [],
-          "sectioning": null,
-          "markups": [],
-          "createdAt": 1748000002000
-        },
         {
           "id": "vp-l01-01",
           "folderId": "folder-level-01",
@@ -918,7 +922,7 @@
           "createdAt": 1748000001000
         },
         {
-          "id": "vp-l01-03",
+          "id": "vp-l01-02",
           "folderId": "folder-level-01",
           "name": "Level 1 Corridor",
           "cameraPosition": {
@@ -935,21 +939,21 @@
           "hiddenObjects": [],
           "sectioning": null,
           "markups": [],
-          "createdAt": 1748000003000
+          "createdAt": 1748000002000
         },
         {
-          "id": "vp-l01-04",
-          "folderId": "folder-level-01",
-          "name": "Parking Entry",
+          "id": "vp-l01-1a-02",
+          "folderId": "folder-l01-unit-1a",
+          "name": "Kitchen",
           "cameraPosition": {
-            "x": -5,
-            "y": 4,
-            "z": 20
+            "x": 10,
+            "y": 3,
+            "z": 14
           },
           "cameraTarget": {
-            "x": 5,
+            "x": 15,
             "y": 1.5,
-            "z": 10
+            "z": 14
           },
           "isOrthographic": false,
           "hiddenObjects": [],
@@ -958,24 +962,64 @@
           "createdAt": 1748000004000
         },
         {
-          "id": "vp-l02-02",
-          "folderId": "folder-level-02",
-          "name": "Unit 2B Bedroom",
+          "id": "vp-l01-1a-03",
+          "folderId": "folder-l01-unit-1a",
+          "name": "Master Bedroom",
           "cameraPosition": {
             "x": 6,
-            "y": 6.8,
-            "z": 8.5
+            "y": 3,
+            "z": 9
           },
           "cameraTarget": {
-            "x": 12.5,
-            "y": 5.2,
-            "z": 8.5
+            "x": 12,
+            "y": 1.5,
+            "z": 9
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1748000005000
+        },
+        {
+          "id": "vp-l01-1b-01",
+          "folderId": "folder-l01-unit-1b",
+          "name": "Living Room",
+          "cameraPosition": {
+            "x": 20,
+            "y": 3.2,
+            "z": 12.5
+          },
+          "cameraTarget": {
+            "x": 26,
+            "y": 1.5,
+            "z": 12.5
           },
           "isOrthographic": false,
           "hiddenObjects": [],
           "sectioning": null,
           "markups": [],
           "createdAt": 1748000006000
+        },
+        {
+          "id": "vp-l01-1b-02",
+          "folderId": "folder-l01-unit-1b",
+          "name": "Bathroom",
+          "cameraPosition": {
+            "x": 22,
+            "y": 3,
+            "z": 8
+          },
+          "cameraTarget": {
+            "x": 22,
+            "y": 1.5,
+            "z": 14
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1748000007000
         },
         {
           "id": "vp-l02-01",
@@ -995,30 +1039,30 @@
           "hiddenObjects": [],
           "sectioning": null,
           "markups": [],
-          "createdAt": 1748000005000
+          "createdAt": 1748000008000
         },
         {
-          "id": "vp-l02-03",
+          "id": "vp-l02-02",
           "folderId": "folder-level-02",
-          "name": "Level 2 Corridor",
+          "name": "Unit 2B Bedroom",
           "cameraPosition": {
-            "x": 25,
-            "y": 6.5,
-            "z": 10
+            "x": 6,
+            "y": 6.8,
+            "z": 8.5
           },
           "cameraTarget": {
-            "x": 10,
-            "y": 5,
-            "z": 10
+            "x": 12.5,
+            "y": 5.2,
+            "z": 8.5
           },
           "isOrthographic": false,
           "hiddenObjects": [],
           "sectioning": null,
           "markups": [],
-          "createdAt": 1748000007000
+          "createdAt": 1748000009000
         },
         {
-          "id": "vp-l02-04",
+          "id": "vp-l02-03",
           "folderId": "folder-level-02",
           "name": "Amenity Terrace",
           "cameraPosition": {
@@ -1035,31 +1079,11 @@
           "hiddenObjects": [],
           "sectioning": null,
           "markups": [],
-          "createdAt": 1748000008000
+          "createdAt": 1748000010000
         },
         {
-          "id": "vp-l02-05",
-          "folderId": "folder-level-02",
-          "name": "Stair Tower Level 2",
-          "cameraPosition": {
-            "x": 22,
-            "y": 7.2,
-            "z": 5.5
-          },
-          "cameraTarget": {
-            "x": 22,
-            "y": 5.5,
-            "z": 12
-          },
-          "isOrthographic": false,
-          "hiddenObjects": [],
-          "sectioning": null,
-          "markups": [],
-          "createdAt": 1748000009000
-        },
-        {
-          "id": "vp-mep-01",
-          "folderId": "folder-mep",
+          "id": "vp-mep-mech-01",
+          "folderId": "folder-mep-mechanical",
           "name": "Mechanical Room",
           "cameraPosition": {
             "x": 2.5,
@@ -1075,31 +1099,11 @@
           "hiddenObjects": [],
           "sectioning": null,
           "markups": [],
-          "createdAt": 1748000010000
-        },
-        {
-          "id": "vp-mep-02",
-          "folderId": "folder-mep",
-          "name": "Electrical Room",
-          "cameraPosition": {
-            "x": 3,
-            "y": 3.5,
-            "z": -2
-          },
-          "cameraTarget": {
-            "x": 8.5,
-            "y": 2,
-            "z": -2
-          },
-          "isOrthographic": false,
-          "hiddenObjects": [],
-          "sectioning": null,
-          "markups": [],
           "createdAt": 1748000011000
         },
         {
-          "id": "vp-mep-03",
-          "folderId": "folder-mep",
+          "id": "vp-mep-mech-02",
+          "folderId": "folder-mep-mechanical",
           "name": "HVAC Rooftop Units",
           "cameraPosition": {
             "x": 20,
@@ -1118,8 +1122,68 @@
           "createdAt": 1748000012000
         },
         {
+          "id": "vp-mep-mech-03",
+          "folderId": "folder-mep-mechanical",
+          "name": "Plumbing Chase",
+          "cameraPosition": {
+            "x": 14,
+            "y": 8,
+            "z": 2
+          },
+          "cameraTarget": {
+            "x": 14,
+            "y": 5,
+            "z": 8
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1748000013000
+        },
+        {
+          "id": "vp-mep-elec-01",
+          "folderId": "folder-mep-electrical",
+          "name": "Electrical Room",
+          "cameraPosition": {
+            "x": 3,
+            "y": 3.5,
+            "z": -2
+          },
+          "cameraTarget": {
+            "x": 8.5,
+            "y": 2,
+            "z": -2
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1748000014000
+        },
+        {
+          "id": "vp-mep-elec-02",
+          "folderId": "folder-mep-electrical",
+          "name": "Panel Room",
+          "cameraPosition": {
+            "x": 4,
+            "y": 3.5,
+            "z": -4
+          },
+          "cameraTarget": {
+            "x": 9,
+            "y": 2,
+            "z": -4
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1748000015000
+        },
+        {
           "id": "vp-str-01",
-          "folderId": "folder-mep",
+          "folderId": "folder-structural",
           "name": "Column Grid Overview",
           "cameraPosition": {
             "x": 40,
@@ -1135,7 +1199,7 @@
           "hiddenObjects": [],
           "sectioning": null,
           "markups": [],
-          "createdAt": 1748000014000
+          "createdAt": 1748000016000
         },
         {
           "id": "vp-str-02",
@@ -1155,50 +1219,10 @@
           "hiddenObjects": [],
           "sectioning": null,
           "markups": [],
-          "createdAt": 1748000015000
+          "createdAt": 1748000017000
         },
         {
           "id": "vp-str-03",
-          "folderId": "folder-structural",
-          "name": "Shear Wall Grid",
-          "cameraPosition": {
-            "x": 35,
-            "y": 15,
-            "z": 40
-          },
-          "cameraTarget": {
-            "x": 12,
-            "y": 8,
-            "z": 5
-          },
-          "isOrthographic": true,
-          "hiddenObjects": [],
-          "sectioning": null,
-          "markups": [],
-          "createdAt": 1748000016000
-        },
-        {
-          "id": "vp-mep-04",
-          "folderId": "folder-structural",
-          "name": "Plumbing Chase",
-          "cameraPosition": {
-            "x": 14,
-            "y": 8,
-            "z": 2
-          },
-          "cameraTarget": {
-            "x": 14,
-            "y": 5,
-            "z": 8
-          },
-          "isOrthographic": false,
-          "hiddenObjects": [],
-          "sectioning": null,
-          "markups": [],
-          "createdAt": 1748000013000
-        },
-        {
-          "id": "vp-str-04",
           "folderId": "folder-structural",
           "name": "Transfer Slab Level 2",
           "cameraPosition": {
@@ -1215,7 +1239,27 @@
           "hiddenObjects": [],
           "sectioning": null,
           "markups": [],
-          "createdAt": 1748000017000
+          "createdAt": 1748000018000
+        },
+        {
+          "id": "vp-l01-1a-01",
+          "folderId": "folder-l01-unit-1b",
+          "name": "Living Room",
+          "cameraPosition": {
+            "x": 8.4,
+            "y": 3.2,
+            "z": 12.5
+          },
+          "cameraTarget": {
+            "x": 14.1,
+            "y": 1.5,
+            "z": 12.5
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1748000003000
         }
       ]
     },

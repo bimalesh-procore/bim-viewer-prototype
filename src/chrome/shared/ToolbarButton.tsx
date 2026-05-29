@@ -1,5 +1,10 @@
+import { useEffect, useRef, useState } from 'react';
+
 const ACTIVE_ICON_FILTER =
   'brightness(0) saturate(100%) invert(31%) sepia(98%) saturate(1800%) hue-rotate(209deg) brightness(92%) contrast(90%)';
+
+// Per-button hover delay before tooltip appears.
+const TOOLTIP_HOVER_DELAY_MS = 1000;
 
 export interface ToolbarButtonProps {
   src: string;
@@ -7,6 +12,11 @@ export interface ToolbarButtonProps {
   /** Override the visible tooltip text without changing the aria-label. */
   tooltipLabel?: string;
   shortcut?: string;
+  /**
+   * Tooltip visibility is self-managed per button (1s hover delay).
+   * Setting this to false hard-suppresses the tooltip (e.g. while dragging
+   * or when a panel is open and tooltips would obscure content).
+   */
   showTooltip?: boolean;
   isActive?: boolean;
   /**
@@ -34,7 +44,7 @@ export function ToolbarButton({
   label,
   tooltipLabel,
   shortcut,
-  showTooltip = false,
+  showTooltip = true,
   isActive = false,
   disabled = false,
   hasFlyout = false,
@@ -43,12 +53,58 @@ export function ToolbarButton({
   onMouseEnter,
   onMouseLeave,
 }: ToolbarButtonProps) {
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const cancelTimer = () => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  // Clean up any pending timer on unmount.
+  useEffect(() => () => cancelTimer(), []);
+
+  // If the consumer hard-disables tooltips mid-hover (e.g. drag starts),
+  // cancel any pending appearance and hide immediately.
+  useEffect(() => {
+    if (!showTooltip) {
+      cancelTimer();
+      setTooltipVisible(false);
+    }
+  }, [showTooltip]);
+
+  const handleMouseEnter = () => {
+    onMouseEnter?.();
+    if (!showTooltip || disabled) return;
+    cancelTimer();
+    timerRef.current = window.setTimeout(() => {
+      setTooltipVisible(true);
+      timerRef.current = null;
+    }, TOOLTIP_HOVER_DELAY_MS);
+  };
+
+  const handleMouseLeave = () => {
+    onMouseLeave?.();
+    cancelTimer();
+    setTooltipVisible(false);
+  };
+
+  const handleClick = () => {
+    // Hide tooltip immediately on click — the click is the user's
+    // signal of intent; the tooltip is no longer informative.
+    cancelTimer();
+    setTooltipVisible(false);
+    onClick?.();
+  };
+
   return (
     <button
       type="button"
-      onClick={onClick}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
+      onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       disabled={disabled}
       aria-label={label}
       aria-disabled={disabled || undefined}
@@ -56,8 +112,8 @@ export function ToolbarButton({
         disabled
           ? 'opacity-40 cursor-not-allowed'
           : isActive
-            ? 'bg-[#D2E0F9] hover:bg-[#BCD1F5]'
-            : 'hover:bg-[#E3E6E8] active:bg-gray-200'
+            ? (tooltipVisible ? 'bg-[#BCD1F5]' : 'bg-[#D2E0F9]')
+            : (tooltipVisible ? 'bg-[#D2E0F9]' : 'active:bg-gray-200')
       }`}
     >
       <img
@@ -68,7 +124,7 @@ export function ToolbarButton({
         className="block w-6 h-6"
         style={isActive && !disabled ? { filter: ACTIVE_ICON_FILTER } : undefined}
       />
-      {showTooltip && (
+      {tooltipVisible && (
         <div
           className={`mv-toolbar-tooltip mv-toolbar-tooltip-${tooltipSide}`}
           aria-hidden="true"

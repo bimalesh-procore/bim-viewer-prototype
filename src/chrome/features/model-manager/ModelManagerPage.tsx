@@ -127,7 +127,7 @@ function EmptyStateIllustration() {
 
 export function ModelManagerPage() {
   const handleCreate = () => {
-    // stub — no-op for now
+    window.location.href = '/?model=condos';
   };
 
   return (

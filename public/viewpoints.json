@@ -858,6 +858,48 @@
         "markups": [],
         "createdAt": 1779924892007
       },
+      "folders": [
+        {
+          "id": "folder-level-01",
+          "name": "Level 01",
+          "parentFolderId": null
+        },
+        {
+          "id": "folder-level-02",
+          "name": "Level 02",
+          "parentFolderId": null
+        },
+        {
+          "id": "folder-mep",
+          "name": "MEP",
+          "parentFolderId": null
+        },
+        {
+          "id": "folder-structural",
+          "name": "Structural",
+          "parentFolderId": null
+        },
+        {
+          "id": "folder-l01-unit-1a",
+          "name": "Unit 1A",
+          "parentFolderId": "folder-level-01"
+        },
+        {
+          "id": "folder-l01-unit-1b",
+          "name": "Unit 1B",
+          "parentFolderId": "folder-level-01"
+        },
+        {
+          "id": "folder-mep-mechanical",
+          "name": "Mechanical",
+          "parentFolderId": "folder-mep"
+        },
+        {
+          "id": "folder-mep-electrical",
+          "name": "Electrical",
+          "parentFolderId": "folder-mep"
+        }
+      ],
       "customViews": [
         {
           "id": "view-1779926571037",
@@ -11265,6 +11307,7 @@
         "markups": [],
         "createdAt": 1779923162644
       },
+      "folders": [],
       "customViews": []
     },
     "data-center": {
@@ -11287,6 +11330,7 @@
         "markups": [],
         "createdAt": 1779923317338
       },
+      "folders": [],
       "customViews": []
     },
     "tower": {
@@ -11309,6 +11353,7 @@
         "markups": [],
         "createdAt": 1779923391893
       },
+      "folders": [],
       "customViews": []
     }
   }

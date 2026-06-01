@@ -23,7 +23,7 @@ import type { SearchSet, ViewData, PropertyGroup, ObjectProperty } from '../view
 import { TreeNode } from '../../shared/TreeNode';
 import type { PanelId } from './useDockStore';
 import { useViewpoints } from '../viewpoints';
-import type { Viewpoint } from '../viewpoints';
+import type { Viewpoint, ViewpointFolder } from '../viewpoints';
 import { useToast } from '../toast/ToastContext';
 import searchFieldIcon from '../../assets/icons/panel/searchField.svg';
 import filterButtonIcon from '../../assets/icons/panel/filterButton.svg';
@@ -995,35 +995,17 @@ function ViewsToolbar() {
 
 type DragTarget = { id: string; position: 'before' | 'after' | 'inside' };
 
-function reorderItems<T extends { id: string }>(
-  items: T[],
-  dragId: string,
-  targetId: string,
-  position: 'before' | 'after',
-): T[] {
-  const result = [...items];
-  const dragIdx = result.findIndex((i) => i.id === dragId);
-  if (dragIdx === -1) return result;
-  const [dragged] = result.splice(dragIdx, 1);
-  const targetIdx = result.findIndex((i) => i.id === targetId);
-  if (targetIdx === -1) return [...result, dragged];
-  result.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, dragged);
-  return result;
-}
-
-
-
 function ViewsContent() {
   const adapter = useViewerAdapter();
   const viewpoints = useViewpoints();
   const toast = useToast();
-  const { customViews } = viewpoints;
+  const { customViews, folders } = viewpoints;
 
   const views = useMemo<ViewData[]>(
     () => customViews.map((vp) => ({
       id: vp.id,
       name: vp.name,
-      folderId: null,
+      folderId: vp.folderId ?? null,
       cameraPosition: vp.cameraPosition,
       cameraTarget: vp.cameraTarget,
       isOrthographic: vp.isOrthographic,
@@ -1034,11 +1016,17 @@ function ViewsContent() {
     [customViews],
   );
 
-  // Local copy drives visual drag-and-drop order; syncs from context on external changes.
+  // Local copies drive visual drag-and-drop order; sync from context on external changes.
   const [localViews, setLocalViews] = useState<ViewData[]>(views);
   useEffect(() => { setLocalViews(views); }, [views]);
+  const [localFolders, setLocalFolders] = useState<ViewpointFolder[]>(folders);
+  useEffect(() => { setLocalFolders(folders); }, [folders]);
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  // Checkbox state is independent from row selection for viewpoints.
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  // Folders start collapsed.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number; viewId: string } | null>(null);
@@ -1048,6 +1036,40 @@ function ViewsContent() {
   const [dropTarget, setDropTarget] = useState<DragTarget | null>(null);
   const closeCreateMenu = useCallback(() => setCreateMenuOpen(false), []);
   const closeMoreMenu = useCallback(() => setMoreMenu(null), []);
+
+  // ── Folder expand/collapse ─────────────────────────────────────────────────
+  const handleToggleFolder = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  // ── Checkbox handlers ──────────────────────────────────────────────────────
+  const handleViewChecked = useCallback((id: string, checked: boolean) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      checked ? next.add(id) : next.delete(id);
+      return next;
+    });
+  }, []);
+
+  // Recursively collect all descendant view IDs for a folder (across all nesting levels).
+  const getDescendantViewIds = useCallback((folderId: string): string[] => {
+    const directViews = localViews.filter((v) => v.folderId === folderId).map((v) => v.id);
+    const childFolderIds = localFolders.filter((f) => (f.parentFolderId ?? null) === folderId).map((f) => f.id);
+    return [...directViews, ...childFolderIds.flatMap((id) => getDescendantViewIds(id))];
+  }, [localViews, localFolders]);
+
+  const handleFolderChecked = useCallback((folderId: string, checked: boolean) => {
+    const descendantIds = getDescendantViewIds(folderId);
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      descendantIds.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+      return next;
+    });
+  }, [getDescendantViewIds]);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Cooldown prevents camera-change during the restore animation from deselecting the row.
   const restoringUntilRef = useRef<number>(0);
@@ -1143,22 +1165,121 @@ function ViewsContent() {
   const handleDrop = useCallback((targetId: string) => {
     if (!draggingId || !dropTarget || dropTarget.id !== targetId) return;
     const { position } = dropTarget;
-    if (position === 'inside') { setDraggingId(null); setDropTarget(null); return; }
 
-    const reordered = reorderItems(localViews, draggingId, targetId, position);
-    setLocalViews(reordered);
+    // ── Folder being dragged ───────────────────────────────────────────────
+    const draggingFolder = localFolders.find((f) => f.id === draggingId);
+    if (draggingFolder) {
+      // Circular reference guard: can't drop a folder into its own descendant.
+      const isDescendant = (ancestorId: string, nodeId: string): boolean => {
+        let current: string | null | undefined = nodeId;
+        while (current) {
+          if (current === ancestorId) return true;
+          current = localFolders.find((f) => f.id === current)?.parentFolderId;
+        }
+        return false;
+      };
+
+      if (position === 'inside') {
+        // Drop onto a folder header: nest dragging folder inside target, placed
+        // at the bottom of the target's existing sub-folders.
+        if (!localFolders.some((f) => f.id === targetId)) { setDraggingId(null); setDropTarget(null); return; }
+        if (isDescendant(draggingId, targetId)) { setDraggingId(null); setDropTarget(null); return; }
+
+        const without = localFolders.filter((f) => f.id !== draggingId);
+        const moved = { ...draggingFolder, parentFolderId: targetId };
+        // Find the last existing sub-folder of the target and insert after it.
+        // If none exist, insert right after the target folder itself.
+        const siblings = without.filter((f) => (f.parentFolderId ?? null) === targetId);
+        const anchor = siblings.length > 0 ? siblings[siblings.length - 1] : without.find((f) => f.id === targetId);
+        const insertIdx = anchor ? without.findIndex((f) => f.id === anchor.id) + 1 : without.length;
+        without.splice(insertIdx, 0, moved);
+        setLocalFolders(without);
+        setDraggingId(null); setDropTarget(null);
+        return;
+      }
+
+      // Drop before/after another folder: reorder among folders, inherit parentFolderId.
+      // Drop before/after a view: snap to end of folders at that view's level.
+      const targetFolder = localFolders.find((f) => f.id === targetId);
+      const targetView = localViews.find((v) => v.id === targetId);
+      const newParentFolderId = targetFolder ? (targetFolder.parentFolderId ?? null) : (targetView?.folderId ?? null);
+      if (isDescendant(draggingId, newParentFolderId ?? '')) { setDraggingId(null); setDropTarget(null); return; }
+
+      const without = localFolders.filter((f) => f.id !== draggingId);
+      const moved = { ...draggingFolder, parentFolderId: newParentFolderId };
+
+      if (targetFolder) {
+        // Reorder among sibling folders.
+        const targetIdx = without.findIndex((f) => f.id === targetId);
+        without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, moved);
+      } else {
+        // Snap: insert after the last folder at this level (before first view).
+        const sibling = without.filter((f) => (f.parentFolderId ?? null) === newParentFolderId);
+        const lastSibling = sibling[sibling.length - 1];
+        const insertIdx = lastSibling ? without.findIndex((f) => f.id === lastSibling.id) + 1 : 0;
+        without.splice(insertIdx, 0, moved);
+      }
+      setLocalFolders(without);
+      setDraggingId(null);
+      setDropTarget(null);
+      return;
+    }
+
+    // ── View being dragged ─────────────────────────────────────────────────
+    let updated: ViewData[];
+
+    if (position === 'inside') {
+      // Drop onto a collapsed/empty folder: move the view into that folder.
+      if (!localFolders.some((f) => f.id === targetId)) {
+        setDraggingId(null); setDropTarget(null); return;
+      }
+      updated = localViews.map((v) => v.id === draggingId ? { ...v, folderId: targetId } : v);
+    } else {
+      // Drop before/after a view: reorder among views, inherit folderId.
+      // Drop before/after a folder: snap to beginning of views at that folder's level.
+      const targetView = localViews.find((v) => v.id === targetId);
+      const targetFolder = localFolders.find((f) => f.id === targetId);
+      const newFolderId = targetView ? (targetView.folderId ?? null) : (targetFolder?.parentFolderId ?? null);
+
+      const draggingView = localViews.find((v) => v.id === draggingId);
+      if (!draggingView) { setDraggingId(null); setDropTarget(null); return; }
+
+      const without = localViews.filter((v) => v.id !== draggingId);
+      const moved = { ...draggingView, folderId: newFolderId };
+
+      if (targetView) {
+        // Reorder among sibling views.
+        const targetIdx = without.findIndex((v) => v.id === targetId);
+        without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, moved);
+      } else {
+        // Snap: insert before the first view at this level (just after all folders).
+        const firstViewIdx = without.findIndex((v) => (v.folderId ?? null) === newFolderId);
+        if (firstViewIdx === -1) {
+          without.push(moved);
+        } else {
+          without.splice(firstViewIdx, 0, moved);
+        }
+      }
+      updated = without;
+    }
+
+    setLocalViews(updated);
     setDraggingId(null);
     setDropTarget(null);
 
-    const reorderedViewpoints = reordered
-      .map((v) => customViews.find((vp) => vp.id === v.id))
-      .filter((vp): vp is Viewpoint => vp !== undefined);
+    // Persist: use folderId from updated localViews, not from stale customViews.
+    const reorderedViewpoints = updated
+      .map((v) => {
+        const vp = customViews.find((vp) => vp.id === v.id);
+        return vp ? { ...vp, folderId: v.folderId } : null;
+      })
+      .filter((vp): vp is NonNullable<typeof vp> => vp !== null) as Viewpoint[];
     viewpoints.reorderCustomViews(reorderedViewpoints).then((result) => {
       if (!result.ok && result.reason === 'writer-unavailable') {
         toast.show({ kind: 'error', message: 'Reordering is only available when running locally.' });
       }
     });
-  }, [draggingId, dropTarget, localViews, customViews, viewpoints, toast]);
+  }, [draggingId, dropTarget, localViews, localFolders, customViews, viewpoints, toast]);
 
   // ── More menu (per-row actions) ────────────────────────────────────────────
   const handleMoreClick = useCallback((e: React.MouseEvent, viewId: string) => {
@@ -1210,6 +1331,7 @@ function ViewsContent() {
     const { viewId } = moreMenu;
     setMoreMenu(null);
     if (selectedItemId === viewId) setSelectedItemId(null);
+    setCheckedIds((prev) => { const next = new Set(prev); next.delete(viewId); return next; });
     const result = await viewpoints.deleteCustomView(viewId);
     if (!result.ok && result.reason === 'writer-unavailable') {
       toast.show({ kind: 'error', message: 'Deleting is only available when running locally.' });
@@ -1253,52 +1375,102 @@ function ViewsContent() {
       )}
 
       <div className="bg-white rounded-md overflow-hidden py-1 relative min-h-full" onClick={handleBackgroundClick}>
-        {localViews.length === 0 && (
+        {localFolders.length === 0 && localViews.length === 0 && (
           <p className="px-3 py-6 text-sm text-gray-400 text-center">
             No saved views yet. Use the + button in the panel header to create one.
           </p>
         )}
 
-        {localViews.map((view) => (
-          <TreeNode
-            key={view.id}
-            id={view.id}
-            label={view.name}
-            depth={0}
-            type="leaf"
-            selected={view.id === selectedItemId}
-            hoverBg="#F4F5F6"
-            showActionsOnHover
-            isRenaming={renamingId === view.id}
-            renameValue={renameValue}
-            onRenameChange={setRenameValue}
-            onRenameCommit={commitRename}
-            onRenameCancel={cancelRename}
-            onClick={handleSelectView}
-            onDoubleClick={handleDoubleClick}
-            draggable
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            isDragging={draggingId === view.id}
-            dropIndicator={dropTarget?.id === view.id ? (dropTarget.position as 'before' | 'after') : undefined}
-            actions={
-              <>
-                <button type="button" title="Edit name" onClick={(e) => { e.stopPropagation(); handleDoubleClick(view.id, view.name); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                  <img src={editIcon} alt="" width={14} height={14} />
-                </button>
-                <button type="button" title="Share" onClick={(e) => e.stopPropagation()} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                  <img src={shareIcon} alt="" width={14} height={14} />
-                </button>
-                <button type="button" title="More" onClick={(e) => { e.stopPropagation(); handleMoreClick(e, view.id); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                  <img src={moreIcon} alt="" width={14} height={14} />
-                </button>
-              </>
-            }
-          />
-        ))}
+        {/* Recursive folder + view tree */}
+        {(() => {
+          const renderViewRow = (view: ViewData, depth: number) => (
+            <TreeNode
+              key={view.id}
+              id={view.id}
+              label={view.name}
+              depth={depth}
+              type="leaf"
+              checked={checkedIds.has(view.id)}
+              onCheckedChange={handleViewChecked}
+              selected={view.id === selectedItemId}
+              hoverBg="#F4F5F6"
+              showActionsOnHover
+              isRenaming={renamingId === view.id}
+              renameValue={renameValue}
+              onRenameChange={setRenameValue}
+              onRenameCommit={commitRename}
+              onRenameCancel={cancelRename}
+              onClick={handleSelectView}
+              onDoubleClick={handleDoubleClick}
+              draggable
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              isDragging={draggingId === view.id}
+              dropIndicator={dropTarget?.id === view.id ? (dropTarget.position as 'before' | 'after') : undefined}
+              actions={
+                <>
+                  <button type="button" title="Edit name" onClick={(e) => { e.stopPropagation(); handleDoubleClick(view.id, view.name); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                    <img src={editIcon} alt="" width={14} height={14} />
+                  </button>
+                  <button type="button" title="Share" onClick={(e) => e.stopPropagation()} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                    <img src={shareIcon} alt="" width={14} height={14} />
+                  </button>
+                  <button type="button" title="More" onClick={(e) => { e.stopPropagation(); handleMoreClick(e, view.id); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                    <img src={moreIcon} alt="" width={14} height={14} />
+                  </button>
+                </>
+              }
+            />
+          );
+
+          const renderFolder = (folder: ViewpointFolder, depth: number): React.ReactNode => {
+            const descendantViewIds = getDescendantViewIds(folder.id);
+            const checkedCount = descendantViewIds.filter((id) => checkedIds.has(id)).length;
+            const allChecked = descendantViewIds.length > 0 && checkedCount === descendantViewIds.length;
+            const indeterminate = checkedCount > 0 && !allChecked;
+            const childFolders = localFolders.filter((f) => (f.parentFolderId ?? null) === folder.id);
+            const directViews = localViews.filter((v) => v.folderId === folder.id);
+            return (
+              <TreeNode
+                key={folder.id}
+                id={folder.id}
+                label={folder.name}
+                depth={depth}
+                type="folder"
+                expanded={expandedIds.has(folder.id)}
+                onToggle={handleToggleFolder}
+                checked={allChecked}
+                indeterminate={indeterminate}
+                onCheckedChange={handleFolderChecked}
+                hoverBg="#F4F5F6"
+                draggable
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                isDragging={draggingId === folder.id}
+                isDropTarget={dropTarget?.id === folder.id && dropTarget.position === 'inside'}
+                dropIndicator={dropTarget?.id === folder.id && dropTarget.position !== 'inside' ? (dropTarget.position as 'before' | 'after') : undefined}
+              >
+                {childFolders.map((f) => renderFolder(f, depth + 1))}
+                {directViews.map((v) => renderViewRow(v, depth + 1))}
+              </TreeNode>
+            );
+          };
+
+          const rootFolders = localFolders.filter((f) => !(f.parentFolderId ?? null));
+          const unfiledViews = localViews.filter((v) => !v.folderId);
+          return (
+            <>
+              {rootFolders.map((f) => renderFolder(f, 0))}
+              {unfiledViews.map((v) => renderViewRow(v, 0))}
+            </>
+          );
+        })()}
       </div>
 
       {moreMenu && (

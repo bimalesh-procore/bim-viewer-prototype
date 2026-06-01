@@ -779,12 +779,16 @@ export class Sectioning {
     this.clearSectionBox();
 
     let center, halfExtents;
-    const quaternion = new THREE.Quaternion(); // always axis-aligned
+    const quaternion = new THREE.Quaternion(); // default: axis-aligned
 
     if (opts?.center && opts?.halfExtents) {
-      // Caller-supplied bounds (e.g. "Isolate in section box")
+      // Caller-supplied bounds (e.g. "Isolate in section box" or restoreState)
       center      = opts.center.clone();
       halfExtents = opts.halfExtents.clone();
+      // Restore saved rotation if provided
+      if (opts.quaternion) {
+        quaternion.set(opts.quaternion.x, opts.quaternion.y, opts.quaternion.z, opts.quaternion.w);
+      }
     } else {
       const bounds = this.getSceneBounds();
       const groundY = bounds.min.y;
@@ -802,8 +806,17 @@ export class Sectioning {
         cz = groundHit.z;
       }
 
-      // Default box: a cube whose side is 35 % of the largest scene dimension
-      const half = Math.max(Math.max(size.x, size.y, size.z) * 0.175, 1.0);
+      // Size the box relative to the camera distance so it looks reasonable
+      // regardless of model scale. Use 20 % of the camera-to-scene-center
+      // distance as the primary signal, then clamp it between 8 % and 30 %
+      // of the scene's largest dimension so it stays sensible even when the
+      // camera is very close or very far away.
+      const camDist      = this.camera.position.distanceTo(sceneCtr);
+      const sceneLargest = Math.max(size.x, size.y, size.z);
+      const half = Math.max(
+        Math.min(camDist * 0.20, sceneLargest * 0.30),
+        Math.max(sceneLargest * 0.08, 1.0),
+      );
       center      = new THREE.Vector3(cx, groundY + half, cz);
       halfExtents = new THREE.Vector3(half, half, half);
     }
@@ -3921,6 +3934,29 @@ export class Sectioning {
   }
 
   /**
+   * Show or hide the section-box wireframe and face meshes without touching
+   * the underlying clip planes. Used to keep clipping active in default mode
+   * while hiding the interactive box overlay.
+   */
+  setSectionBoxVisible(visible) {
+    if (this._boxFaceMesh) this._boxFaceMesh.visible = visible;
+    if (this._boxEdgeMesh) this._boxEdgeMesh.visible = visible;
+    // Also hide all box face gizmos (rings, 3D meshes, rotate handles).
+    if (this.sectionBoxPlaneIds) {
+      for (const planeId of this.sectionBoxPlaneIds) {
+        const gizmoData = this._planeGizmos.get(planeId);
+        if (!gizmoData) continue;
+        if (gizmoData.el)     gizmoData.el.style.display     = visible ? 'flex' : 'none';
+        if (gizmoData.ring3D) gizmoData.ring3D.visible        = visible;
+      }
+    }
+    for (const gizmo of this._rotateGizmos) {
+      gizmo.el.style.display = 'none'; // rotate gizmos only show inside rotate sub-tool
+      if (gizmo.mesh3D) gizmo.mesh3D.visible = false;
+    }
+  }
+
+  /**
    * Get all clipping planes
    */
   getClipPlanes() {
@@ -3978,7 +4014,8 @@ export class Sectioning {
     if (snapshot.box) {
       const center      = new THREE.Vector3(snapshot.box.center.x,      snapshot.box.center.y,      snapshot.box.center.z);
       const halfExtents = new THREE.Vector3(snapshot.box.halfExtents.x, snapshot.box.halfExtents.y, snapshot.box.halfExtents.z);
-      this.activateSectionBox({ center, halfExtents });
+      const quaternion  = snapshot.box.quaternion;
+      this.activateSectionBox({ center, halfExtents, quaternion });
     }
   }
 

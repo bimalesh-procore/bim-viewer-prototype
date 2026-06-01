@@ -270,19 +270,56 @@ export interface ViewerAdapter {
     listener: (views: ViewData[], selectedId: string | null) => void,
   ): () => void;
   subscribeCameraChange?(listener: () => void): () => void;
+  subscribeVisibilityChange?(listener: () => void): () => void;
   createFolder?(name: string, parentId?: string | null): ViewFolder;
   deleteFolder?(id: string): void;
   renameFolder?(id: string, name: string): void;
   getFolders?(): ViewFolder[];
 
   // ── Markup mode ──────────────────────────────────────────────────────────
-  enterMarkupMode?(viewId?: string): string;
+  enterMarkupMode?(viewId?: string, existingMarkups?: MarkupData[]): string;
   exitMarkupMode?(save: boolean): void;
   isMarkupModeActive?(): boolean;
+  /** Returns the external view ID currently being edited in markup mode, or null. */
+  getMarkupViewId?(): string | null;
   setMarkupTool?(tool: string | null): void;
   setMarkupColor?(color: string): void;
   getMarkupColor?(): string;
+  subscribeMarkupModeActive?(listener: (active: boolean) => void): () => void;
+  /** Fires whenever a markup stroke is committed (added, removed, or changed via undo/redo). */
+  subscribeMarkupChange?(listener: () => void): () => void;
+  registerMarkupCommitCallback?(
+    callback: (dirty: Array<{ viewId: string; markups: MarkupData[] }>) => void,
+  ): () => void;
+  showMarkupOverlay?(markups: MarkupData[], animate?: boolean): void;
+  hideMarkupOverlay?(): void;
 
   // ── Isolate in section box ────────────────────────────────────────────────
   subscribeIsolateInSectionBox?(listener: () => void): () => void;
+
+  // ── Sectioning view mode ─────────────────────────────────────────────────
+  // Mirrors markup mode: tracks a session where sectioning + camera changes are
+  // drafted per-view and committed (or discarded) when the mode exits.
+  enterSectioningViewMode?(viewId?: string): void;
+  exitSectioningViewMode?(save: boolean): void;
+  isSectioningViewModeActive?(): boolean;
+  getSectioningViewId?(): string | null;
+    /** Persists the auto-created view ID across React StrictMode remounts. */
+    setAutoSectioningViewId?(id: string | null): void;
+    getAutoSectioningViewId?(): string | null;
+    /**
+     * Directly registers a view as the current sectioning-mode view without
+     * triggering a draft of the outgoing view or firing any events.  Used by
+     * the panel to register a pre-selected view the moment the mode activates
+     * from the toolbar (avoids re-entrant enterSectioningViewMode calls).
+     */
+    setSectioningViewId?(viewId: string | null): void;
+  subscribeSectioningViewModeActive?(listener: (active: boolean) => void): () => void;
+  registerSectioningViewCommitCallback?(
+    callback: (dirty: Array<{
+      viewId: string;
+      camera: ViewpointStateSnapshot['camera'];
+      sectioning: SectioningStateSnapshot | null;
+    }>) => void,
+  ): () => void;
 }

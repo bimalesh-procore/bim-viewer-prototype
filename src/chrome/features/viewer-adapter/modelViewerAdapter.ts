@@ -80,6 +80,7 @@ interface ModelViewerInstance {
     clearSectionBox(): void;
     hasSectionBox(): boolean;
     clearAll(): void;
+    setSectionBoxVisible(visible: boolean): void;
     flipActivePlane(): boolean;
     deleteActivePlane(): boolean;
     setPlaneContextMenuOpen(open: boolean): void;
@@ -480,13 +481,42 @@ export function createModelViewerAdapter(
   // ── Action History Tracking ───────────────────────────────────────
   const actionHistoryListeners = new Set<(s: ActionHistorySummary) => void>();
   let isolateCount = 0;
+  // Tracks the count of markups currently shown in the read-only overlay.
+  // Updated by showMarkupOverlay / hideMarkupOverlay so the flyout chip stays current.
+  let readOnlyMarkupsCount = 0;
+
+  // ── Sectioning view mode state ──────────────────────────────────────
+  // Parallel to markup mode: tracks a view-aware sectioning session where
+  // changes are drafted per-view and committed (or discarded) on exit.
+  let sxModeActive = false;
+  let sxViewId: string | null = null;                // external view being edited
+  let sxAutoViewId: string | null = null;            // auto-created view (persists across remounts)
+  let sxPreModeState: ViewpointStateSnapshot | null = null; // captured on entry for discard restore
+  const sxListeners = new Set<(active: boolean) => void>();
+  const sxDirtyViews = new Map<string, {
+    camera: ViewpointStateSnapshot['camera'];
+    sectioning: ViewpointStateSnapshot['sectioning'];
+  }>();
+  let sxCommitCallback: ((dirty: Array<{
+    viewId: string;
+    camera: ViewpointStateSnapshot['camera'];
+    sectioning: ViewpointStateSnapshot['sectioning'];
+  }>) => void) | null = null;
 
   // ── Markup mode state ───────────────────────────────────────────────
   let markupModeActive = false;
-  let markupEditingViewId: string | null = null;
+  let markupEditingViewId: string | null = null;   // internal ViewsManager ID
+  let markupExternalViewId: string | null = null;  // viewpoint ID from ViewpointsContext
+  let markupPersistedMarkups: unknown[] | null = null; // markups as saved on disk when entering
   let markupColor = '#FF0000';
   let readOnlyRevealToken = 0;
   const viewsListeners = new Set<(views: ViewData[], selectedId: string | null) => void>();
+  const markupModeActiveListeners = new Set<(active: boolean) => void>();
+  const markupChangeListeners = new Set<() => void>();
+  // External viewpoint ID → markups for all views touched in the current session.
+  const markupDirtyViews = new Map<string, unknown[]>();
+  // Called with the full dirty set when exitMarkupMode(true) is invoked.
+  let markupCommitCallback: ((dirty: Array<{ viewId: string; markups: unknown[] }>) => void) | null = null;
 
   const revealReadOnlyMarkupsAfterTransition = (viewId: string, markups: unknown[]) => {
     const token = ++readOnlyRevealToken;
@@ -527,28 +557,31 @@ export function createModelViewerAdapter(
 
   viewer.markup.on('markups-changed', () => {
     emitActionHistory();
+    for (const listener of markupChangeListeners) listener();
   });
 
   // If user manually navigates camera while a view is selected (and not in edit mode),
   // automatically deselect the view and hide associated markups.
   viewer.on('camera-change', () => {
     if (markupModeActive) return;
+    if (sxModeActive) return;          // suppress auto-deselect during sectioning session
     if (viewer.views.isCameraTransitioning?.()) return;
     if (!viewer.views.getSelectedViewId()) return;
 
     readOnlyRevealToken++;
+    readOnlyMarkupsCount = 0;
     viewer.views.deselectView();
     viewer.markup.hideOverlay();
+    emitActionHistory();
     emitViews();
   });
 
   const buildActionSummary = (): ActionHistorySummary => {
-    const selectedView = viewer.views.getSelectedView() as ViewData | null;
     return {
       sectioningCount: viewer.sectioning.getClipPlanes().length,
       hiddenObjectsCount: viewer.visibility.getHiddenElements().length,
       isolateCount,
-      markupsCount: selectedView ? selectedView.markups.length : 0,
+      markupsCount: readOnlyMarkupsCount,
       measurementsCount: 0,
     };
   };
@@ -575,6 +608,11 @@ export function createModelViewerAdapter(
   viewer.on('camera-change', () => {
     cameraChangeListeners.forEach((l) => l());
   });
+  const visibilityChangeListeners = new Set<() => void>();
+  viewer.visibility.on('visibility-change', () => {
+    emitActionHistory();
+    visibilityChangeListeners.forEach((l) => l());
+  });
   viewer.on('isolate-in-section-box', () => {
     // Engine already called setActiveTool('section-box'), activateSectionBox, and
     // setBoxSubTool('move'). Just sync the adapter's local state and notify React.
@@ -583,9 +621,6 @@ export function createModelViewerAdapter(
     emitSectioningState();
     isolateInSectionBoxListeners.forEach(l => l());
   });
-
-  // React to visibility changes
-  viewer.visibility.on('visibility-change', () => emitActionHistory());
 
   const setViewerCursor = (iconUrl: string | null) => {
     const root = document.documentElement;
@@ -617,6 +652,12 @@ export function createModelViewerAdapter(
       viewer.navigation.zoomToFit();
     },
     resetView() {
+      if (markupModeActive) {
+        // In markup mode: clear only the markup canvas so the user starts fresh.
+        // Sectioning belongs to the saved view state and must not be touched.
+        viewer.markup.loadMarkups([]);
+        return;
+      }
       if (sectioningActive) {
         viewer.sectioning.resetMode();
         return;
@@ -655,6 +696,13 @@ export function createModelViewerAdapter(
       // Apply order matters: sectioning first (so clip planes are in place
       // before geometry is shown/hidden), then visibility, then camera.
       viewer.sectioning.restoreState(state.sectioning);
+      // Outside sectioning mode, hide all interactive helpers (box wireframe,
+      // face gizmos, DOM overlays) while keeping clip planes active.
+      // setActiveTool(null) is the same path taken on sx-mode exit and reliably
+      // hides helpersGroup + every gizmo DOM element in one call.
+      if (!sxModeActive) {
+        viewer.sectioning.setActiveTool(null);
+      }
       viewer.visibility.showAll();
       if (state.hiddenObjects.length > 0) {
         viewer.visibility.hide(state.hiddenObjects);
@@ -1022,14 +1070,17 @@ export function createModelViewerAdapter(
           viewer.visibility.showAll();
           break;
         case 'markups': {
-          const sv = viewer.views.getSelectedView();
-          if (sv) {
-            viewer.views.clearMarkups(sv.id);
-            if (viewer.markup.isActive) {
-              viewer.markup.loadMarkups([]);
-            } else {
-              viewer.markup.hideOverlay();
-            }
+          if (markupModeActive) {
+            // Edit mode — clear the canvas so the user starts fresh.
+            viewer.markup.loadMarkups([]);
+          } else {
+            // Read-only overlay — hide it.
+            readOnlyRevealToken++;
+            readOnlyMarkupsCount = 0;
+            viewer.markup.hideOverlay();
+            // For internally-managed views, clear from the ViewsManager too.
+            const sv = viewer.views.getSelectedView();
+            if (sv) viewer.views.clearMarkups(sv.id);
           }
           break;
         }
@@ -1042,6 +1093,9 @@ export function createModelViewerAdapter(
       viewer.sectioning.clearAll();
       isolateCount = 0;
       viewer.visibility.showAll();
+      readOnlyRevealToken++;
+      readOnlyMarkupsCount = 0;
+      viewer.markup.hideOverlay();
       emitActionHistory();
     },
     commitActiveCut() {
@@ -1123,47 +1177,118 @@ export function createModelViewerAdapter(
     },
 
     // ── Markup mode ───────────────────────────────────────────────────
-    enterMarkupMode(viewId?: string) {
-      // Auto-save current view's markups before switching
-      if (markupModeActive && markupEditingViewId) {
+    enterMarkupMode(viewId?: string, existingMarkups?: unknown[]) {
+      // Auto-save current view's markups as a draft before switching.
+      if (markupModeActive && markupExternalViewId) {
         const currentMarkups = JSON.parse(JSON.stringify(viewer.markup.getMarkups()));
-        viewer.views.setViewMarkups(markupEditingViewId, currentMarkups);
+        if (markupEditingViewId) {
+          viewer.views.setViewMarkups(markupEditingViewId, currentMarkups);
+        }
+        markupDirtyViews.set(markupExternalViewId, currentMarkups);
       }
 
-      let view: ViewData;
-      if (viewId) {
-        const existing = viewer.views.getView(viewId) as ViewData | null;
-        if (existing) {
-          viewer.views.selectView(viewId);
-          view = existing;
-        } else {
-          view = viewer.views.createView() as ViewData;
-          viewer.views.selectView(view.id);
-        }
-      } else {
-        view = viewer.views.createView() as ViewData;
+      // When viewId is a ViewpointsContext ID, the camera is already being
+      // animated by setViewpointState (called by the panel before this). Calling
+      // viewer.views.createView() + selectView() would snapshot the current camera
+      // and immediately restore it, cancelling that animation. So for externally-
+      // managed views we only need the markup canvas — skip viewer.views entirely.
+      let internalViewId: string | null = null;
+      if (!viewId) {
+        const view = viewer.views.createView() as ViewData;
         viewer.views.selectView(view.id);
+        internalViewId = view.id;
+      } else if (viewer.views.getSelectedViewId()) {
+        // Switching from an internal (toolbar) session to an external (panel) session:
+        // clear the internal view selection so the camera-change auto-deselect handler
+        // doesn't see a non-null selectedViewId and hide the markup overlay.
+        viewer.views.deselectView();
       }
+
+      const wasActive = markupModeActive;
       markupModeActive = true;
-      markupEditingViewId = view.id;
-      viewer.markup.loadMarkups(view.markups);
+      markupEditingViewId = internalViewId;
+      markupExternalViewId = viewId ?? null;
+      // Snapshot the persisted markups so we can restore the overlay on discard.
+      if (viewId) {
+        markupPersistedMarkups = JSON.parse(JSON.stringify(existingMarkups ?? []));
+      }
+      // The editable canvas replaces the read-only overlay — clear the chip count.
+      readOnlyMarkupsCount = 0;
+      emitActionHistory();
+
+      // Load priority:
+      //  1. In-session draft — markups drawn earlier this session but not yet committed.
+      //  2. Caller-provided markups from ViewpointsContext (persisted on disk).
+      //  3. Internal ViewsManager fallback (only relevant when no viewId).
+      const sessionDraft = viewId ? markupDirtyViews.get(viewId) : undefined;
+      viewer.markup.loadMarkups(sessionDraft ?? existingMarkups ?? []);
       viewer.markup.enable();
-      viewer.navigation.setControlsEnabled?.(false);
+      // Only disable controls and notify listeners on first entry — subsequent calls are
+      // view-switches inside an already-active markup session. Calling setControlsEnabled
+      // again would overwrite _controlsEnabledBeforeDrag with the now-false value, which
+      // would leave OrbitControls permanently disabled after exitMarkupMode(true).
+      if (!wasActive) {
+        viewer.navigation.setControlsEnabled?.(false);
+        markupModeActiveListeners.forEach((l) => l(true));
+      }
       emitViews();
-      return view.id;
+      return viewId ?? internalViewId ?? '';
     },
     exitMarkupMode(save: boolean) {
-      if (markupModeActive && markupEditingViewId) {
-        if (save) {
+      if (markupModeActive) {
+        if (save && markupExternalViewId) {
           const markups = JSON.parse(JSON.stringify(viewer.markup.getMarkups()));
-          viewer.views.setViewMarkups(markupEditingViewId, markups);
-        }
-        viewer.markup.disable();
-        viewer.navigation.setControlsEnabled?.(true);
-        const view = viewer.views.getView(markupEditingViewId) as ViewData | null;
-        if (view && view.markups.length > 0) {
-          viewer.markup.showReadOnly(view.markups);
+          if (markupEditingViewId) {
+            viewer.views.setViewMarkups(markupEditingViewId, markups);
+          }
+          markupDirtyViews.set(markupExternalViewId, markups);
+          // Show read-only overlay immediately for the view just exited.
+          viewer.markup.disable();
+          viewer.navigation.setControlsEnabled?.(true);
+          readOnlyMarkupsCount = markups.length;
+          if (markups.length > 0) {
+            viewer.markup.showReadOnly(markups, false);
+          } else {
+            viewer.markup.hideOverlay();
+          }
+          // Deselect any internal view that may have been created during the toolbar-button
+          // entry path (enterMarkupMode called first without a viewId, then again with one).
+          // If we don't clear it here, the camera-change auto-deselect handler fires during
+          // the next panel-driven camera animation, bumps readOnlyRevealToken, and hides the
+          // markup overlay for the next view the user clicks (the "one click behind" bug).
+          viewer.views.deselectView();
+        } else if (!save && markupExternalViewId) {
+          // Discard with an externally-managed view — throw away the session and
+          // restore the read-only overlay to whatever was persisted before entry.
+          viewer.markup.disable();
+          viewer.navigation.setControlsEnabled?.(true);
+          const persisted = markupPersistedMarkups ?? [];
+          readOnlyMarkupsCount = persisted.length;
+          if (persisted.length > 0) {
+            viewer.markup.showReadOnly(persisted, false);
+          } else {
+            viewer.markup.hideOverlay();
+          }
+          viewer.views.deselectView();
+        } else if (markupEditingViewId) {
+          // Unmanaged session (no external viewId) — use the internal view for overlay.
+          const currentMarkups = save
+            ? JSON.parse(JSON.stringify(viewer.markup.getMarkups()))
+            : null;
+          if (save && currentMarkups) {
+            viewer.views.setViewMarkups(markupEditingViewId, currentMarkups);
+          }
+          viewer.markup.disable();
+          viewer.navigation.setControlsEnabled?.(true);
+          const view = viewer.views.getView(markupEditingViewId) as ViewData | null;
+          if (view && view.markups.length > 0) {
+            viewer.markup.showReadOnly(view.markups);
+          } else {
+            viewer.markup.hideOverlay();
+          }
         } else {
+          viewer.markup.disable();
+          viewer.navigation.setControlsEnabled?.(true);
           viewer.markup.hideOverlay();
         }
       } else {
@@ -1172,11 +1297,72 @@ export function createModelViewerAdapter(
       }
       markupModeActive = false;
       markupEditingViewId = null;
+      markupExternalViewId = null;
+      markupPersistedMarkups = null;
+      markupModeActiveListeners.forEach((l) => l(false));
+
+      if (save && markupCommitCallback && markupDirtyViews.size > 0) {
+        const dirty = Array.from(markupDirtyViews.entries()).map(
+          ([vid, markups]) => ({ viewId: vid, markups }),
+        );
+        markupDirtyViews.clear();
+        markupCommitCallback(dirty);
+      } else {
+        markupDirtyViews.clear();
+      }
+
       emitViews();
       emitActionHistory();
     },
     isMarkupModeActive() {
       return markupModeActive;
+    },
+    getMarkupViewId() {
+      return markupExternalViewId;
+    },
+    subscribeMarkupModeActive(listener: (active: boolean) => void) {
+      markupModeActiveListeners.add(listener);
+      listener(markupModeActive);
+      return () => { markupModeActiveListeners.delete(listener); };
+    },
+    subscribeMarkupChange(listener: () => void) {
+      markupChangeListeners.add(listener);
+      return () => { markupChangeListeners.delete(listener); };
+    },
+    registerMarkupCommitCallback(callback: (dirty: Array<{ viewId: string; markups: unknown[] }>) => void) {
+      markupCommitCallback = callback;
+      return () => { if (markupCommitCallback === callback) markupCommitCallback = null; };
+    },
+    showMarkupOverlay(markups: unknown[], animate?: boolean) {
+      readOnlyRevealToken++;
+      if (!markups || markups.length === 0) {
+        readOnlyMarkupsCount = 0;
+        emitActionHistory();
+        viewer.markup.hideOverlay();
+        return;
+      }
+      const token = readOnlyRevealToken;
+      const tryReveal = () => {
+        if (token !== readOnlyRevealToken) return;
+        if (animate && viewer.views.isCameraTransitioning?.()) {
+          requestAnimationFrame(tryReveal);
+          return;
+        }
+        readOnlyMarkupsCount = markups.length;
+        emitActionHistory();
+        viewer.markup.showReadOnly(markups, !!animate);
+      };
+      if (animate) {
+        requestAnimationFrame(tryReveal);
+      } else {
+        tryReveal();
+      }
+    },
+    hideMarkupOverlay() {
+      readOnlyRevealToken++;
+      readOnlyMarkupsCount = 0;
+      emitActionHistory();
+      viewer.markup.hideOverlay();
     },
     setMarkupTool(tool: string | null) {
       viewer.markup.setTool(tool);
@@ -1195,6 +1381,138 @@ export function createModelViewerAdapter(
     subscribeCameraChange(listener: () => void) {
       cameraChangeListeners.add(listener);
       return () => cameraChangeListeners.delete(listener);
+    },
+    subscribeVisibilityChange(listener: () => void) {
+      visibilityChangeListeners.add(listener);
+      return () => visibilityChangeListeners.delete(listener);
+    },
+
+    // ── Sectioning view mode ──────────────────────────────────────────
+    enterSectioningViewMode(viewId?: string) {
+      if (!sxModeActive) {
+        // Capture pre-mode state so red X can fully restore the scene.
+        const cam = viewer.navigation.getEffectiveCamera();
+        sxPreModeState = {
+          camera: {
+            position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },
+            target:   { x: cam.target.x,   y: cam.target.y,   z: cam.target.z },
+            isOrthographic: viewer.navigation.getIsOrthographic(),
+          },
+          hiddenObjects: viewer.visibility.getHiddenElements(),
+          sectioning: viewer.sectioning.serializeState() as ViewpointStateSnapshot['sectioning'],
+        };
+        sxModeActive = true;
+        sectioningActive = true;
+        // Set sxViewId BEFORE firing listeners so that any listener that calls
+        // setSectioningViewId() to register a pre-selected view can overwrite it
+        // safely — and the view-switch code below never runs for first-time entry.
+        sxViewId = viewId ?? null;
+        // Call the side-effect directly rather than via emitSectioningState() —
+        // emitting state would synchronously fire subscribeSectioningState listeners
+        // in the panel, marking the currently-selected view dirty before the
+        // 500ms cooldown (set by the subscribeSectioningViewModeActive React effect)
+        // has had a chance to be put in place.
+        viewer.selection.setContextMenuEnabled?.(false);
+        sxListeners.forEach((l) => l(true));
+        emitViews();
+        return; // ← early return: skip view-switch logic on first entry
+      }
+      // Already active — switch to a different view.
+      // Auto-draft the view we're leaving before switching to the new one.
+      if (sxViewId && sxViewId !== (viewId ?? null)) {
+        const cam = viewer.navigation.getEffectiveCamera();
+        sxDirtyViews.set(sxViewId, {
+          camera: {
+            position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },
+            target:   { x: cam.target.x,   y: cam.target.y,   z: cam.target.z },
+            isOrthographic: viewer.navigation.getIsOrthographic(),
+          },
+          sectioning: viewer.sectioning.serializeState() as ViewpointStateSnapshot['sectioning'],
+        });
+      }
+      sxViewId = viewId ?? null;
+      emitViews();
+    },
+
+    exitSectioningViewMode(save: boolean) {
+      if (!sxModeActive) return;
+
+      if (save && sxViewId) {
+        // Draft the current view before committing everything.
+        const cam = viewer.navigation.getEffectiveCamera();
+        sxDirtyViews.set(sxViewId, {
+          camera: {
+            position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },
+            target:   { x: cam.target.x,   y: cam.target.y,   z: cam.target.z },
+            isOrthographic: viewer.navigation.getIsOrthographic(),
+          },
+          sectioning: viewer.sectioning.serializeState() as ViewpointStateSnapshot['sectioning'],
+        });
+      } else if (!save && sxPreModeState) {
+        // Discard — wipe any section planes/box added during the session,
+        // then restore whatever sectioning (if any) existed before the mode.
+        // clearAll() removes planes; clearSectionBox() removes the box geometry.
+        viewer.sectioning.clearAll();
+        viewer.sectioning.clearSectionBox?.();
+        if (sxPreModeState.sectioning) {
+          viewer.sectioning.restoreState(sxPreModeState.sectioning);
+        }
+        applyCameraSnapshot(sxPreModeState.camera, { animate: true });
+      }
+
+      sxModeActive = false;
+      sxViewId = null;
+      sxAutoViewId = null;
+      sxPreModeState = null;
+      sectioningActive = false;
+      activeSectionTool = null;
+      viewer.sectioning.setActiveTool(null);
+      // On save: leave clip planes live so the user sees their work immediately.
+      // The commit callback will re-apply via setViewpointState, but leaving them
+      // in place prevents the flash that would occur if we cleared then re-added.
+      // On discard: already cleared above in the !save branch.
+      if (!save) viewer.sectioning.clearSectionBox?.();
+      viewer.selection.setHoverEnabled?.(true);
+      emitSectioningState();
+      sxListeners.forEach((l) => l(false));
+
+      if (save && sxCommitCallback && sxDirtyViews.size > 0) {
+        const dirty = Array.from(sxDirtyViews.entries()).map(
+          ([vid, s]) => ({ viewId: vid, camera: s.camera, sectioning: s.sectioning }),
+        );
+        sxDirtyViews.clear();
+        sxCommitCallback(dirty);
+      } else {
+        sxDirtyViews.clear();
+      }
+
+      emitViews();
+      emitActionHistory();
+    },
+
+    isSectioningViewModeActive() { return sxModeActive; },
+    getSectioningViewId() { return sxViewId; },
+    setAutoSectioningViewId(id: string | null) { sxAutoViewId = id; },
+    getAutoSectioningViewId() { return sxAutoViewId; },
+    // Direct setter — registers a view as current without drafting or events.
+    // Used by the panel to avoid re-entrant enterSectioningViewMode calls.
+    setSectioningViewId(viewId: string | null) { sxViewId = viewId; },
+
+    subscribeSectioningViewModeActive(listener: (active: boolean) => void) {
+      sxListeners.add(listener);
+      listener(sxModeActive);
+      return () => { sxListeners.delete(listener); };
+    },
+
+    registerSectioningViewCommitCallback(
+      callback: (dirty: Array<{
+        viewId: string;
+        camera: ViewpointStateSnapshot['camera'];
+        sectioning: ViewpointStateSnapshot['sectioning'];
+      }>) => void,
+    ) {
+      sxCommitCallback = callback;
+      return () => { if (sxCommitCallback === callback) sxCommitCallback = null; };
     },
   };
 }

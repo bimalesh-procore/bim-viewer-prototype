@@ -1,4 +1,5 @@
 import type { MarkupData } from '../viewer-adapter/types';
+import type { RenderToggles } from '../viewer-settings/types';
 
 export interface Vec3 {
   x: number;
@@ -48,6 +49,9 @@ export interface Viewpoint {
   sectioning: SectioningSnapshot | null;
   markups: MarkupData[];
   createdAt: number;
+  // Render settings — optional so legacy saved viewpoints remain valid.
+  isXRayActive?: boolean;
+  renderToggles?: RenderToggles;
 }
 
 export interface ModelViewpoints {

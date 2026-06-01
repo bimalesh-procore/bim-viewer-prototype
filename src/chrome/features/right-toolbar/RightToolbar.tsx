@@ -201,6 +201,7 @@ export function RightToolbar() {
       setActiveMode('sectioning');
       setActiveSectionTool('section-cut');
       setOpenFlyout(null);
+      if (!adapter.isSectioningViewModeActive?.()) adapter.enterSectioningViewMode?.();
     });
     return () => unsubscribe?.();
   }, [adapter]);
@@ -212,6 +213,7 @@ export function RightToolbar() {
       setActiveMode('sectioning');
       setActiveSectionTool(tool);
       setOpenFlyout(null);
+      if (!adapter.isSectioningViewModeActive?.()) adapter.enterSectioningViewMode?.();
     });
     return () => unsubscribe?.();
   }, [adapter]);
@@ -226,9 +228,47 @@ export function RightToolbar() {
       setActiveSectionTool('section-box');
       setActiveSectionBoxSubTool('move');
       setOpenFlyout(null);
+      if (!adapter.isSectioningViewModeActive?.()) adapter.enterSectioningViewMode?.();
     });
     return () => unsubscribe?.();
   }, [adapter]);
+
+  // ── Sync toolbar UI when markup mode activates from an external caller ────────
+  // panelContent calls adapter.enterMarkupMode directly (bypassing the
+  // mv:activate-right-tool dispatch) so we subscribe here to keep activeMode,
+  // activeMarkupTool, and the viewer tool in sync.
+  useEffect(() => {
+    const unsub = adapter.subscribeMarkupModeActive?.((active) => {
+      if (active) {
+        setActiveMode('markup');
+        setActiveMarkupTool('freehand');
+        adapter.setMarkupTool?.('freehand');
+        window.dispatchEvent(new CustomEvent('mv:open-panel', { detail: { panelId: 'views', label: 'Viewpoints' } }));
+      }
+    });
+    return () => { unsub?.(); };
+  }, [adapter]);
+
+  useEffect(() => {
+    // ViewsContent dispatches these when "Update" is clicked in a view mode
+    // after it has already committed all dirty views via the adapter.
+    const markupHandler = () => {
+      setActiveMode('default');
+      setActiveMarkupTool(null);
+      setIsOverflowOpen(false);
+    };
+    const sxHandler = () => {
+      setActiveMode('default');
+      setActiveSectionTool(null);
+      setIsOverflowOpen(false);
+    };
+    window.addEventListener('mv:markup-exit', markupHandler);
+    window.addEventListener('mv:sectioning-view-exit', sxHandler);
+    return () => {
+      window.removeEventListener('mv:markup-exit', markupHandler);
+      window.removeEventListener('mv:sectioning-view-exit', sxHandler);
+    };
+  }, []);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -237,8 +277,8 @@ export function RightToolbar() {
       if (!sourceId) return;
 
       if (sourceId === 'mode:markup') {
-        const viewId = (detail as { viewId?: string })?.viewId;
-        enterMarkup(viewId ?? undefined);
+        const d = detail as { viewId?: string; existingMarkups?: unknown[] };
+        enterMarkup(d?.viewId, d?.existingMarkups);
         setOpenFlyout(null);
         return;
       }
@@ -256,12 +296,11 @@ export function RightToolbar() {
       if (sourceId === 'mode:sectioning') {
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-box');
-        setActiveSectionBoxSubTool('move');
+        setActiveSectionTool('section-plane');
         setOpenFlyout(null);
         adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-box');
-        adapter.setSectionBoxSubTool?.('move');
+        adapter.setActiveSectioningTool?.('section-plane');
+        if (!adapter.isSectioningViewModeActive?.()) adapter.enterSectioningViewMode?.();
         return;
       }
       if (sourceId === 'sectioning:section-box') {
@@ -271,6 +310,7 @@ export function RightToolbar() {
         setOpenFlyout(null);
         adapter.setSectioningActive?.(true);
         adapter.setActiveSectioningTool?.('section-box');
+        if (!adapter.isSectioningViewModeActive?.()) adapter.enterSectioningViewMode?.();
         return;
       }
       if (sourceId === 'sectioning:section-plane') {
@@ -280,6 +320,7 @@ export function RightToolbar() {
         setOpenFlyout(null);
         adapter.setSectioningActive?.(true);
         adapter.setActiveSectioningTool?.('section-plane');
+        if (!adapter.isSectioningViewModeActive?.()) adapter.enterSectioningViewMode?.();
         return;
       }
       if (sourceId === 'sectioning:section-cut') {
@@ -289,6 +330,7 @@ export function RightToolbar() {
         setOpenFlyout(null);
         adapter.setSectioningActive?.(true);
         adapter.setActiveSectioningTool?.('section-cut');
+        if (!adapter.isSectioningViewModeActive?.()) adapter.enterSectioningViewMode?.();
         return;
       }
       if (sourceId === 'flyout:render') {
@@ -437,8 +479,8 @@ export function RightToolbar() {
     </>
   );
 
-  const enterMarkup = (viewId?: string) => {
-    adapter.enterMarkupMode?.(viewId);
+  const enterMarkup = (viewId?: string, existingMarkups?: unknown[]) => {
+    adapter.enterMarkupMode?.(viewId, existingMarkups);
     setActiveMode('markup');
     setActiveMarkupTool('freehand');
     adapter.setMarkupTool?.('freehand');
@@ -478,21 +520,19 @@ export function RightToolbar() {
       onClick: () => {
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-box');
-        setActiveSectionBoxSubTool('move');
+        setActiveSectionTool('section-plane');
         setOpenFlyout(null);
-        adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-box');
-        adapter.setSectionBoxSubTool?.('move');
+        adapter.enterSectioningViewMode?.();
+        adapter.setActiveSectioningTool?.('section-plane');
+        window.dispatchEvent(new CustomEvent('mv:open-panel', { detail: { panelId: 'views', label: 'Viewpoints' } }));
       },
       enterMode: () => {
         exitMarkupIfActive();
         setActiveMode('sectioning');
-        setActiveSectionTool('section-box');
-        setActiveSectionBoxSubTool('move');
-        adapter.setSectioningActive?.(true);
-        adapter.setActiveSectioningTool?.('section-box');
-        adapter.setSectionBoxSubTool?.('move');
+        setActiveSectionTool('section-plane');
+        adapter.enterSectioningViewMode?.();
+        adapter.setActiveSectioningTool?.('section-plane');
+        window.dispatchEvent(new CustomEvent('mv:open-panel', { detail: { panelId: 'views', label: 'Viewpoints' } }));
       },
     },
   ];
@@ -746,9 +786,8 @@ export function RightToolbar() {
                   setActiveMarkupTool(null);
                 }
                 if (activeMode === 'sectioning') {
-                  adapter.commitActiveCut?.();
-                  adapter.setActiveSectioningTool?.(null);
-                  adapter.setSectioningActive?.(false);
+                  // exitSectioningViewMode(true) commits drafts and deactivates the tool.
+                  adapter.exitSectioningViewMode?.(true);
                 }
                 setActiveMode('default');
                 setIsOverflowOpen(false);
@@ -765,20 +804,18 @@ export function RightToolbar() {
                 </div>
               )}
             </button>
-            {/* Clear and exit */}
+            {/* Exit and don't save */}
             <button
               type="button"
-              aria-label="Clear and exit"
+              aria-label="Exit and don't save"
               onClick={() => {
                 if (activeMode === 'markup' || activeMode === 'create') {
                   adapter.exitMarkupMode?.(false);
                   setActiveMarkupTool(null);
                 }
                 if (activeMode === 'sectioning') {
-                  // Clear all section planes/box before deactivating
-                  adapter.clearSectioningPlanes?.();
-                  adapter.setActiveSectioningTool?.(null);
-                  adapter.setSectioningActive?.(false);
+                  // exitSectioningViewMode(false) restores pre-mode state and deactivates.
+                  adapter.exitSectioningViewMode?.(false);
                 }
                 setActiveMode('default');
                 setIsOverflowOpen(false);
@@ -795,18 +832,34 @@ export function RightToolbar() {
               {showTooltips && (
                 <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left" aria-hidden="true">
                   <span className="mv-toolbar-tooltip-shortcut">Esc</span>
-                  <span className="mv-toolbar-tooltip-label">Clear and exit</span>
+                  <span className="mv-toolbar-tooltip-label">Exit and don't save</span>
                 </div>
               )}
             </button>
+          </RightToolbarGroup>
+
+          {/* Mode refresh — clears the current mode's state */}
+          <RightToolbarGroup>
+            <RightToolbarButton
+              src={resetIcon}
+              label={activeMode === 'sectioning' ? 'Clear sectioning' : 'Clear markup'}
+              showTooltip={showTooltips}
+              onClick={() => {
+                if (activeMode === 'sectioning') {
+                  adapter.clearActionCategory?.('sectioning');
+                } else if (activeMode === 'markup' || activeMode === 'create') {
+                  adapter.clearActionCategory?.('markups');
+                }
+              }}
+            />
           </RightToolbarGroup>
 
           {/* Mode-specific tools — only this group changes per mode */}
           {activeMode === 'sectioning' ? (
             <>
               <RightToolbarGroup>
-                <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-box'} onClick={() => { setActiveSectionTool('section-box'); setActiveSectionBoxSubTool('move'); adapter.setActiveSectioningTool?.('section-box'); adapter.setSectionBoxSubTool?.('move'); }} />
                 <RightToolbarButton src={sectionPlaneIcon} label="Section plane" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-plane'} onClick={() => { setActiveSectionTool('section-plane'); adapter.setActiveSectioningTool?.('section-plane'); }} />
+                <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-box'} onClick={() => { setActiveSectionTool('section-box'); setActiveSectionBoxSubTool('move'); adapter.setActiveSectioningTool?.('section-box'); adapter.setSectionBoxSubTool?.('move'); }} />
                 <RightToolbarButton src={sectionCutIcon} label="Section cut" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-cut'} onClick={() => { setActiveSectionTool('section-cut'); adapter.setActiveSectioningTool?.('section-cut'); }} />
               </RightToolbarGroup>
 

@@ -50,7 +50,7 @@ After every `git push` to main, send a message to `#bim-designers` (channel ID: 
 
 - Get the author and subject from `git log -1 --pretty=format:"%an%n%s%n%b"`
 - Get the SHA from `git rev-parse HEAD`
-- The repo URL is `https://github.com/taylorklundt/BIM_design_viewer_prototype`
+- The repo URL is `https://github.com/viewer-collab-sandbox/bim-viewer-prototype`
 - Write the one-sentence recap yourself from the commit body — do not paste the full body
 
 ## Commands

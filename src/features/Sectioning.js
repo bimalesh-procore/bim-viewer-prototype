@@ -2882,12 +2882,14 @@ export class Sectioning {
         }, 120);
       }
     };
-    document.addEventListener('mousemove', onDocMouseMove);
+    // Use capture so this fires even when the cursor is over the `el` hit area,
+    // whose own mousemove listener calls e.stopPropagation() (blocking bubble-phase).
+    document.addEventListener('mousemove', onDocMouseMove, { capture: true });
 
     // Store cleanup refs on el for when this gizmo is destroyed
     el._overflowCleanup = () => {
       document.removeEventListener('click', onDocClick);
-      document.removeEventListener('mousemove', onDocMouseMove);
+      document.removeEventListener('mousemove', onDocMouseMove, { capture: true });
       if (menu.parentNode) menu.parentNode.removeChild(menu);
       clearTimeout(hideTimeout);
     };
@@ -2923,6 +2925,8 @@ export class Sectioning {
       e.stopPropagation();
       e.preventDefault();
       this._hoveringPlaneGizmo = true;
+      // Hide immediately — overflow button should never be visible while dragging
+      overflowBtn.style.display = 'none';
 
       const downX = e.clientX, downY = e.clientY;
       let didDrag = false;
@@ -2945,9 +2949,9 @@ export class Sectioning {
         const dx = moveEvent.clientX - downX;
         const dy = moveEvent.clientY - downY;
         if (Math.sqrt(dx * dx + dy * dy) > 4) didDrag = true;
-        // Drive drag directly from the window capture handler so it works
-        // regardless of which DOM element (canvas or overlay) receives mousemove.
-        if (this.isDragging) this.onMouseMove(moveEvent);
+        // No need to call this.onMouseMove here — the global window capture listener
+        // (this.boundOnMouseMove, line 390) already fires for every mousemove at
+        // window level and drives the drag. Calling it again here caused double-processing.
       };
 
       const onGizmoMouseUp = (upEvent) => {
@@ -3471,7 +3475,8 @@ export class Sectioning {
       if (data.overflowBtn) {
         data.overflowBtn.style.left = `${x + 44}px`;
         data.overflowBtn.style.top  = `${y}px`;
-        if (!visible) data.overflowBtn.style.display = 'none';
+        // Hide when occluded/off-screen OR while any plane drag is active
+        if (!visible || this.isDragging) data.overflowBtn.style.display = 'none';
       }
 
       // Rotate the DOM arrows to point along the plane normal in screen space

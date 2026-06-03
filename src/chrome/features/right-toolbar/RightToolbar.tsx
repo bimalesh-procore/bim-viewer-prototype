@@ -21,6 +21,7 @@ import sectionBoxDragFaceIcon from '../../assets/icons/right-toolbar/section-box
 import sectionBoxMoveIcon from '../../assets/icons/right-toolbar/section-box-move.png';
 import sectionBoxRotateIcon from '../../assets/icons/right-toolbar/section-box-rotate.svg';
 import resetIcon from '../../assets/icons/right-toolbar/reset.svg';
+import settingsIcon from '../../assets/icons/right-toolbar/settings.svg';
 import saveIcon from '../../assets/icons/right-toolbar/save.svg';
 import undoIcon from '../../assets/icons/right-toolbar/undo.svg';
 import redoIcon from '../../assets/icons/right-toolbar/redo.svg';
@@ -54,7 +55,8 @@ export function RightToolbar() {
   const [showFlyoutTooltips, setShowFlyoutTooltips] = useState(false);
   const [activeMode, setActiveMode] = useState<ModeId>('default');
   const [isOverflowOpen, setIsOverflowOpen] = useState(false);
-  const [openFlyout, setOpenFlyout] = useState<'measure' | 'create' | 'sectioning' | 'render' | 'history' | null>(null);
+  const [openFlyout, setOpenFlyout] = useState<'measure' | 'create' | 'sectioning' | 'render' | 'history' | 'measure-settings' | null>(null);
+  const [laserSettings, setLaserSettings] = useState({ lockRotation: true, threePointLaser: true, followClippingPlane: true });
   const [activeMeasureTool, setActiveMeasureTool] = useState<'dimensions' | 'point-to-point' | 'laser' | 'manhole' | 'coordinates' | null>(null);
   const [activeSectionTool, setActiveSectionTool] = useState<'section-box' | 'section-plane' | 'section-cut' | null>(null);
   const [activeSectionBoxSubTool, setActiveSectionBoxSubTool] = useState<'drag-face' | 'move' | 'rotate'>('move');
@@ -714,7 +716,7 @@ export function RightToolbar() {
       <RightToolbarGroup>
         <div className="relative">
           <RightToolbarButton
-            src={resetIcon}
+            src={settingsIcon}
             label="Refresh"
             shortcut="Cmd R"
             showTooltip={lowerDefaultTooltips && openFlyout !== 'history'}
@@ -838,21 +840,57 @@ export function RightToolbar() {
             </button>
           </RightToolbarGroup>
 
-          {/* Mode refresh — clears the current mode's state */}
-          <RightToolbarGroup>
-            <RightToolbarButton
-              src={resetIcon}
-              label={activeMode === 'sectioning' ? 'Clear sectioning' : 'Clear markup'}
-              showTooltip={showTooltips}
-              onClick={() => {
-                if (activeMode === 'sectioning') {
-                  adapter.clearActionCategory?.('sectioning');
-                } else if (activeMode === 'markup' || activeMode === 'create') {
-                  adapter.clearActionCategory?.('markups');
-                }
-              }}
-            />
-          </RightToolbarGroup>
+          {/* Measure settings — only shown in measure mode */}
+          {activeMode === 'measure' && (
+            <RightToolbarGroup>
+              <div className="relative">
+                <div className={activeMeasureTool !== 'laser' ? 'opacity-30 pointer-events-none' : ''}>
+                  <RightToolbarButton
+                    src={settingsIcon}
+                    label={activeMeasureTool === 'laser' ? 'Laser settings' : 'Settings'}
+                    showTooltip={showTooltips && openFlyout !== 'measure-settings'}
+                    hasFlyout
+                    isActive={openFlyout === 'measure-settings'}
+                    onClick={() => setOpenFlyout(prev => prev === 'measure-settings' ? null : 'measure-settings')}
+                  />
+                </div>
+                {openFlyout === 'measure-settings' && (
+                  <div
+                    className="absolute right-full top-0 mr-2 z-[230] w-max"
+                    onMouseEnter={(e) => { e.stopPropagation(); setShowTooltips(false); }}
+                    onMouseLeave={() => setShowTooltips(true)}
+                  >
+                    <div className="bg-white rounded-lg shadow-[0_4px_12px_0_rgba(0,0,0,0.2)] flex flex-col w-[220px] p-3 gap-3">
+                      {[
+                        { label: 'Lock Rotation', key: 'lockRotation' as const },
+                        { label: '3 point laser', key: 'threePointLaser' as const },
+                        { label: 'Follow clipping plane', key: 'followClippingPlane' as const },
+                      ].map(({ label, key }) => (
+                        <div key={key} className="flex items-center justify-between gap-4">
+                          <span className="text-[13px] leading-[18px] text-[#232729]">{label}</span>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={laserSettings[key]}
+                            onClick={() => setLaserSettings(s => ({ ...s, [key]: !s[key] }))}
+                            className={`relative inline-flex h-[22px] w-[38px] shrink-0 rounded-full transition-colors duration-200 focus:outline-none ${
+                              laserSettings[key] ? 'bg-[#0D6EFD]' : 'bg-[#CDD1D4]'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-[18px] w-[18px] rounded-full bg-white shadow transition-transform duration-200 mt-[2px] ${
+                                laserSettings[key] ? 'translate-x-[18px]' : 'translate-x-[2px]'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </RightToolbarGroup>
+          )}
 
           {/* Mode-specific tools — only this group changes per mode */}
           {activeMode === 'sectioning' ? (

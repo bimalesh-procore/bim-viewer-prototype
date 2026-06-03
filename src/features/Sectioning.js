@@ -1019,10 +1019,10 @@ export class Sectioning {
     this._boxSubTool = tool;
     this._setBoxHoveredFace(-1);
 
-    // drag-face: show gizmo rings, hide the translucent box mesh (rings are enough).
+    // drag-face: show gizmo rings + box mesh (box updates as faces are dragged).
     // move/rotate: hide rings (don't intercept clicks), show the box mesh for dragging.
     const showRings      = tool === 'drag-face';
-    const showBox        = tool !== 'drag-face';
+    const showBox        = true;
     const showRotateGizmos = tool === 'rotate';
 
     if (this.sectionBoxPlaneIds) {

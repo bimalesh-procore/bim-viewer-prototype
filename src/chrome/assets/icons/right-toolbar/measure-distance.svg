@@ -1,3 +1,9 @@
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M6 22L2 18L3.6 16.4L5.2 18L6 17.2L4.4 15.6L6 14L6.8 14.8L7.6 14L6.8 13.2L8.4 11.6L10 13.2L10.8 12.4L9.2 10.8L10.8 9.2L11.6 10L12.4 9.2L11.6 8.4L13.2 6.8L14.8 8.4L15.6 7.6L14 6L15.6 4.4L16.4 5.2L17.2 4.4L16.4 3.6L18 2L22 6L6 22Z" fill="#232729"/>
+<rect x="8" y="8" width="15" height="15" fill="#232729"/>
+<rect x="18" y="3" width="2" height="8" transform="rotate(90 18 3)" fill="#232729"/>
+<path d="M18 7L18 1L23 4L18 7Z" fill="#232729"/>
+<rect x="3" y="13" width="2" height="8" fill="#232729"/>
+<path d="M7 13H1L4 8L7 13Z" fill="#232729"/>
+<path d="M7 18H1L4 23L7 18Z" fill="#232729"/>
+<path d="M13 7L13 1L8 4L13 7Z" fill="#232729"/>
 </svg>

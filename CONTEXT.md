@@ -89,6 +89,10 @@ src/chrome/
 │   │                          dev-only writes via scripts/vite-plugin-viewpoints-writer.mjs.
 │   │                          ViewpointsContext provides live customViews state + CRUD.
 │   │                          See CLAUDE.md §4e.
+│   ├── dock-manager/        ← DockedPanel host + panelContent.tsx defining all panel contents:
+│   │                          Viewpoints panel, Sheets panel (two-line tree rows — building/
+│   │                          level folder headers + sheet number/name leaf rows), Properties,
+│   │                          and future panels. See CLAUDE.md §4f for the docked-panel pattern.
 │   ├── left-toolbar/        ← Object Tree, Search Sets, Viewpoints, Items, Properties, Deviation
 │   ├── right-toolbar/       ← View group, Tools group, History group
 │   ├── view-cube/           ← 3D orientation indicator
@@ -99,13 +103,19 @@ src/chrome/
 │   │                          isXRayActive, renderToggles — single source of
 │   │                          truth so right & bottom toolbars stay in sync
 │   ├── viewer-canvas/       ← Mount point for 3D engine (callback ref)
+│   ├── model-manager/       ← Landing page shown when no ?model= param is present. Static
+│   │                          Procore header + empty-state UI with "Create Project Model" CTA
+│   │                          (navigates to ?model=condos). Viewer Close button strips params.
 │   └── viewer-adapter/      ← Interface, mock, real adapter, React Context
 ├── shared/                  ← Shared UI primitives: TreeNode (extensible tree row with opt-in
-│                              actions/rename/DnD), DropdownMenu + DropdownMenuItem (portaled
+│                              actions/rename/DnD/subtitle/hideFolderIcon/labelBold props —
+│                              see CLAUDE.md §4f), DropdownMenu + DropdownMenuItem (portaled
 │                              context menus, right-aligned to anchor, outside-click dismiss)
 ├── assets/icons/            ← SVGs for all toolbars and header
 ├── index.css                ← Tailwind directives + dark-theme CSS overrides
-└── main.tsx                 ← Entry point (loads ChromeApp)
+└── main.tsx                 ← Entry point: mounts ModelManagerPage when ?model= is absent,
+                               otherwise mounts ChromeApp. Routing is URL-based — no router
+                               library. See CLAUDE.md §4a.
 ```
 
 See [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) for the tablet/phone variant workstream status and next steps. See [CLAUDE.md §3a–3d](./CLAUDE.md) for the variant file convention, device frame, viewer-container remount migration, and URL-param preservation rules.
@@ -147,9 +157,8 @@ See [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) for the tablet/phone variant wo
 | S / ↓ | Move backward (camera-relative) |
 | A / ← | Strafe left (camera-relative) |
 | D / → | Strafe right (camera-relative) |
-| E / Space | Move up (camera-relative) |
-| Q / Shift | Move down (camera-relative) |
-| Escape | Switch to Default (look) mode |
+| E | Move up (camera-relative) |
+| Q | Move down (camera-relative) |
 
 Movement is **camera-relative** — forward is always along the camera's look direction, not projected onto the world XZ plane.
 
@@ -192,7 +201,11 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 ### Wired and working
 - **Reset** → `viewer.resetView()`. The right-toolbar reset button shows a **ModificationPill** badge — a small circle displaying the total count of active modifications (sectioning + hidden objects + isolate + markups + measurements). When any count increases the pill expands into an orange label (e.g., "Sectioning") for 3 seconds before collapsing back to the count circle. The label re-fires at the moment you exit sectioning mode (when the pill was hidden), so Section Plane/Cut actions always get their label even though they're placed inside the sectioning UI. When all modifications are cleared the pill plays a reverse pop-out animation (`mv-badge-pop-out` CSS keyframe, `cubic-bezier(0.34,1.56,0.64,1)`) before unmounting. Pill position: `-translate-y-[135%] translate-x-[15%]` relative to the reset button.
 - **Object Tree** → `viewer.treePanel.toggle()`. Each leaf node in the Object Tree panel shows a **hide icon button** on hover. Clicking it calls `adapter.hideObjects([expressID])`. Hidden objects show an always-visible **show icon button** instead. Clicking it calls `adapter.showObjects([expressID])`. The panel subscribes to `adapter.subscribeHiddenObjects` to keep `hiddenIds` in sync with the engine. New adapter methods: `showObjects`, `subscribeHiddenObjects` (backed by `visibility.on('visibility-change', ...)` + `visibility.off`). Icon assets: `src/chrome/assets/icons/panel/hide.svg`, `src/chrome/assets/icons/panel/show.svg`.
-- **Sectioning** → `viewer.sectioning.clearClipPlanes()`
+- **Sectioning** — three sub-tools (right toolbar):
+  - **Section Plane** — click an object face to place a clip plane; drag the gizmo to reposition.
+  - **Section Cut** — drag a full cross-section slice through the model.
+  - **Section Box** — surrounds selected geometry with 6 clip planes; inner sub-modes: drag-face / move / rotate. Default box size is 20% of cam-to-center distance, clamped 8%–30% of scene extent. Re-entering section-box mode reuses the existing box (`hasSectionBox` guard — no box recreation). Right-click "Isolate in section box" fits the box around the clicked object with 25% padding and activates move mode automatically.
+  - **Gizmo overlay vs clip planes:** `setActiveTool(null)` (called by `setViewpointState` on viewpoint restore) hides the wireframe overlay and gizmos without removing clip planes. `clearSectioningPlanes()` actually removes the planes from the renderer — called by "Exit and don't save" only. Do not conflate these two.
 - **Bottom toolbar Home button** → restores the saved home view (camera + sectioning + visibility) with a 550ms ease-in-out animation; falls back to `zoomToFit()` if no home view is saved
 - **Settings → Update Home View** → saves current camera + isOrthographic + hiddenObjects + sectioning to `public/viewpoints.json`. Dev-write only; prod shows an error toast. See CLAUDE.md §4e.
 - **Saved home auto-restore on model load** → seeded at viewer-ready time (before model parse) so the camera starts at the home pose with no post-load jump. Sectioning is also applied at seed time (clip planes are renderer-global and clip streaming meshes as they appear). Visibility is applied at load-complete (needs element IDs). Camera is **not** snapped back if the user navigated during the load
@@ -218,6 +231,7 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Selection — hover transparency removed** → `applyHover()` body commented out; re-enable by uncommenting the block
 - **Right-click context menu — objects only** → `openContextMenuAtEvent` no longer fires on empty-space clicks; context menu only appears when the raycast hits an object. Right-clicking an unselected object also selects it (visual highlight), so the context menu always acts on the highlighted element. Right-clicking an already-selected object keeps the selection unchanged.
 - **Section plane/cut immediate drag** → clicking an object to create a section plane or section cut immediately begins dragging it in the same mousedown–move–mouseup gesture; camera is fully suspended for the duration via `navigation.setControlsEnabled(false)` + `_externalDragActive` guard
+- **Section plane/cut gizmo overflow button** → the white circle button that appears to the right of a plane gizmo on hover. Show/hide is driven by `onDocMouseMove` in `_createPlaneGizmo`. The listener must be registered in **capture phase** (`document.addEventListener('mousemove', …, { capture: true })`); using bubble phase means `el.stopPropagation()` (called in the gizmo's own mousemove handler) silently blocks the listener for section-cut gizmos whose rotation angle is axis-aligned (no bounding-rect corner gap). The render loop hides the button via `if (!visible || this.isDragging) overflowBtn.style.display = 'none'` to suppress it during drag and when the gizmo centroid is occluded.
 - **Form-factor selector** → settings cog in the header opens a dropdown (Desktop / Tablet / Phone). URL updates via `history.replaceState` to `?form=…`; clean URLs omit the param for desktop. Refresh respects the URL; bare URL defaults to desktop. See [CLAUDE.md §3a](./CLAUDE.md) and [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md)
 - **Device frame** (tablet/phone) → centered, bezelled device shell with rotation button outside top-right. Tablet/phone variant trees are wrapped in `DeviceFrame` from `chrome-layout/index.tsx`. Bezel/notch/home indicator live outside the chrome's scale transform so they stay visually consistent across orientation and viewport size
 - **Orientation toggle** → rotate button on tablet/phone swaps `?orient=portrait`/`?orient=landscape`. Tablet default = landscape; phone default = portrait. URL omits `?orient=` when it matches the default

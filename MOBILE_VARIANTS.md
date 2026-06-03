@@ -20,7 +20,7 @@ Status and next steps for the tablet / phone form-factor work. Architectural rul
 
 ### Known caveats
 
-- **WelcomeOverlay was removed** with the Upload button. Models are added by dropping `.ifc` files into `public/models/`, running `npm run convert`, and registering them in the `MODELS` array in [`ChromeApp.tsx`](src/chrome/app/ChromeApp.tsx).
+- **WelcomeOverlay (historical, pre-chrome):** An earlier pre-chrome prototype had a "WelcomeOverlay" with an Upload button; both were removed before the React chrome layer was built. There is no upload flow in the current app. Models are added by dropping `.ifc` files into `public/models/`, running `npm run convert`, and registering them in the `MODELS` array in [`ChromeApp.tsx`](src/chrome/app/ChromeApp.tsx).
 - **Touch input is not wired.** Pinch zoom and tap-hold-drag rely on whatever the browser's default Pointer Events handling produces — fine for a prototype demo on a laptop, not tuned for real devices yet.
 - **No active form-factor-specific tests** exist. Existing Playwright tests use `demo/old.html`, which doesn't load the chrome at all.
 

@@ -35,6 +35,16 @@ export function ViewerSettingsProvider({ children }: { children: React.ReactNode
     setRenderToggles((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  const setXRay = useCallback((active: boolean) => {
+    const current = adapter.isXRayActive?.() ?? false;
+    if (active !== current) adapter.toggleXRay?.();
+    setIsXRayActive(active);
+  }, [adapter]);
+
+  const setAllRenderToggles = useCallback((toggles: RenderToggles) => {
+    setRenderToggles(toggles);
+  }, []);
+
   const value = useMemo<ViewerSettings>(
     () => ({
       isOrthographic,
@@ -43,8 +53,10 @@ export function ViewerSettingsProvider({ children }: { children: React.ReactNode
       toggleOrthographic,
       toggleXRay,
       setRenderToggle,
+      setXRay,
+      setRenderToggles: setAllRenderToggles,
     }),
-    [isOrthographic, isXRayActive, renderToggles, toggleOrthographic, toggleXRay, setRenderToggle],
+    [isOrthographic, isXRayActive, renderToggles, toggleOrthographic, toggleXRay, setRenderToggle, setXRay, setAllRenderToggles],
   );
 
   return (

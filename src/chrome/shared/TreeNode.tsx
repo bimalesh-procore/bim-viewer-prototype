@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Check, Folder } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check } from 'lucide-react';
+import folderIcon from '../assets/icons/shared/folder.svg';
 
 export interface TreeNodeProps {
   id: string;
@@ -50,6 +51,8 @@ export interface TreeNodeProps {
   dropIndicator?: 'before' | 'after';
   isDropTarget?: boolean;
   isDragging?: boolean;
+  /** When true, indicates unsaved changes — darker gray bg, bold black text. */
+  isDirty?: boolean;
 }
 
 export function TreeNode({
@@ -89,9 +92,10 @@ export function TreeNode({
   dropIndicator,
   isDropTarget = false,
   isDragging = false,
+  isDirty = false,
 }: TreeNodeProps) {
   const isFolder = type === 'folder';
-  const paddingLeft = 16 + depth * 20 + (!isFolder && depth > 0 ? 8 : 0);
+  const paddingLeft = 16 + depth * 28;
   const checkboxState = indeterminate ? 'indeterminate' : checked ? 'checked' : 'unchecked';
   const [hovered, setHovered] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -127,7 +131,7 @@ export function TreeNode({
     );
   }
 
-  const actionsVisible = !showActionsOnHover || hovered || selected;
+  const actionsVisible = !showActionsOnHover || hovered || selected || isDirty;
 
   return (
     <>
@@ -146,9 +150,11 @@ export function TreeNode({
             paddingLeft, paddingRight: 12, paddingTop: 8, paddingBottom: 8,
             backgroundColor: selected || isDropTarget
               ? '#EDF2FC'
-              : hovered
-                ? (hoverBg ?? 'rgba(0,0,0,0.03)')
-                : undefined,
+              : isDirty
+                ? hovered ? '#DCDDE0' : '#E8E9EB'
+                : hovered
+                  ? (hoverBg ?? 'rgba(0,0,0,0.03)')
+                  : undefined,
           }}
           draggable={draggable}
           onClick={() => onClick?.(id)}
@@ -201,19 +207,19 @@ export function TreeNode({
             </button>
           )}
 
-          {isFolder && !hideFolderIcon && <Folder className="shrink-0" style={{ color: '#6A767C' }} />}
+          {isFolder && !hideFolderIcon && <img src={folderIcon} alt="" width={24} height={24} className="shrink-0" />}
 
           {loading ? (
             <span className="flex-1 ml-1 h-3.5 rounded bg-gray-200 mv-skeleton-pulse" style={{ maxWidth: 120 }} />
           ) : subtitle ? (
             <div className="flex-1 min-w-0 ml-1">
-              <p className={`text-sm truncate ${selected || labelBold ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : '#374151' }}>
+              <p className={`text-sm truncate ${selected || labelBold || isDirty ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : isDirty ? '#111827' : '#374151' }}>
                 {label}
               </p>
               <p className="text-xs truncate" style={{ color: '#6A767C' }}>{subtitle}</p>
             </div>
           ) : (
-            <span className={`truncate flex-1 ml-1 ${labelBold ? 'text-base' : 'text-sm'} ${selected || labelBold ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : '#374151' }}>
+            <span className={`truncate flex-1 ml-1 ${labelBold ? 'text-base' : 'text-sm'} ${selected || labelBold || isDirty ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : isDirty ? '#111827' : '#374151' }}>
               {label}
             </span>
           )}

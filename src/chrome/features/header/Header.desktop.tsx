@@ -224,7 +224,7 @@ export function HeaderDesktop({ models = [], activeModelId = null, onSelectModel
           <HeaderButton src={infoIcon} label="Info" iconSize={24} />
         </div>
         <div className="w-px h-12 bg-[#e3e6e8]" />
-        <HeaderButton src={closeIcon} label="Close" iconSize={24} />
+        <HeaderButton src={closeIcon} label="Close" iconSize={24} onClick={() => { window.location.href = window.location.pathname; }} />
       </div>
       {/* Settings window is a free-floating dialog, not anchored to the cog,
           so render it as a sibling of the header. */}

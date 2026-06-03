@@ -98,6 +98,7 @@ export class MarkupTool {
     this._onPointerUp = this._handlePointerUp.bind(this);
     this._onKeyDown = this._handleKeyDown.bind(this);
     this._onResize = this._handleResize.bind(this);
+    this._resizeObserver = null;
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -544,7 +545,15 @@ export class MarkupTool {
     this.canvas.addEventListener('pointermove', this._onPointerMove);
     this.canvas.addEventListener('pointerup', this._onPointerUp);
     window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('resize', this._onResize);
+    // ResizeObserver catches layout-driven size changes (e.g. panels opening/closing)
+    // that window 'resize' misses because the browser window itself didn't change size.
+    const parent = this.canvas.parentElement;
+    if (parent && typeof ResizeObserver !== 'undefined') {
+      this._resizeObserver = new ResizeObserver(this._onResize);
+      this._resizeObserver.observe(parent);
+    } else {
+      window.addEventListener('resize', this._onResize);
+    }
   }
 
   _detachListeners() {
@@ -553,7 +562,12 @@ export class MarkupTool {
     this.canvas.removeEventListener('pointermove', this._onPointerMove);
     this.canvas.removeEventListener('pointerup', this._onPointerUp);
     window.removeEventListener('keydown', this._onKeyDown);
-    window.removeEventListener('resize', this._onResize);
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect();
+      this._resizeObserver = null;
+    } else {
+      window.removeEventListener('resize', this._onResize);
+    }
   }
 
   _handleResize() {

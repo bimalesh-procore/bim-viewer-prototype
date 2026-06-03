@@ -50,9 +50,12 @@ Before running `gh pr merge` (or any equivalent merge-to-main command):
 | `scripts/vite-plugin-viewpoints-writer.mjs` | `evals/tests/regression.spec.js` (dev-only middleware; integration coverage via the viewpoints round-trip) |
 | `public/viewpoints.json` | None — data file. Sanity check that JSON parses. |
 | `src/features/Navigation.js` (the `getEffectiveCamera` addition) | `evals/tests/navigation.spec.js` (covered by existing navigation suite) |
-| `src/features/Sectioning.js` (the `serializeState`/`restoreState` additions) | `evals/tests/regression.spec.js` (no dedicated sectioning suite yet) |
+| `src/features/Sectioning.js` | `evals/tests/regression.spec.js` (no dedicated sectioning suite yet; covers section planes, section cut, section box sub-modes, isolate-in-section-box, `serializeState`/`restoreState`) |
 | `src/chrome/app/ChromeApp.tsx` | `evals/tests/chrome-compatibility.spec.js` + `evals/tests/chrome-ifc-loading.spec.js` (viewer container migration logic lives here — see [CLAUDE.md §3c](./CLAUDE.md)) |
 | `src/chrome/` (any other) | `evals/tests/chrome-ifc-loading.spec.js` + `evals/tests/chrome-compatibility.spec.js` |
+| `src/chrome/shared/TreeNode.tsx` | `evals/tests/regression.spec.js` + `evals/tests/chrome-compatibility.spec.js` (shared by all docked panels — Viewpoints, Sheets, Object Tree) |
+| `src/chrome/features/model-manager/` | `evals/tests/regression.spec.js` (no dedicated suite yet — routing-only page, no engine integration) |
+| `src/chrome/main.tsx` | `evals/tests/regression.spec.js` + `evals/tests/chrome-compatibility.spec.js` (routing entry point — same cross-cutting concern as `ChromeApp.tsx`) |
 | `src/features/Selection.js` | `evals/tests/selection.spec.js` |
 | `src/features/SearchSets.js` | `evals/tests/search-sets.spec.js` |
 | `src/features/` or `src/services/` (any) | `evals/tests/ifc-loading.spec.js` |

@@ -27,7 +27,9 @@ import type { SearchSet, ViewData, PropertyGroup, ObjectProperty } from '../view
 import { TreeNode } from '../../shared/TreeNode';
 import type { PanelId } from './useDockStore';
 import { useViewpoints } from '../viewpoints';
-import type { Viewpoint } from '../viewpoints';
+import type { Viewpoint, ViewpointFolder } from '../viewpoints';
+import { useViewerSettings } from '../viewer-settings/ViewerSettingsContext';
+import type { RenderToggles } from '../viewer-settings/types';
 import { useToast } from '../toast/ToastContext';
 import searchFieldIcon from '../../assets/icons/panel/searchField.svg';
 import filterButtonIcon from '../../assets/icons/panel/filterButton.svg';
@@ -1039,35 +1041,21 @@ function ViewsToolbar() {
 
 type DragTarget = { id: string; position: 'before' | 'after' | 'inside' };
 
-function reorderItems<T extends { id: string }>(
-  items: T[],
-  dragId: string,
-  targetId: string,
-  position: 'before' | 'after',
-): T[] {
-  const result = [...items];
-  const dragIdx = result.findIndex((i) => i.id === dragId);
-  if (dragIdx === -1) return result;
-  const [dragged] = result.splice(dragIdx, 1);
-  const targetIdx = result.findIndex((i) => i.id === targetId);
-  if (targetIdx === -1) return [...result, dragged];
-  result.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, dragged);
-  return result;
-}
-
+const DEFAULT_RENDER_TOGGLES: RenderToggles = { mesh: true, lines: true, terrain: true, pointCloud: true };
 
 
 function ViewsContent() {
   const adapter = useViewerAdapter();
   const viewpoints = useViewpoints();
   const toast = useToast();
-  const { customViews } = viewpoints;
+  const { customViews, folders } = viewpoints;
+  const { isXRayActive, renderToggles, setXRay, setRenderToggles } = useViewerSettings();
 
   const views = useMemo<ViewData[]>(
     () => customViews.map((vp) => ({
       id: vp.id,
       name: vp.name,
-      folderId: null,
+      folderId: vp.folderId ?? null,
       cameraPosition: vp.cameraPosition,
       cameraTarget: vp.cameraTarget,
       isOrthographic: vp.isOrthographic,
@@ -1078,11 +1066,23 @@ function ViewsContent() {
     [customViews],
   );
 
-  // Local copy drives visual drag-and-drop order; syncs from context on external changes.
+  // Local copies drive visual drag-and-drop order; sync from context on external changes.
   const [localViews, setLocalViews] = useState<ViewData[]>(views);
   useEffect(() => { setLocalViews(views); }, [views]);
+  const [localFolders, setLocalFolders] = useState<ViewpointFolder[]>(folders);
+  useEffect(() => { setLocalFolders(folders); }, [folders]);
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  // Restore selection from adapter if a view-mode session is already active on mount
+  // (e.g. React StrictMode double-invoke, or panel reopened during an active mode).
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(() => {
+    if (adapter.isMarkupModeActive?.()) return adapter.getMarkupViewId?.() ?? null;
+    if (adapter.isSectioningViewModeActive?.()) return adapter.getSectioningViewId?.() ?? null;
+    return null;
+  });
+  // Checkbox state is independent from row selection for viewpoints.
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  // Folders start collapsed.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number; viewId: string } | null>(null);
@@ -1090,20 +1090,350 @@ function ViewsContent() {
   const [createMenuPos, setCreateMenuPos] = useState({ x: 0, y: 0 });
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DragTarget | null>(null);
+  const [isMarkupMode, setIsMarkupMode] = useState(() => adapter.isMarkupModeActive?.() ?? false);
+  const [isSxMode, setIsSxMode] = useState(() => adapter.isSectioningViewModeActive?.() ?? false);
+  const [dirtyViewId, setDirtyViewId] = useState<string | null>(null);
+  /** ID of a view auto-created when entering sectioning view mode with no view selected. */
+  const [autoSxViewId, setAutoSxViewId] = useState<string | null>(
+    () => adapter.getAutoSectioningViewId?.() ?? null,
+  );
   const closeCreateMenu = useCallback(() => setCreateMenuOpen(false), []);
   const closeMoreMenu = useCallback(() => setMoreMenu(null), []);
-  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // Cooldown prevents camera-change during the restore animation from deselecting the row.
-  const restoringUntilRef = useRef<number>(0);
 
-  // ── Camera change → deselect after navigate away ───────────────────────────
+  // ── Folder expand/collapse ─────────────────────────────────────────────────
+  const handleToggleFolder = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  // ── Checkbox handlers ──────────────────────────────────────────────────────
+  const handleViewChecked = useCallback((id: string, checked: boolean) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      checked ? next.add(id) : next.delete(id);
+      return next;
+    });
+  }, []);
+
+  // Recursively collect all descendant view IDs for a folder (across all nesting levels).
+  const getDescendantViewIds = useCallback((folderId: string): string[] => {
+    const directViews = localViews.filter((v) => v.folderId === folderId).map((v) => v.id);
+    const childFolderIds = localFolders.filter((f) => (f.parentFolderId ?? null) === folderId).map((f) => f.id);
+    return [...directViews, ...childFolderIds.flatMap((id) => getDescendantViewIds(id))];
+  }, [localViews, localFolders]);
+
+  const handleFolderChecked = useCallback((folderId: string, checked: boolean) => {
+    const descendantIds = getDescendantViewIds(folderId);
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      descendantIds.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+      return next;
+    });
+  }, [getDescendantViewIds]);
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Cooldown prevents camera-change during the restore animation from marking the row dirty.
+  const restoringUntilRef = useRef<number>(0);
+  // Stable refs for use inside event listeners (avoids stale closures).
+  const customViewsRef = useRef(customViews);
+  useEffect(() => { customViewsRef.current = customViews; }, [customViews]);
+  // Holds freshly-saved markups keyed by viewId. Populated synchronously when
+  // the markup commit fires (before the async server round-trip), so that
+  // clicking back to the view immediately shows the NEW markups instead of the
+  // stale version still in customViews. Cleared per-view after the server save
+  // + refreshCustomViews() confirms the data is durable.
+  const recentMarkupSavesRef = useRef<Map<string, import('../viewer-adapter/types').MarkupData[]>>(new Map());
+  const viewpointsRef = useRef(viewpoints);
+  useEffect(() => { viewpointsRef.current = viewpoints; }, [viewpoints]);
+  const selectedItemIdRef = useRef<string | null>(null);
+  useEffect(() => { selectedItemIdRef.current = selectedItemId; }, [selectedItemId]);
+  const dirtyViewIdRef = useRef<string | null>(null);
+  useEffect(() => { dirtyViewIdRef.current = dirtyViewId; }, [dirtyViewId]);
+  const isMarkupModeRef = useRef(isMarkupMode);
+  useEffect(() => { isMarkupModeRef.current = isMarkupMode; }, [isMarkupMode]);
+  const isSxModeRef = useRef(isSxMode);
+  useEffect(() => { isSxModeRef.current = isSxMode; }, [isSxMode]);
+  const autoSxViewIdRef = useRef<string | null>(null);
+  useEffect(() => { autoSxViewIdRef.current = autoSxViewId; }, [autoSxViewId]);
+  useEffect(() => { adapter.setAutoSectioningViewId?.(autoSxViewId); }, [adapter, autoSxViewId]);
+  /** Guards the async sectioning-mode auto-create similarly. */
+  const autoSxCreateInFlightRef = useRef(false);
+  // Stable refs so the auto-create async body always reads the latest values
+  // without those values appearing in the effect's dependency array (which would
+  // re-trigger the effect as the context updates after the view is added).
+  const isXRayActiveRef = useRef(isXRayActive);
+  useEffect(() => { isXRayActiveRef.current = isXRayActive; }, [isXRayActive]);
+  const renderTogglesRef = useRef(renderToggles);
+  useEffect(() => { renderTogglesRef.current = renderToggles; }, [renderToggles]);
+
+  // ── Camera change → mark row dirty + hide stale markup overlay ───────────
   useEffect(() => {
     const unsub = adapter.subscribeCameraChange?.(() => {
       if (Date.now() < restoringUntilRef.current) return;
-      setSelectedItemId(null);
+      // In markup mode the user cannot orbit — any camera-change is from a
+      // programmatic setViewpointState restore, not a user pan/orbit. Never
+      // dirty the row or hide the overlay during an active markup session.
+      if (adapter.isMarkupModeActive?.()) return;
+      const sid = selectedItemIdRef.current;
+      if (sid) {
+        setDirtyViewId(sid);
+        // Markup is tied to the saved camera angle — hide it once the user
+        // moves away. Clicking the row again restores camera + overlay.
+        adapter.hideMarkupOverlay?.();
+      } else {
+        adapter.hideMarkupOverlay?.();
+      }
     });
     return () => { unsub?.(); };
   }, [adapter]);
+
+  // ── Sectioning change → mark row dirty + hide stale markup overlay ───────
+  // Guarded by restoringUntilRef so that restoring a view with saved sectioning
+  // (or activating the mode itself) doesn't immediately flag the row dirty.
+  useEffect(() => {
+    const unsub = adapter.subscribeSectioningState?.(() => {
+      if (Date.now() < restoringUntilRef.current) return;
+      // In markup mode the user cannot change sectioning — any change comes
+      // from a programmatic setViewpointState restore. Don't dirty the row.
+      if (adapter.isMarkupModeActive?.()) return;
+      const sid = selectedItemIdRef.current;
+      if (sid) {
+        setDirtyViewId(sid);
+        // Hide stale markup overlay only outside of either active session —
+        // inside sectioning view mode the user is intentionally changing the
+        // sectioning while markup may still be valid (markups only clear on
+        // camera movement, not on sectioning changes).
+        if (!adapter.isSectioningViewModeActive?.()) {
+          adapter.hideMarkupOverlay?.();
+        }
+      }
+    });
+    return () => { unsub?.(); };
+  }, [adapter]);
+
+  // ── Visibility change → mark row dirty ───────────────────────────────────
+  // Fires when objects are hidden/shown or "Clear All" is clicked in the flyout.
+  // Guarded by restoringUntilRef so restoring a saved view's hiddenObjects list
+  // doesn't immediately flag the row dirty.
+  useEffect(() => {
+    const unsub = adapter.subscribeVisibilityChange?.(() => {
+      if (Date.now() < restoringUntilRef.current) return;
+      if (adapter.isMarkupModeActive?.()) return;
+      if (adapter.isSectioningViewModeActive?.()) return;
+      const sid = selectedItemIdRef.current;
+      if (sid) setDirtyViewId(sid);
+    });
+    return () => { unsub?.(); };
+  }, [adapter]);
+
+  // ── Markup strokes drawn → mark row dirty ────────────────────────────────
+  // Guard with restoringUntilRef so that the initial loadMarkups() call inside
+  // enterMarkupMode (which fires markups-changed) doesn't immediately dirty the
+  // row before the user has drawn anything.
+  useEffect(() => {
+    const unsub = adapter.subscribeMarkupChange?.(() => {
+      if (Date.now() < restoringUntilRef.current) return;
+      const sid = selectedItemIdRef.current;
+      if (sid) setDirtyViewId(sid);
+    });
+    return () => { unsub?.(); };
+  }, [adapter]);
+
+  // ── Render settings (xray / render toggles) change → mark row dirty ──────
+  // Uses the same restore cooldown to avoid false positives during view restoration.
+  useEffect(() => {
+    if (Date.now() < restoringUntilRef.current) return;
+    const sid = selectedItemIdRef.current;
+    if (sid) setDirtyViewId(sid);
+  }, [isXRayActive, renderToggles]);
+
+  // ── Markup mode active state ─────────────────────────────────────────────
+  useEffect(() => {
+    const unsub = adapter.subscribeMarkupModeActive?.((active) => {
+      setIsMarkupMode(active);
+      isMarkupModeRef.current = active; // keep ref in sync synchronously (useEffect is too late)
+      if (active) {
+        // If the toolbar markup button was clicked (no viewId wired in the adapter)
+        // but a view row is already selected, re-enter markup mode scoped to that
+        // view so the editable canvas loads its existing markups.
+        // getMarkupViewId() returns null when enterMarkupMode was called without a
+        // viewId (toolbar path), as opposed to the pencil-button path which always
+        // passes a viewId.
+        if (!adapter.getMarkupViewId?.() && selectedItemIdRef.current) {
+          const sid = selectedItemIdRef.current;
+          const vp = customViewsRef.current.find((v) => v.id === sid);
+          if (vp) {
+            const freshMarkups = recentMarkupSavesRef.current.get(sid) ?? vp.markups;
+            restoringUntilRef.current = Date.now() + 900;
+            adapter.enterMarkupMode?.(sid, freshMarkups);
+          }
+        }
+        return;
+      }
+      // active === false
+      setDirtyViewId(null);
+    });
+    return () => { unsub?.(); };
+  }, [adapter, viewpoints]);
+
+
+  // ── Markup session commit — called directly by the adapter when saving ──────
+  useEffect(() => {
+    const unsub = adapter.registerMarkupCommitCallback?.((dirty) => {
+      // Synchronously stash the new markups so that any click-back that happens
+      // before the async server round-trip sees the fresh data, not the stale
+      // version still held in customViews.
+      for (const { viewId, markups } of dirty) {
+        recentMarkupSavesRef.current.set(
+          viewId,
+          markups as import('../viewer-adapter/types').MarkupData[],
+        );
+      }
+      // Sequential writes prevent a server-side read-modify-write race: if both
+      // POSTs are in-flight simultaneously the second one reads the pre-first-write
+      // file and overwrites the first view's markups.
+      (async () => {
+        for (const { viewId, markups } of dirty) {
+          const vp = customViewsRef.current.find((v) => v.id === viewId);
+          if (!vp) { recentMarkupSavesRef.current.delete(viewId); continue; }
+          await viewpoints.updateCustomView(viewId, {
+            ...vp,
+            markups: markups as import('../viewer-adapter/types').MarkupData[],
+          });
+          // Server round-trip complete — customViews is now up to date, so
+          // the optimistic cache entry is no longer needed.
+          recentMarkupSavesRef.current.delete(viewId);
+          // Re-show the overlay if this view is still selected.
+          if (selectedItemIdRef.current === viewId && markups.length > 0) {
+            adapter.showMarkupOverlay?.(markups, true);
+          }
+        }
+      })();
+    });
+    return () => { unsub?.(); };
+  }, [adapter, viewpoints]);
+
+  // ── Sectioning view mode active state ────────────────────────────────────
+  useEffect(() => {
+    const unsub = adapter.subscribeSectioningViewModeActive?.((active) => {
+      setIsSxMode(active);
+      isSxModeRef.current = active; // keep ref in sync synchronously (useEffect is too late)
+      if (active) {
+        // Suppress the spurious dirty+hide-overlay triggered by emitSectioningState
+        // being called the moment the mode activates (sectioningActive: false → true).
+        restoringUntilRef.current = Date.now() + 500;
+        // If a view is already selected when the mode activates (e.g. toolbar button
+        // clicked while a view row was active), register it as the current sx view so
+        // that Save correctly drafts and commits it.  The adapter's enterSectioningViewMode
+        // else-branch sets sxViewId without drafting when sxViewId was previously null.
+        // Register the already-selected view directly — do NOT call
+        // enterSectioningViewMode() here because we're currently inside
+        // the sxListeners.forEach() fired by that outer call, and re-entering
+        // it would cause the outer call's post-listener code to draft the view
+        // (with no section box yet) and then reset sxViewId to null.
+        if (selectedItemIdRef.current) {
+          adapter.setSectioningViewId?.(selectedItemIdRef.current);
+        }
+      }
+      if (!active) {
+        setDirtyViewId(null);
+        autoSxCreateInFlightRef.current = false;
+        // Red X path — delete the auto-created view (was never committed).
+        const autoId = autoSxViewIdRef.current;
+        if (autoId) {
+          setAutoSxViewId(null);
+          autoSxViewIdRef.current = null;
+          viewpoints.deleteCustomView(autoId);
+        }
+        // The subscribeSectioningState exit event hides the markup overlay.
+        // Re-show it for the currently-selected view so the user doesn't lose
+        // their markup context on mode exit.
+        const sid = selectedItemIdRef.current;
+        if (sid) {
+          const vp = customViewsRef.current.find((v) => v.id === sid);
+          const freshMarkups = recentMarkupSavesRef.current.get(sid) ?? vp?.markups;
+          if (freshMarkups && freshMarkups.length > 0) {
+            adapter.showMarkupOverlay?.(freshMarkups, true);
+          }
+        }
+      }
+    });
+    return () => { unsub?.(); };
+  }, [adapter, viewpoints]);
+
+  // ── Sectioning view mode: auto-create a view when entered with no selection ─
+  useEffect(() => {
+    if (!isSxMode) {
+      autoSxCreateInFlightRef.current = false;
+      return;
+    }
+    if (selectedItemIdRef.current) return;
+    if (autoSxViewIdRef.current) return;
+    if (autoSxCreateInFlightRef.current) return;
+    autoSxCreateInFlightRef.current = true;
+    (async () => {
+      const state = adapter.getViewpointState?.();
+      if (!state) { autoSxCreateInFlightRef.current = false; return; }
+      const now = Date.now();
+      const viewpoint: Viewpoint = {
+        id: `view-${now}`,
+        name: `View ${customViewsRef.current.length + 1}`,
+        cameraPosition: state.camera.position,
+        cameraTarget: state.camera.target,
+        isOrthographic: state.camera.isOrthographic,
+        hiddenObjects: state.hiddenObjects,
+        sectioning: state.sectioning,
+        markups: [],
+        createdAt: now,
+        isXRayActive: isXRayActiveRef.current,
+        renderToggles: renderTogglesRef.current,
+      };
+      const result = await viewpointsRef.current.addCustomView(viewpoint);
+      if (!result.ok) { autoSxCreateInFlightRef.current = false; return; }
+      adapter.enterSectioningViewMode?.(viewpoint.id);
+      autoSxViewIdRef.current = viewpoint.id;
+      setAutoSxViewId(viewpoint.id);
+      setSelectedItemId(viewpoint.id);
+      restoringUntilRef.current = Date.now() + 700;
+    })();
+  }, [isSxMode, adapter]);
+
+  // ── Sectioning session commit ────────────────────────────────────────────
+  useEffect(() => {
+    const unsub = adapter.registerSectioningViewCommitCallback?.((dirty) => {
+      const autoId = autoSxViewIdRef.current;
+      (async () => {
+        for (const { viewId, camera, sectioning } of dirty) {
+          const vp = customViewsRef.current.find((v) => v.id === viewId);
+          if (!vp) continue;
+          await viewpointsRef.current.updateCustomView(viewId, {
+            ...vp,
+            cameraPosition: camera.position,
+            cameraTarget: camera.target,
+            isOrthographic: camera.isOrthographic,
+            sectioning: sectioning ?? null,
+            markups: vp.markups ?? [],
+          });
+          // exitSectioningViewMode clears the section box from the renderer even
+          // on the save path. Re-apply the saved state immediately so the user
+          // sees their sectioning without having to click off and back to the view.
+          if (selectedItemIdRef.current === viewId) {
+            adapter.setViewpointState?.(
+              { camera, hiddenObjects: vp.hiddenObjects, sectioning: sectioning ?? null },
+              { animate: false },
+            );
+          }
+        }
+        if (autoId) {
+          setAutoSxViewId(null);
+          autoSxViewIdRef.current = null;
+        }
+      })();
+    });
+    return () => { unsub?.(); };
+  }, [adapter, viewpoints]);
 
   // ── Create viewpoint (triggered by orange + in panel header) ──────────────
   const handleSaveView = useCallback(async () => {
@@ -1123,6 +1453,8 @@ function ViewsContent() {
       sectioning: state.sectioning,
       markups: [],
       createdAt: now,
+      isXRayActive,
+      renderToggles,
     };
     const result = await viewpoints.addCustomView(viewpoint);
     if (result.ok) {
@@ -1132,7 +1464,7 @@ function ViewsContent() {
     } else {
       toast.show({ kind: 'error', message: 'Failed to save view. Try again.' });
     }
-  }, [adapter, customViews, viewpoints, toast]);
+  }, [adapter, customViews, viewpoints, toast, isXRayActive, renderToggles]);
 
   useEffect(() => {
     const handler = () => {
@@ -1154,12 +1486,89 @@ function ViewsContent() {
     clickTimerRef.current = setTimeout(() => {
       const vp = customViews.find((v) => v.id === id);
       if (!vp) return;
+
+      if (isMarkupModeRef.current) {
+        // In markup mode: auto-draft current view's markups, switch to the clicked view.
+        setSelectedItemId(id);
+        restoringUntilRef.current = Date.now() + 900;
+        adapter.setViewpointState?.(
+          { camera: { position: vp.cameraPosition, target: vp.cameraTarget, isOrthographic: vp.isOrthographic }, hiddenObjects: vp.hiddenObjects, sectioning: vp.sectioning },
+          { animate: true },
+        );
+        adapter.enterMarkupMode?.(id, vp.markups);
+        return;
+      }
+
+      if (isSxModeRef.current) {
+        // If the user is switching away from an auto-created view, delete it.
+        const autoId = autoSxViewIdRef.current;
+        if (autoId && id !== autoId) {
+          viewpoints.deleteCustomView(autoId);
+          setAutoSxViewId(null);
+          autoSxViewIdRef.current = null;
+        }
+        // IMPORTANT: draft the current view BEFORE restoring the new view's state.
+        // enterSectioningViewMode reads viewer.sectioning.serializeState() to capture
+        // the outgoing view's sectioning — if setViewpointState runs first it would
+        // restore the incoming view's sectioning and corrupt the outgoing draft.
+        adapter.enterSectioningViewMode?.(id);
+        setSelectedItemId(id);
+        setDirtyViewId(null);
+        restoringUntilRef.current = Date.now() + 900;
+        adapter.setViewpointState?.(
+          { camera: { position: vp.cameraPosition, target: vp.cameraTarget, isOrthographic: vp.isOrthographic }, hiddenObjects: vp.hiddenObjects, sectioning: vp.sectioning },
+          { animate: true },
+        );
+        {
+          const freshMarkups = recentMarkupSavesRef.current.get(id) ?? vp.markups;
+          if (freshMarkups && freshMarkups.length > 0) {
+            adapter.showMarkupOverlay?.(freshMarkups, true);
+          } else {
+            adapter.hideMarkupOverlay?.();
+          }
+        }
+        return;
+      }
+
       if (id === selectedItemId) {
-        setSelectedItemId(null);
+        // Use the ref so we always read the live dirty state, not a stale closure value.
+        if (id === dirtyViewIdRef.current) {
+          // Dirty row clicked again — re-apply the saved viewpoint state to undo
+          // any unsaved camera / sectioning changes, then stay selected.
+          setDirtyViewId(null);
+          restoringUntilRef.current = Date.now() + 900;
+          adapter.setViewpointState?.(
+            {
+              camera: { position: vp.cameraPosition, target: vp.cameraTarget, isOrthographic: vp.isOrthographic },
+              hiddenObjects: vp.hiddenObjects,
+              sectioning: vp.sectioning,
+            },
+            { animate: true },
+          );
+          // Force-clear dirty again after the camera animation finishes (550ms)
+          // so any intermediate event that re-set it doesn't leave the row grey.
+          setTimeout(() => {
+            if (selectedItemIdRef.current === id) setDirtyViewId(null);
+          }, 660);
+          {
+            const freshMarkups = recentMarkupSavesRef.current.get(id) ?? vp.markups;
+            if (freshMarkups && freshMarkups.length > 0) {
+              adapter.showMarkupOverlay?.(freshMarkups, true);
+            } else {
+              adapter.hideMarkupOverlay?.();
+            }
+          }
+        } else {
+          // Not dirty — toggle deselect.
+          setSelectedItemId(null);
+          setDirtyViewId(null);
+          adapter.hideMarkupOverlay?.();
+        }
         return;
       }
       setSelectedItemId(id);
-      restoringUntilRef.current = Date.now() + 700;
+      setDirtyViewId(null);
+      restoringUntilRef.current = Date.now() + 900;
       adapter.setViewpointState?.(
         {
           camera: { position: vp.cameraPosition, target: vp.cameraTarget, isOrthographic: vp.isOrthographic },
@@ -1168,8 +1577,62 @@ function ViewsContent() {
         },
         { animate: true },
       );
+      // Belt-and-suspenders: clear dirty again after the camera animation (550ms)
+      // in case any intermediate event (camera-change damping, sectioning restore)
+      // re-set the dirty flag before the cooldown could block it.
+      const viewId = id;
+      setTimeout(() => {
+        if (selectedItemIdRef.current === viewId) setDirtyViewId(null);
+      }, 660);
+      // Restore render settings (xray + render toggles) saved with this view.
+      setXRay(vp.isXRayActive ?? false);
+      setRenderToggles(vp.renderToggles ?? DEFAULT_RENDER_TOGGLES);
+      // Show the view's saved markups as a read-only overlay once the camera settles.
+      // Prefer the optimistic cache (populated synchronously at commit time) over the
+      // potentially-stale file-backed customViews to handle the case where the user
+      // clicks away and back before the async server round-trip completes.
+      {
+        const freshMarkups = recentMarkupSavesRef.current.get(id) ?? vp.markups;
+        if (freshMarkups && freshMarkups.length > 0) {
+          adapter.showMarkupOverlay?.(freshMarkups, true);
+        } else {
+          adapter.hideMarkupOverlay?.();
+        }
+      }
     }, 250);
-  }, [adapter, customViews, selectedItemId]);
+  }, [adapter, customViews, selectedItemId, viewpoints, setXRay, setRenderToggles]);
+
+  // ── Enter markup mode for a specific view row ─────────────────────────────
+  const handleMarkupClick = useCallback((viewId: string) => {
+    const vp = customViews.find((v) => v.id === viewId);
+    if (!vp) return;
+    // Cancel any pending row-click deselect timer. The pencil button calls
+    // stopPropagation() so handleSelectView won't re-fire, but a prior row click
+    // may have started a 250ms toggle-deselect timer that would otherwise fire
+    // AFTER enterMarkupMode and unexpectedly clear selectedItemId.
+    clearTimeout(clickTimerRef.current);
+    setSelectedItemId(viewId);
+    setDirtyViewId(null);
+    // 900ms cooldown — long enough to cover the 550ms camera restore animation
+    // plus any trailing camera-change or sectioning events.
+    restoringUntilRef.current = Date.now() + 900;
+    adapter.hideMarkupOverlay?.();
+    adapter.setViewpointState?.(
+      { camera: { position: vp.cameraPosition, target: vp.cameraTarget, isOrthographic: vp.isOrthographic }, hiddenObjects: vp.hiddenObjects, sectioning: vp.sectioning },
+      { animate: true },
+    );
+    // Prefer the optimistic cache populated synchronously at commit time — the
+    // async server round-trip may not have updated customViews yet, so vp.markups
+    // could still be stale (e.g. empty) even though the overlay was already showing
+    // the correct markups via recentMarkupSavesRef.
+    const freshMarkups = recentMarkupSavesRef.current.get(viewId) ?? vp.markups;
+    // Call enterMarkupMode directly — the indirect window.dispatchEvent path
+    // through RightToolbar was losing the viewId association in the adapter,
+    // causing the editable canvas to show blank and markups to be saved to the
+    // wrong view. The RightToolbar UI syncs via its subscribeMarkupModeActive
+    // subscription instead.
+    adapter.enterMarkupMode?.(viewId, freshMarkups);
+  }, [adapter, customViews, viewpoints]);
 
   // ── Drag and drop ──────────────────────────────────────────────────────────
   const handleDragStart = useCallback((id: string) => { setDraggingId(id); }, []);
@@ -1187,22 +1650,121 @@ function ViewsContent() {
   const handleDrop = useCallback((targetId: string) => {
     if (!draggingId || !dropTarget || dropTarget.id !== targetId) return;
     const { position } = dropTarget;
-    if (position === 'inside') { setDraggingId(null); setDropTarget(null); return; }
 
-    const reordered = reorderItems(localViews, draggingId, targetId, position);
-    setLocalViews(reordered);
+    // ── Folder being dragged ───────────────────────────────────────────────
+    const draggingFolder = localFolders.find((f) => f.id === draggingId);
+    if (draggingFolder) {
+      // Circular reference guard: can't drop a folder into its own descendant.
+      const isDescendant = (ancestorId: string, nodeId: string): boolean => {
+        let current: string | null | undefined = nodeId;
+        while (current) {
+          if (current === ancestorId) return true;
+          current = localFolders.find((f) => f.id === current)?.parentFolderId;
+        }
+        return false;
+      };
+
+      if (position === 'inside') {
+        // Drop onto a folder header: nest dragging folder inside target, placed
+        // at the bottom of the target's existing sub-folders.
+        if (!localFolders.some((f) => f.id === targetId)) { setDraggingId(null); setDropTarget(null); return; }
+        if (isDescendant(draggingId, targetId)) { setDraggingId(null); setDropTarget(null); return; }
+
+        const without = localFolders.filter((f) => f.id !== draggingId);
+        const moved = { ...draggingFolder, parentFolderId: targetId };
+        // Find the last existing sub-folder of the target and insert after it.
+        // If none exist, insert right after the target folder itself.
+        const siblings = without.filter((f) => (f.parentFolderId ?? null) === targetId);
+        const anchor = siblings.length > 0 ? siblings[siblings.length - 1] : without.find((f) => f.id === targetId);
+        const insertIdx = anchor ? without.findIndex((f) => f.id === anchor.id) + 1 : without.length;
+        without.splice(insertIdx, 0, moved);
+        setLocalFolders(without);
+        setDraggingId(null); setDropTarget(null);
+        return;
+      }
+
+      // Drop before/after another folder: reorder among folders, inherit parentFolderId.
+      // Drop before/after a view: snap to end of folders at that view's level.
+      const targetFolder = localFolders.find((f) => f.id === targetId);
+      const targetView = localViews.find((v) => v.id === targetId);
+      const newParentFolderId = targetFolder ? (targetFolder.parentFolderId ?? null) : (targetView?.folderId ?? null);
+      if (isDescendant(draggingId, newParentFolderId ?? '')) { setDraggingId(null); setDropTarget(null); return; }
+
+      const without = localFolders.filter((f) => f.id !== draggingId);
+      const moved = { ...draggingFolder, parentFolderId: newParentFolderId };
+
+      if (targetFolder) {
+        // Reorder among sibling folders.
+        const targetIdx = without.findIndex((f) => f.id === targetId);
+        without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, moved);
+      } else {
+        // Snap: insert after the last folder at this level (before first view).
+        const sibling = without.filter((f) => (f.parentFolderId ?? null) === newParentFolderId);
+        const lastSibling = sibling[sibling.length - 1];
+        const insertIdx = lastSibling ? without.findIndex((f) => f.id === lastSibling.id) + 1 : 0;
+        without.splice(insertIdx, 0, moved);
+      }
+      setLocalFolders(without);
+      setDraggingId(null);
+      setDropTarget(null);
+      return;
+    }
+
+    // ── View being dragged ─────────────────────────────────────────────────
+    let updated: ViewData[];
+
+    if (position === 'inside') {
+      // Drop onto a collapsed/empty folder: move the view into that folder.
+      if (!localFolders.some((f) => f.id === targetId)) {
+        setDraggingId(null); setDropTarget(null); return;
+      }
+      updated = localViews.map((v) => v.id === draggingId ? { ...v, folderId: targetId } : v);
+    } else {
+      // Drop before/after a view: reorder among views, inherit folderId.
+      // Drop before/after a folder: snap to beginning of views at that folder's level.
+      const targetView = localViews.find((v) => v.id === targetId);
+      const targetFolder = localFolders.find((f) => f.id === targetId);
+      const newFolderId = targetView ? (targetView.folderId ?? null) : (targetFolder?.parentFolderId ?? null);
+
+      const draggingView = localViews.find((v) => v.id === draggingId);
+      if (!draggingView) { setDraggingId(null); setDropTarget(null); return; }
+
+      const without = localViews.filter((v) => v.id !== draggingId);
+      const moved = { ...draggingView, folderId: newFolderId };
+
+      if (targetView) {
+        // Reorder among sibling views.
+        const targetIdx = without.findIndex((v) => v.id === targetId);
+        without.splice(position === 'before' ? targetIdx : targetIdx + 1, 0, moved);
+      } else {
+        // Snap: insert before the first view at this level (just after all folders).
+        const firstViewIdx = without.findIndex((v) => (v.folderId ?? null) === newFolderId);
+        if (firstViewIdx === -1) {
+          without.push(moved);
+        } else {
+          without.splice(firstViewIdx, 0, moved);
+        }
+      }
+      updated = without;
+    }
+
+    setLocalViews(updated);
     setDraggingId(null);
     setDropTarget(null);
 
-    const reorderedViewpoints = reordered
-      .map((v) => customViews.find((vp) => vp.id === v.id))
-      .filter((vp): vp is Viewpoint => vp !== undefined);
+    // Persist: use folderId from updated localViews, not from stale customViews.
+    const reorderedViewpoints = updated
+      .map((v) => {
+        const vp = customViews.find((vp) => vp.id === v.id);
+        return vp ? { ...vp, folderId: v.folderId } : null;
+      })
+      .filter((vp): vp is NonNullable<typeof vp> => vp !== null) as Viewpoint[];
     viewpoints.reorderCustomViews(reorderedViewpoints).then((result) => {
       if (!result.ok && result.reason === 'writer-unavailable') {
         toast.show({ kind: 'error', message: 'Reordering is only available when running locally.' });
       }
     });
-  }, [draggingId, dropTarget, localViews, customViews, viewpoints, toast]);
+  }, [draggingId, dropTarget, localViews, localFolders, customViews, viewpoints, toast]);
 
   // ── More menu (per-row actions) ────────────────────────────────────────────
   const handleMoreClick = useCallback((e: React.MouseEvent, viewId: string) => {
@@ -1214,15 +1776,31 @@ function ViewsContent() {
   const handleUpdate = useCallback(async () => {
     if (!moreMenu) return;
     const { viewId } = moreMenu;
+    setMoreMenu(null);
+
+    if (isMarkupMode) {
+      // In markup mode the "Update" button acts as bulk-save — same as the
+      // green checkmark. exitMarkupMode(true) triggers the registered commit
+      // callback which persists all dirty views to ViewpointsContext.
+      adapter.exitMarkupMode?.(true);
+      window.dispatchEvent(new CustomEvent('mv:markup-exit'));
+      return;
+    }
+
+    if (isSxMode) {
+      // Same bulk-save semantics for sectioning view mode.
+      adapter.exitSectioningViewMode?.(true);
+      window.dispatchEvent(new CustomEvent('mv:sectioning-view-exit'));
+      return;
+    }
+
     const vp = customViews.find((v) => v.id === viewId);
-    if (!vp) { setMoreMenu(null); return; }
+    if (!vp) return;
     const state = adapter.getViewpointState?.();
     if (!state) {
       toast.show({ kind: 'error', message: 'Cannot capture view state.' });
-      setMoreMenu(null);
       return;
     }
-    setMoreMenu(null);
     const updated: Viewpoint = {
       ...vp,
       cameraPosition: state.camera.position,
@@ -1230,16 +1808,22 @@ function ViewsContent() {
       isOrthographic: state.camera.isOrthographic,
       hiddenObjects: state.hiddenObjects,
       sectioning: state.sectioning,
+      // Preserve existing markups — out of markup mode, Update only refreshes the
+      // camera/scene state and must not discard previously saved markup.
+      markups: vp.markups ?? [],
+      isXRayActive,
+      renderToggles,
     };
     const result = await viewpoints.updateCustomView(vp.id, updated);
     if (result.ok) {
+      setDirtyViewId(null);
       toast.show({ kind: 'success', message: `"${vp.name}" updated.` });
     } else if (result.reason === 'writer-unavailable') {
       toast.show({ kind: 'error', message: 'Updating is only available when running locally.' });
     } else {
       toast.show({ kind: 'error', message: 'Failed to update view. Try again.' });
     }
-  }, [moreMenu, customViews, adapter, viewpoints, toast]);
+  }, [moreMenu, customViews, adapter, viewpoints, toast, isMarkupMode, isSxMode, isXRayActive, renderToggles]);
 
   const handleRenameFromMenu = useCallback(() => {
     if (!moreMenu) return;
@@ -1253,7 +1837,9 @@ function ViewsContent() {
     if (!moreMenu) return;
     const { viewId } = moreMenu;
     setMoreMenu(null);
-    if (selectedItemId === viewId) setSelectedItemId(null);
+    if (selectedItemId === viewId) { setSelectedItemId(null); setDirtyViewId(null); }
+    if (autoSxViewIdRef.current === viewId) { setAutoSxViewId(null); autoSxViewIdRef.current = null; }
+    setCheckedIds((prev) => { const next = new Set(prev); next.delete(viewId); return next; });
     const result = await viewpoints.deleteCustomView(viewId);
     if (!result.ok && result.reason === 'writer-unavailable') {
       toast.show({ kind: 'error', message: 'Deleting is only available when running locally.' });
@@ -1297,52 +1883,109 @@ function ViewsContent() {
       )}
 
       <div className="bg-white rounded-md overflow-hidden py-1 relative min-h-full" onClick={handleBackgroundClick}>
-        {localViews.length === 0 && (
+        {localFolders.length === 0 && localViews.length === 0 && (
           <p className="px-3 py-6 text-sm text-gray-400 text-center">
             No saved views yet. Use the + button in the panel header to create one.
           </p>
         )}
 
-        {localViews.map((view) => (
-          <TreeNode
-            key={view.id}
-            id={view.id}
-            label={view.name}
-            depth={0}
-            type="leaf"
-            selected={view.id === selectedItemId}
-            hoverBg="#F4F5F6"
-            showActionsOnHover
-            isRenaming={renamingId === view.id}
-            renameValue={renameValue}
-            onRenameChange={setRenameValue}
-            onRenameCommit={commitRename}
-            onRenameCancel={cancelRename}
-            onClick={handleSelectView}
-            onDoubleClick={handleDoubleClick}
-            draggable
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            isDragging={draggingId === view.id}
-            dropIndicator={dropTarget?.id === view.id ? (dropTarget.position as 'before' | 'after') : undefined}
-            actions={
-              <>
-                <button type="button" title="Edit name" onClick={(e) => { e.stopPropagation(); handleDoubleClick(view.id, view.name); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                  <img src={editIcon} alt="" width={14} height={14} />
-                </button>
-                <button type="button" title="Share" onClick={(e) => e.stopPropagation()} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                  <img src={shareIcon} alt="" width={14} height={14} />
-                </button>
-                <button type="button" title="More" onClick={(e) => { e.stopPropagation(); handleMoreClick(e, view.id); }} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
-                  <img src={moreIcon} alt="" width={14} height={14} />
-                </button>
-              </>
-            }
-          />
-        ))}
+        {/* Recursive folder + view tree */}
+        {(() => {
+          const renderViewRow = (view: ViewData, depth: number) => (
+            <TreeNode
+              key={view.id}
+              id={view.id}
+              label={view.name}
+              depth={depth}
+              type="leaf"
+              checked={checkedIds.has(view.id)}
+              onCheckedChange={handleViewChecked}
+              selected={view.id === selectedItemId && view.id !== dirtyViewId}
+              isDirty={view.id === dirtyViewId}
+              hoverBg="#F4F5F6"
+              showActionsOnHover
+              isRenaming={renamingId === view.id}
+              renameValue={renameValue}
+              onRenameChange={setRenameValue}
+              onRenameCommit={commitRename}
+              onRenameCancel={cancelRename}
+              onClick={handleSelectView}
+              onDoubleClick={handleDoubleClick}
+              draggable
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              isDragging={draggingId === view.id}
+              dropIndicator={dropTarget?.id === view.id ? (dropTarget.position as 'before' | 'after') : undefined}
+              actions={
+                <>
+                  <button
+                    type="button"
+                    title="Markup"
+                    onClick={(e) => { e.stopPropagation(); handleMarkupClick(view.id); }}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]"
+                  >
+                    <img src={editIcon} alt="" width={14} height={14} />
+                  </button>
+                  <button type="button" title="Share" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                    <img src={shareIcon} alt="" width={14} height={14} />
+                  </button>
+                  <button type="button" title="More" onClick={(e) => { e.stopPropagation(); handleMoreClick(e, view.id); }} onDoubleClick={(e) => e.stopPropagation()} className="w-6 h-6 flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#CDD1D4]">
+                    <img src={moreIcon} alt="" width={14} height={14} />
+                  </button>
+                </>
+              }
+            />
+          );
+
+          const renderFolder = (folder: ViewpointFolder, depth: number): React.ReactNode => {
+            const descendantViewIds = getDescendantViewIds(folder.id);
+            const checkedCount = descendantViewIds.filter((id) => checkedIds.has(id)).length;
+            const allChecked = descendantViewIds.length > 0 && checkedCount === descendantViewIds.length;
+            const indeterminate = checkedCount > 0 && !allChecked;
+            const childFolders = localFolders.filter((f) => (f.parentFolderId ?? null) === folder.id);
+            const directViews = localViews.filter((v) => v.folderId === folder.id);
+            return (
+              <TreeNode
+                key={folder.id}
+                id={folder.id}
+                label={folder.name}
+                depth={depth}
+                type="folder"
+                expanded={expandedIds.has(folder.id)}
+                onToggle={handleToggleFolder}
+                checked={allChecked}
+                indeterminate={indeterminate}
+                onCheckedChange={handleFolderChecked}
+                hoverBg="#F4F5F6"
+                draggable
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                isDragging={draggingId === folder.id}
+                isDropTarget={dropTarget?.id === folder.id && dropTarget.position === 'inside'}
+                dropIndicator={dropTarget?.id === folder.id && dropTarget.position !== 'inside' ? (dropTarget.position as 'before' | 'after') : undefined}
+              >
+                {childFolders.map((f) => renderFolder(f, depth + 1))}
+                {directViews.map((v) => renderViewRow(v, depth + 1))}
+              </TreeNode>
+            );
+          };
+
+          const rootFolders = localFolders.filter((f) => !(f.parentFolderId ?? null));
+          const unfiledViews = localViews.filter((v) => !v.folderId);
+          return (
+            <>
+              {rootFolders.map((f) => renderFolder(f, 0))}
+              {unfiledViews.map((v) => renderViewRow(v, 0))}
+            </>
+          );
+        })()}
       </div>
 
       {moreMenu && (

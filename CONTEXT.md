@@ -68,11 +68,17 @@ src/chrome/
 │   └── ChromeApp.tsx        ← Blended entry (creates ModelViewer + real adapter)
 ├── features/
 │   ├── chrome-layout/       ← Shell that composes all features (no logic).
-│   │                          Variant files: ChromeLayout.{desktop,tablet,phone}.tsx
+│   │                          Desktop variant keeps docked desktop UI;
+│   │                          tablet/phone use shared ChromeLayoutMobile
 │   │                          + index.tsx selector + DeviceFrame.tsx (bezelled
-│   │                          tablet/phone shell with rotation button).
+│   │                          tablet/phone shell with rotation + device-preview buttons).
 │   ├── header/              ← Back/forward, project dropdown, search, settings cog, device-preview button.
 │   │                          Variant files: Header.{desktop,tablet,phone}.tsx + index.tsx
+│   ├── mobile-header/       ← Shared tablet/phone header (transparent white overlay;
+│   │                          close, model label, settings, search, overflow)
+│   ├── mobile-bottom-bar/   ← Shared tablet/phone toolbar system (General/Tools rows,
+│   │                          tool/detail rows, Save/Exit detail actions, reset/undo/redo)
+│   ├── joystick-overlay/    ← Shared tablet/phone visual joystick overlays (stub-only)
 │   ├── form-factor/         ← FormFactorContext (desktop/tablet/phone + orientation).
 │   │                          URL-driven via ?form= and ?orient=.
 │   ├── form-factor-menu/    ← Radio menu of Desktop/Tablet/Phone. Opened from
@@ -236,7 +242,7 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Right-click context menu — objects only** → `openContextMenuAtEvent` no longer fires on empty-space clicks; context menu only appears when the raycast hits an object. Right-clicking an unselected object also selects it (visual highlight), so the context menu always acts on the highlighted element. Right-clicking an already-selected object keeps the selection unchanged.
 - **Section plane/cut immediate drag** → clicking an object to create a section plane or section cut immediately begins dragging it in the same mousedown–move–mouseup gesture; camera is fully suspended for the duration via `navigation.setControlsEnabled(false)` + `_externalDragActive` guard
 - **Section plane/cut gizmo overflow button** → the white circle button that appears to the right of a plane gizmo on hover. Show/hide is driven by `onDocMouseMove` in `_createPlaneGizmo`. The listener must be registered in **capture phase** (`document.addEventListener('mousemove', …, { capture: true })`); using bubble phase means `el.stopPropagation()` (called in the gizmo's own mousemove handler) silently blocks the listener for section-cut gizmos whose rotation angle is axis-aligned (no bounding-rect corner gap). The render loop hides the button via `if (!visible || this.isDragging) overflowBtn.style.display = 'none'` to suppress it during drag and when the gizmo centroid is occluded.
-- **Form-factor selector** → settings cog in the header opens a dropdown (Desktop / Tablet / Phone). URL updates via `history.replaceState` to `?form=…`; clean URLs omit the param for desktop. Refresh respects the URL; bare URL defaults to desktop. See [CLAUDE.md §3a](./CLAUDE.md) and [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md)
+- **Form-factor selector** → desktop keeps the header device-preview control; tablet/phone expose the same menu from the DeviceFrame button beneath rotate. URL updates via `history.replaceState` to `?form=…`; clean URLs omit the param for desktop. Refresh respects the URL; bare URL defaults to desktop. See [CLAUDE.md §3a](./CLAUDE.md) and [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md)
 - **Device frame** (tablet/phone) → centered, bezelled device shell with rotation button outside top-right. Tablet/phone variant trees are wrapped in `DeviceFrame` from `chrome-layout/index.tsx`. Bezel/notch/home indicator live outside the chrome's scale transform so they stay visually consistent across orientation and viewport size
 - **Orientation toggle** → rotate button on tablet/phone swaps `?orient=portrait`/`?orient=landscape`. Tablet default = landscape; phone default = portrait. URL omits `?orient=` when it matches the default
 - **Bottom toolbar ↔ right toolbar sync (Ortho / Render Settings / X-Ray)** → `ViewerSettingsContext` owns `isOrthographic`, `isXRayActive`, and `renderToggles`; both toolbars read/write through `useViewerSettings()`. Ortho/X-Ray delegate to the adapter; render-settings state is context-only until the engine has a concept for it
@@ -311,7 +317,7 @@ Run all: `npm test`. Tests use `demo/old.html` and `demo/test-page.html` — nev
 6. **Navigation tests sparse** — the REG-NAV suite predates the WASD/right-click/scroll-to-cursor work. Tests for camera-relative movement, right-click mode switching, zoom-to-cursor, and origin dots have not been written yet.
 7. **Procore Viewer integration** — future work. Write `procoreAdapter.ts` implementing the same `ViewerAdapter` interface. Chrome components don't change.
 8. ~~**Section plane/cut camera interference**~~ — **Resolved.** Creating a section plane/cut and immediately dragging in the same gesture no longer moves the camera. Fixed via `_externalDragActive` flag in `Navigation.js` (guards look/fly drag start) and save/restore of `controls.enabled` in `setControlsEnabled` (prevents accidental OrbitControls re-enable in look mode after drag ends).
-9. **Mobile/tablet variant buildout** — form-factor scaffolding (context, DeviceFrame, header + chrome-layout variant files) is in place, but tablet/phone variants currently forward to the desktop layout. The cramped desktop UI inside the phone bezel is the visible motivation for real variant work. See [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) for the next-steps checklist (real header/toolbar variants, movement-joystick visual stub, panel variants).
+9. **Mobile/tablet variant buildout** — shared mobile chrome is now active for tablet/phone (`ChromeLayoutMobile`, `MobileHeader`, `MobileBottomBar`, `JoystickOverlay`, single-panel replacement flow). Remaining work is behavior depth (touch joystick wiring, mobile drawer/tab system, and additional feature parity). See [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md).
 
 ## Experiments & Dead Ends
 

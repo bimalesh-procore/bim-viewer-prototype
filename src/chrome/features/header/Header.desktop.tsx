@@ -5,6 +5,7 @@ import { HeaderButton } from './HeaderButton';
 import { HeaderSearch } from './HeaderSearch';
 import type { HeaderProps } from './types';
 import { FormFactorMenu } from '../form-factor-menu';
+import { useFormFactor } from '../form-factor';
 import { SettingsPanel, useSettingsPanel } from '../settings-panel';
 import { useToast } from '../toast';
 import { useViewpoints } from '../viewpoints';
@@ -91,6 +92,8 @@ export function HeaderDesktop({ models = [], activeModelId = null, onSelectModel
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [formFactorMenuOpen]);
+
+  const { formFactor } = useFormFactor();
 
   const activeModel = models.find((m) => m.id === activeModelId) ?? null;
   const buttonLabel = activeModel?.label ?? 'Project Model';
@@ -190,27 +193,28 @@ export function HeaderDesktop({ models = [], activeModelId = null, onSelectModel
       {/* Right section */}
       <div className="flex items-center gap-3 pr-3">
         <div className="flex items-center gap-1.5">
-          {/* Device-preview button — the only place form factor is changed.
-              Lives next to the cog so designers can flip the prototype
-              between desktop/tablet/phone without touching the URL bar. */}
-          <div className="relative">
-            <button
-              ref={formFactorAnchorRef}
-              type="button"
-              onClick={() => setFormFactorMenuOpen((v) => !v)}
-              aria-label="Device preview"
-              aria-haspopup="menu"
-              aria-expanded={formFactorMenuOpen}
-              className="flex items-center justify-center rounded p-1 transition-colors hover:bg-gray-200 active:bg-gray-300"
-            >
-              <img src={phoneIcon} alt="" className="w-5 h-5" />
-            </button>
-            {formFactorMenuOpen && (
-              <div ref={formFactorMenuRef} className="absolute top-full right-0 mt-1 z-40">
-                <FormFactorMenu onSelect={() => setFormFactorMenuOpen(false)} />
-              </div>
-            )}
-          </div>
+          {/* Device-preview button — on desktop only; tablet/phone show this
+              button outside the device frame below the rotate button. */}
+          {formFactor === 'desktop' && (
+            <div className="relative">
+              <button
+                ref={formFactorAnchorRef}
+                type="button"
+                onClick={() => setFormFactorMenuOpen((v) => !v)}
+                aria-label="Device preview"
+                aria-haspopup="menu"
+                aria-expanded={formFactorMenuOpen}
+                className="flex items-center justify-center rounded p-1 transition-colors hover:bg-gray-200 active:bg-gray-300"
+              >
+                <img src={phoneIcon} alt="" className="w-5 h-5" />
+              </button>
+              {formFactorMenuOpen && (
+                <div ref={formFactorMenuRef} className="absolute top-full right-0 mt-1 z-40">
+                  <FormFactorMenu onSelect={() => setFormFactorMenuOpen(false)} />
+                </div>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={settings.toggle}

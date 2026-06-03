@@ -100,3 +100,41 @@ status quo if nobody complains.
 - `src/chrome/app/ChromeApp.tsx` — in the viewer-ready handler, after the
   camera/sectioning seed, call `viewer.visibility.setPendingHidden(home.hiddenObjects)`
   instead of waiting for `load-complete`.
+
+---
+
+## Mobile chrome follow-up: drawer tabs and touch joystick behavior
+
+**Why:** Tablet and phone now use the shared mobile header/bottom-bar shell,
+but the `General`/`Tools` flow is still placeholder-only and joystick overlays
+are visual stubs. To match the Figma UX, tapping `General` or `Tools` should
+reveal the panel-tab drawer, and joystick drags should control navigation.
+
+### Options
+
+1. **Add a `MobileDrawer` + `MobilePanel` in the shared mobile chrome
+   (recommended).** Keep the bottom bar fixed and animate a tab row from
+   beneath it (`Views`, `Items`, `Objects`, `Properties`, `Groups`,
+   `Deviations`). Render the existing panel content components inside a
+   mobile panel shell, reusing the same contexts as desktop.
+2. **Keep desktop panels only and no drawer.** Lower implementation effort,
+   but mobile interactions diverge from design and `General`/`Tools` remain
+   dead ends.
+
+For joystick behavior, either:
+- **A)** map pointer-drag deltas to adapter navigation calls (walk/look/up-down)
+  with dead-zone + acceleration tuning, or
+- **B)** leave visual-only stubs (current behavior).
+
+### Touchpoints
+
+- `src/chrome/features/mobile-bottom-bar/MobileBottomBar.tsx` — wire
+  `General`/`Tools` to drawer open/close state.
+- `src/chrome/features/chrome-layout/ChromeLayoutMobile.tsx` — own drawer/panel
+  state and mount `MobilePanel`.
+- `src/chrome/features/dock-manager/panelContent.tsx` — reuse exported panel
+  content components in the mobile panel shell.
+- `src/chrome/features/joystick-overlay/JoystickOverlay.tsx` — convert from
+  visual-only to pointer-interactive controls.
+- `src/chrome/features/viewer-adapter/types.ts` and `modelViewerAdapter.ts` —
+  add/bridge any missing movement primitives needed for continuous touch input.

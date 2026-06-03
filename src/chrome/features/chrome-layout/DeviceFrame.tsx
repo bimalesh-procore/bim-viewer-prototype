@@ -1,6 +1,8 @@
-import { useLayoutEffect, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { RotateCw } from 'lucide-react';
 import { useFormFactor, type FormFactor, type Orientation } from '../form-factor';
+import { FormFactorMenu } from '../form-factor-menu';
+import phoneIcon from '../../assets/icons/header/phone.svg';
 
 // "Screen" dimensions are the chrome's coordinate space — the chrome renders
 // at these pixel dimensions internally, then we visually scale it via CSS
@@ -43,6 +45,21 @@ export function DeviceFrame({ formFactor, children }: DeviceFrameProps) {
   const bezel = BEZEL_VISUAL[formFactor];
 
   const [scale, setScale] = useState(1);
+  const [formFactorMenuOpen, setFormFactorMenuOpen] = useState(false);
+  const formFactorMenuRef = useRef<HTMLDivElement>(null);
+  const formFactorAnchorRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!formFactorMenuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (formFactorMenuRef.current?.contains(target)) return;
+      if (formFactorAnchorRef.current?.contains(target)) return;
+      setFormFactorMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [formFactorMenuOpen]);
 
   useLayoutEffect(() => {
     const update = () => {
@@ -88,15 +105,37 @@ export function DeviceFrame({ formFactor, children }: DeviceFrameProps) {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={toggleOrientation}
-          aria-label={`Rotate to ${orientation === 'portrait' ? 'landscape' : 'portrait'}`}
-          title={`Rotate to ${orientation === 'portrait' ? 'landscape' : 'portrait'}`}
-          className="absolute top-0 right-0 translate-x-[calc(100%+12px)] flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-md transition-colors hover:bg-gray-50"
-        >
-          <RotateCw size={16} />
-        </button>
+        {/* Controls column — rotate + form-factor buttons stacked outside the frame */}
+        <div className="absolute top-0 right-0 translate-x-[calc(100%+12px)] flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={toggleOrientation}
+            aria-label={`Rotate to ${orientation === 'portrait' ? 'landscape' : 'portrait'}`}
+            title={`Rotate to ${orientation === 'portrait' ? 'landscape' : 'portrait'}`}
+            className="flex h-9 w-9 items-center justify-center rounded-[4px] bg-white text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+          >
+            <RotateCw size={16} />
+          </button>
+
+          <div className="relative">
+            <button
+              ref={formFactorAnchorRef}
+              type="button"
+              onClick={() => setFormFactorMenuOpen((v) => !v)}
+              aria-label="Device preview"
+              aria-haspopup="menu"
+              aria-expanded={formFactorMenuOpen}
+              className="flex h-9 w-9 items-center justify-center rounded-[4px] bg-white text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+            >
+              <img src={phoneIcon} alt="" className="w-5 h-5" />
+            </button>
+            {formFactorMenuOpen && (
+              <div ref={formFactorMenuRef} className="absolute top-0 left-full ml-2 z-40">
+                <FormFactorMenu onSelect={() => setFormFactorMenuOpen(false)} />
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

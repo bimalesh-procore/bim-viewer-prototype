@@ -4,17 +4,20 @@ Status and next steps for the tablet / phone form-factor work. Architectural rul
 
 ---
 
-## Current Status (2026-05-23)
+## Current Status (2026-06-03)
 
-**Scaffolding is in place; designs are not.** The chrome can be switched between desktop, tablet, and phone via URL or the phone-icon button in the header (next to the settings cog). Tablet and phone render inside a bezelled device frame with a rotation button outside the top-right corner. Phone shows a notch and home indicator that rotate with orientation. Underneath the bezel, the chrome currently renders the desktop layout (the tablet/phone variant files forward to desktop) — visibly cramped in the phone width, which is the intended motivation for the real variant work.
+**Shared mobile chrome is now live for tablet + phone.** Desktop remains unchanged, but tablet/phone no longer forward to desktop chrome. Both form factors render a dedicated mobile shell (`ChromeLayoutMobile`) inside the device frame, with a transparent mobile header, mobile bottom toolbar, joystick visual overlay, and single-panel mobile panel behavior.
 
 ### What's built
 
 - `src/chrome/features/form-factor/` — `FormFactorContext` with form factor (`desktop` / `tablet` / `phone`) and orientation (`portrait` / `landscape`). URL-driven via `?form=` and `?orient=`. Bare URL defaults to desktop. Orientation defaults: tablet → landscape, phone → portrait. Switching form factors resets orientation to the new default.
 - Header phone-icon button opens the form-factor menu (`src/chrome/features/form-factor-menu/`); cog opens the Settings window.
-- `src/chrome/features/chrome-layout/DeviceFrame.tsx` — centered, bezelled device shell. Scale-independent bezel, concentric corner radii, notch + home indicator for phone, rotation button outside top-right. Tablet bezel 11px, phone bezel 8px (both visual CSS px, identical across orientations).
-- `src/chrome/features/header/` — variant files (`Header.desktop.tsx`, `Header.tablet.tsx`, `Header.phone.tsx`) + `index.tsx` selector + `types.ts`. Tablet/phone are stubs that forward to desktop.
-- `src/chrome/features/chrome-layout/` — same variant file pattern.
+- `src/chrome/features/chrome-layout/DeviceFrame.tsx` — centered, bezelled device shell. Scale-independent bezel, concentric corner radii, notch + home indicator for phone, rotation button outside top-right, and a device-preview (form-factor) button stacked beneath rotate for tablet/phone.
+- `src/chrome/features/chrome-layout/ChromeLayoutMobile.tsx` — shared tablet/phone layout with full-bleed viewer canvas, transparent overlaid mobile header, overlaid mobile bottom toolbar, overlaid joystick visuals, and mobile single-panel rendering.
+- `src/chrome/features/header/` — variant files (`Header.desktop.tsx`, `Header.tablet.tsx`, `Header.phone.tsx`) + `index.tsx` selector + `types.ts`. Tablet/phone now point to `mobile-header/MobileHeader.tsx`; desktop keeps desktop header behavior.
+- `src/chrome/features/mobile-header/` — mobile header with close, model label, settings, search, and overflow actions. Header background is white at 20% opacity so model content remains visible behind it.
+- `src/chrome/features/mobile-bottom-bar/` — mobile toolbar system with reusable 64x64 button primitives, 72px toolbar containers, General/Tools mode switch, mobile panel open events, tool/detail rows (including sectioning detail modes), and reset/undo/redo actions.
+- `src/chrome/features/joystick-overlay/` — tablet/phone joystick visual stubs positioned above reset/undo/redo (visual only; no touch navigation wiring yet).
 - Viewer container survives variant switches: `ChromeApp` uses a callback ref backed by state, and the `useEffect` migrates `viewer.canvasContainer` to the new container on variant remount (see CLAUDE.md §3c).
 - Model picker `href` preserves `?form=` and `?orient=` via `URLSearchParams` (see CLAUDE.md §3d).
 
@@ -30,15 +33,9 @@ Status and next steps for the tablet / phone form-factor work. Architectural rul
 
 The work below uses the variant file pattern from CLAUDE.md §3a. Each item is independent — pick whichever order fits the available Figma.
 
-### 1. Real header variants (`src/chrome/features/header/`)
+### 1. Refine mobile header variants (`src/chrome/features/mobile-header/`)
 
-Replace the stub bodies of `Header.tablet.tsx` and `Header.phone.tsx` with the Figma-driven JSX.
-
-- Tablet header likely keeps a similar structure to desktop with adjusted spacing/sizing.
-- Phone header is substantially different — narrower width forces consolidation (model picker may collapse into a hamburger or single-tap dropdown; search may move to a separate icon; nav buttons may pin to specific corners).
-- Extract shared state into `useHeader.ts` so the three variants share handlers and state. Keep variants JSX-only.
-- The phone-icon button (form-factor menu) must remain visible in all three variants — it's how the user gets back to desktop. The settings cog can stay too, but it's not the variant switcher anymore.
-- Dropdowns stay the same component for now (per the architecture conversation — iOS/Android-style bottom drawers are a later concern).
+Tablet and phone now share `MobileHeader`. Next step is splitting into true tablet/phone variants only when real design divergence exists (keep shared hook/state if split).
 
 ### 2. Real toolbar variants
 
@@ -59,7 +56,7 @@ src/chrome/features/movement-joystick/
 
 ### 4. Panel system variants
 
-The existing dock-manager / panels system (object tree, properties, search sets, etc.) needs variants. On phone, panels likely become bottom drawers that pull up. On tablet, they may stay side-anchored but resize/reflow. Like the toolbars, each panel is its own feature and follows the variant file pattern. See [`docs/draggable-panels-architecture.md`](docs/draggable-panels-architecture.md) for the current panel state machine (docked / floating / minimized / detached); the mobile variants will introduce additional states (bottom-sheet) and may collapse some desktop states (e.g. detached-to-OS-window doesn't make sense on phone).
+Mobile currently uses a single in-app panel (one panel visible at a time; opening another replaces it). Next step is to evolve that shell toward a true mobile drawer/tab experience while still reusing existing panel content components.
 
 ### 5. Welcome / loading overlay framing
 

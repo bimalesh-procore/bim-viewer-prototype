@@ -36,7 +36,9 @@ Before running `gh pr merge` (or any equivalent merge-to-main command):
 | `src/chrome/features/bottom-toolbar/` | `evals/tests/navigation.spec.js` + `evals/tests/chrome-compatibility.spec.js` (houses the nav-mode picker — same engine surface the old NavigationWheel covered) |
 | `src/chrome/features/viewer-settings/` | `evals/tests/chrome-compatibility.spec.js` (shared context for ortho/x-ray/render-toggles state across right + bottom toolbars) |
 | `src/chrome/features/left-toolbar/` | `evals/tests/left-sidebar.spec.js` |
-| `src/chrome/features/items-panel/` | `evals/tests/chrome-object-tree.spec.js` |
+| `src/chrome/features/items-panel/` | `evals/tests/chrome-items-panel.spec.js` |
+| `src/chrome/shared/useItemsView.ts` | `evals/tests/chrome-items-panel.spec.js` |
+| `src/chrome/features/dock-manager/` | `evals/tests/chrome-items-panel.spec.js` + `evals/tests/regression.spec.js` (items panel title + back-arrow logic lives in DockManager) |
 | `src/chrome/features/search-sets/` | `evals/tests/chrome-search-sets-panel.spec.js` + `evals/tests/search-sets.spec.js` |
 | `src/chrome/features/viewer-adapter/` | `evals/tests/chrome-compatibility.spec.js` |
 | `src/chrome/features/form-factor/` | `evals/tests/regression.spec.js` (no dedicated suite yet — see [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) §7) |

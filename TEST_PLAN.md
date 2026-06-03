@@ -143,7 +143,21 @@ Tests the current 3D engine against every capability that the Chrome UI requires
 
 **Note:** Some tests are expected to fail — they document missing features (undo/redo, measure, markup, etc.). As features are implemented, these tests should turn green.
 
-### 7. Form Factor & Device Variant Suite — not yet written
+### 7. Chrome Items Panel Suite (`chrome-items-panel.spec.js`) — 18 tests
+
+End-to-end tests for the Related Items (Items) panel hub navigation, Assets sub-view, and back-arrow behaviour across docked and floating panel states.
+
+| Category | Tests | What It Covers |
+|---|---|---|
+| Open / close | ITEMS-001 to 002 | Toolbar button exists; clicking opens hub list with all categories |
+| Hub navigation | ITEMS-003 to 005 | Clicking Assets navigates to list view; header title updates; non-Assets categories show placeholder |
+| Back arrow | ITEMS-006 to 008 | Back arrow appears when away from hub; absent on hub; clicking returns to hub |
+| Assets list | ITEMS-009 to 013 | Mock tiles render; item count shown; search filters list; clearing search restores list; no-match empty state |
+| Asset detail | ITEMS-014 to 016 | Clicking tile opens detail view with tabs; header title shows asset name; back arrow from detail returns to list |
+| State reset | ITEMS-017 | Closing and reopening panel resets to hub view |
+| Floating panel | ITEMS-018 | Back arrow present and functional after panel is undocked to floating |
+
+### 8. Form Factor & Device Variant Suite — not yet written
 
 When the tablet/phone variants gain real divergent content, add `evals/tests/tablet/` and `evals/tests/phone/` directories. Each spec navigates directly to `?form=tablet` or `?form=phone` — no need to click the settings cog unless the cog itself is under test. Don't share assertions across form factors; each gets its own spec.
 

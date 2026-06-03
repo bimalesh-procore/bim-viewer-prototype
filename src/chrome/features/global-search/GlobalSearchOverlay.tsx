@@ -242,7 +242,7 @@ export function GlobalSearchOverlay() {
     } else if (entity.type === 'view') {
       openPanel('views', 'Viewpoints');
     } else if (entity.type === 'item') {
-      openPanel('items', 'Related Items');
+      openPanel('items', 'Items');
     } else if (entity.type === 'material') {
       openPanel('sheets', '2D Sheets');
     } else if (entity.type === 'group') {

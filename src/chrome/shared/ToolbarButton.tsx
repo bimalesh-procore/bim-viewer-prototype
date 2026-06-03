@@ -7,6 +7,11 @@ export interface ToolbarButtonProps {
   /** Override the visible tooltip text without changing the aria-label. */
   tooltipLabel?: string;
   shortcut?: string;
+  /**
+   * When false, the tooltip is not rendered at all (hard suppress).
+   * Use to hide tooltips when a flyout is open or during drag.
+   * Defaults to true — tooltip shows on CSS hover automatically.
+   */
   showTooltip?: boolean;
   isActive?: boolean;
   /**
@@ -34,7 +39,7 @@ export function ToolbarButton({
   label,
   tooltipLabel,
   shortcut,
-  showTooltip = false,
+  showTooltip = true,
   isActive = false,
   disabled = false,
   hasFlyout = false,
@@ -68,7 +73,7 @@ export function ToolbarButton({
         className="block w-6 h-6"
         style={isActive && !disabled ? { filter: ACTIVE_ICON_FILTER } : undefined}
       />
-      {showTooltip && (
+      {showTooltip && !disabled && (
         <div
           className={`mv-toolbar-tooltip mv-toolbar-tooltip-${tooltipSide}`}
           aria-hidden="true"

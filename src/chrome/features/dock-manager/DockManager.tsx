@@ -35,6 +35,7 @@ import {
 import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import type { GlobalSearchObjectEntry } from '../viewer-adapter/types';
 import type { DockStore, PanelId, PanelState } from './useDockStore';
+import { useItemsView, goBackItemsView, resetItemsView } from '../../shared/useItemsView';
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 const TOOLBAR_RIGHT_EDGE = 52;
@@ -85,6 +86,7 @@ interface DockManagerProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 export function DockManager({ store, deemphasized = false }: DockManagerProps) {
   const adapter = useViewerAdapter();
+  const itemsView = useItemsView();
   const {
     openPanels,
     undockPanel,
@@ -105,6 +107,10 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
         adapter.exitMarkupMode?.(true);
       }
       adapter.deselectView?.();
+    }
+    if (panelId === 'items') {
+      // Reset internal view stack so reopening lands on the hub.
+      resetItemsView();
     }
     closePanel(panelId);
   }, [adapter, closePanel]);
@@ -181,13 +187,19 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
   }, [adapter]);
 
   const getPanelTitle = useCallback((panel: PanelState) => {
+    if (panel.id === 'items') {
+      if (itemsView.kind === 'assets-list') return 'Assets';
+      if (itemsView.kind === 'asset-detail') return itemsView.assetName;
+      if (itemsView.kind === 'category-placeholder') return itemsView.label;
+      return panel.label;
+    }
     if (panel.id !== 'properties') return panel.label;
     if (panel.minimized) return 'Properties';
     const selectedId = selectedObjectIds[0];
     if (!selectedId) return 'Properties';
     const selectedEntry = objectEntries.find((entry) => String(entry.expressID) === selectedId);
     return selectedEntry?.name?.trim() || selectedId;
-  }, [objectEntries, selectedObjectIds]);
+  }, [objectEntries, selectedObjectIds, itemsView]);
 
   const getPanelSubheader = useCallback((panelId: PanelId): string | undefined => {
     if (panelId !== 'properties') return undefined;
@@ -645,6 +657,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
                     ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
                     : undefined}
                   onAdd={panel.id === 'views' || panel.id === 'sheets' ? () => handleAddForPanel(panel.id) : undefined}
+                  onBack={panel.id === 'items' && itemsView.kind !== 'hub' ? goBackItemsView : undefined}
                   onClose={()         => handleClosePanel(panel.id)}
                   onToggleMinimize={()  => toggleMinimized(panel.id)}
                   onDragStart={(ev)   => handleDragStart(panel.id, ev)}
@@ -773,6 +786,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
               ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
               : undefined}
             onAdd={panel.id === 'views' ? () => handleAddForPanel(panel.id) : undefined}
+            onBack={panel.id === 'items' && itemsView.kind !== 'hub' ? goBackItemsView : undefined}
             onClose={()        => handleClosePanel(panel.id)}
             onToggleMinimize={() => toggleMinimized(panel.id)}
             onDragStart={(ev)  => handleDragStart(panel.id, ev)}
@@ -818,6 +832,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
               onTabChange={panel.id === 'properties'
                 ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
                 : undefined}
+              onBack={panel.id === 'items' && itemsView.kind !== 'hub' ? goBackItemsView : undefined}
               onClose={() => handleClosePanel(panel.id)}
               onToggleMinimize={() => {}}
               onDragStart={() => {}}

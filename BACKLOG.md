@@ -21,6 +21,48 @@ documentation sweep that runs alongside it on every commit.
 
 ---
 
+## Items panel — non-Assets categories
+
+**Why:** Clicking Punch List, RFIs, Quality Inspections, etc. shows a generic placeholder ("X content goes here"). These need real sub-views built out.
+
+**Approach:** Each category follows the same pattern as Assets: a list view component + a detail view component, mock data behind a Promise-based accessor, `useItemsView` gets a new `kind` per category, and `panelContent.tsx` + `DockManager` pick up the new kinds automatically.
+
+**Touchpoints:** `src/chrome/features/items-panel/types.ts` (add new `ItemsView` kinds), `panelContent.tsx` (add view branches), `DockManager.tsx` (`getPanelTitle` additions), new list/detail components per category.
+
+---
+
+## Items panel — Asset detail stub tabs
+
+**Why:** Doc, Field, Cx, Ops, and Maintenance tabs show "X content to be added." These need real field layouts once designs land.
+
+**Approach:** Add a `FieldTab`, `DocTab`, etc. component per tab ID inside `AssetDetailView.tsx`, matched on `activeTab`. Design will dictate the card/row structure; the `Asset` type and `assetsData.ts` may need new fields.
+
+**Touchpoints:** `src/chrome/features/items-panel/AssetDetailView.tsx`, `types.ts`, `assetsData.ts`.
+
+---
+
+## Items panel — real API data source
+
+**Why:** `assetsData.ts` returns hard-coded mock data. When the Procore Assets API is available the swap point is `getAssets()` and `getAssetById()` — they already return Promises so callers need no changes.
+
+**Approach:** Replace the two exported functions with real `fetch` calls (or adapter methods). The `Asset` interface is the contract — verify field names match API response shape and add a mapping layer if needed.
+
+**Note:** `linkedElementId` is currently an IFC `expressID` string. When the adapter gains GUID-to-expressID lookup, change the values in `assetsData.ts` to IFC GUIDs and update `modelViewerAdapter.ts` to do the lookup before calling `selectAndFocusObject`.
+
+**Touchpoints:** `src/chrome/features/items-panel/assetsData.ts`, `types.ts`, `src/chrome/features/viewer-adapter/modelViewerAdapter.ts`.
+
+---
+
+## Items panel — Sort and Filter buttons in AssetsListView
+
+**Why:** The sort button (shows "Status") and filter button in `AssetsListView` are visual-only stubs.
+
+**Approach:** Sort: add a dropdown (shared `DropdownMenu`) listing sort options (Status, Name, Last Service Date); sort `filtered` array before rendering. Filter: open a filter panel or popover to narrow by category, status, location.
+
+**Touchpoints:** `src/chrome/features/items-panel/AssetsListView.tsx`.
+
+---
+
 ## Apply hidden-objects state during streaming load
 
 **Why:** When a model loads with a saved home view that hides some objects,

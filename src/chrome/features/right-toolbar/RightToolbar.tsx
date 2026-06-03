@@ -50,8 +50,6 @@ export function RightToolbar() {
     toggleXRay,
     setRenderToggle,
   } = useViewerSettings();
-  const [showTooltips, setShowTooltips] = useState(false);
-  const [showFlyoutTooltips, setShowFlyoutTooltips] = useState(false);
   const [activeMode, setActiveMode] = useState<ModeId>('default');
   const [isOverflowOpen, setIsOverflowOpen] = useState(false);
   const [openFlyout, setOpenFlyout] = useState<'measure' | 'create' | 'sectioning' | 'render' | 'history' | null>(null);
@@ -356,12 +354,11 @@ export function RightToolbar() {
     return () => document.removeEventListener('pointerdown', onPointerDown, { capture: true });
   }, [openFlyout, isOverflowOpen]);
 
-  const TopDefaultButtons = ({ showTooltip }: { showTooltip: boolean }) => (
+  const TopDefaultButtons = () => (
     <>
       <RightToolbarButton
         src={isOrthographic ? perspectiveIcon : orthographicIcon}
         label={isOrthographic ? 'Perspective' : 'Orthographic'}
-        showTooltip={showTooltip}
         isActive={isOrthographic}
         onClick={toggleOrthographic}
       />
@@ -369,7 +366,7 @@ export function RightToolbar() {
         <RightToolbarButton
           src={renderModesIcon}
           label="Render Settings"
-          showTooltip={showTooltip && openFlyout !== 'render'}
+          showTooltip={openFlyout !== 'render'}
           hasFlyout
           isActive={openFlyout === 'render'}
           onClick={() => setOpenFlyout((prev) => (prev === 'render' ? null : 'render'))}
@@ -377,13 +374,6 @@ export function RightToolbar() {
         {openFlyout === 'render' && (
           <div
             className="absolute right-full top-0 mr-2 z-[230]"
-            onMouseEnter={(e) => {
-              e.stopPropagation();
-              setShowTooltips(false);
-            }}
-            onMouseLeave={() => {
-              setShowTooltips(true);
-            }}
           >
             <div
               className="bg-white rounded-[8px] flex flex-col p-[8px]"
@@ -472,7 +462,6 @@ export function RightToolbar() {
         src={xRayIcon}
         label="Xray"
         shortcut="Cmd X"
-        showTooltip={showTooltip}
         isActive={isXRayActive}
         onClick={toggleXRay}
       />
@@ -541,19 +530,18 @@ export function RightToolbar() {
   const isSectioningMode = activeMode === 'sectioning';
 
   // Suppress tooltips on buttons whose tooltip area overlaps the mode toolbar overflow flyout
-  const lowerGroupTooltips = showTooltips && !isOverflowOpen;
+  const lowerGroupTooltips = !isOverflowOpen;
   // Suppress lower default tooltips only when a lower flyout overlaps them.
   // Render flyout should NOT suppress Sectioning/History tooltips.
   // History flyout should NOT suppress upper tooltips.
   const lowerDefaultTooltips =
-    showTooltips &&
-    (openFlyout === null || openFlyout === 'render' || openFlyout === 'history');
+    openFlyout === null || openFlyout === 'render' || openFlyout === 'history';
 
   const defaultToolbar = (
     <>
       {/* View group */}
       <RightToolbarGroup>
-        <TopDefaultButtons showTooltip={showTooltips} />
+        <TopDefaultButtons />
       </RightToolbarGroup>
 
       {/* Tools group */}
@@ -568,7 +556,7 @@ export function RightToolbar() {
                   src={button.src}
                   label={button.label}
                   shortcut={button.shortcut}
-                  showTooltip={showTooltips && openFlyout !== 'measure'}
+                  showTooltip={openFlyout !== 'measure'}
                   hasFlyout
                   isActive={openFlyout === 'measure'}
                   onClick={button.onClick}
@@ -576,22 +564,13 @@ export function RightToolbar() {
                 {openFlyout === 'measure' && (
                   <div
                     className="absolute right-full top-0 mr-2 z-[230] flex flex-col gap-2 w-max"
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      setShowFlyoutTooltips(true);
-                      setShowTooltips(false);
-                    }}
-                    onMouseLeave={() => {
-                      setShowFlyoutTooltips(false);
-                      setShowTooltips(true);
-                    }}
                   >
                     <RightToolbarGroup>
-                      <RightToolbarButton src={measureDistanceIcon} label="Dimensions" shortcut="R" showTooltip={showFlyoutTooltips} onClick={() => { setActiveMeasureTool('dimensions'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
-                      <RightToolbarButton src={measurePointIcon} label="Point to Point" shortcut="P" showTooltip={showFlyoutTooltips} onClick={() => { setActiveMeasureTool('point-to-point'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
-                      <RightToolbarButton src={measureAngleIcon} label="Laser" shortcut="L" showTooltip={showFlyoutTooltips} onClick={() => { setActiveMeasureTool('laser'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
-                      <RightToolbarButton src={measureAreaIcon} label="Manhole" shortcut="M" showTooltip={showFlyoutTooltips} onClick={() => { setActiveMeasureTool('manhole'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
-                      <RightToolbarButton src={measureHeightIcon} label="Coordinates" shortcut="C" showTooltip={showFlyoutTooltips} onClick={() => { setActiveMeasureTool('coordinates'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
+                      <RightToolbarButton src={measureDistanceIcon} label="Dimensions" shortcut="R" onClick={() => { setActiveMeasureTool('dimensions'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
+                      <RightToolbarButton src={measurePointIcon} label="Point to Point" shortcut="P" onClick={() => { setActiveMeasureTool('point-to-point'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
+                      <RightToolbarButton src={measureAngleIcon} label="Laser" shortcut="L" onClick={() => { setActiveMeasureTool('laser'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
+                      <RightToolbarButton src={measureAreaIcon} label="Manhole" shortcut="M" onClick={() => { setActiveMeasureTool('manhole'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
+                      <RightToolbarButton src={measureHeightIcon} label="Coordinates" shortcut="C" onClick={() => { setActiveMeasureTool('coordinates'); setActiveMode('measure'); setOpenFlyout(null); adapter.toggleMeasureTool?.(); }} />
                     </RightToolbarGroup>
                   </div>
                 )}
@@ -606,7 +585,7 @@ export function RightToolbar() {
                   src={button.src}
                   label={button.label}
                   shortcut={button.shortcut}
-                  showTooltip={showTooltips && openFlyout !== 'measure' && openFlyout !== 'create'}
+                  showTooltip={openFlyout !== 'measure' && openFlyout !== 'create'}
                   hasFlyout
                   isActive={openFlyout === 'create'}
                   onClick={button.onClick}
@@ -614,13 +593,6 @@ export function RightToolbar() {
                 {openFlyout === 'create' && (
                   <div
                     className="absolute right-full top-0 mr-2 z-[230] w-max"
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      setShowTooltips(false);
-                    }}
-                    onMouseLeave={() => {
-                      setShowTooltips(true);
-                    }}
                   >
                     <div className="bg-white rounded-lg shadow-[0_4px_12px_0_rgba(0,0,0,0.2)] flex flex-col w-[215px]">
                       <div className="flex flex-col gap-3 p-2">
@@ -701,7 +673,7 @@ export function RightToolbar() {
               src={button.src}
               label={button.label}
               shortcut={button.shortcut}
-              showTooltip={button.id === 'markup' ? showTooltips : lowerDefaultTooltips}
+              showTooltip={lowerDefaultTooltips}
               hasFlyout={hasFlyout}
               isActive={false}
               onClick={button.onClick}
@@ -734,13 +706,6 @@ export function RightToolbar() {
           {openFlyout === 'history' && (
             <div
               className="absolute right-full top-0 mr-2 z-[230] w-max"
-              onMouseEnter={(e) => {
-                e.stopPropagation();
-                setShowTooltips(false);
-              }}
-              onMouseLeave={() => {
-                setShowTooltips(true);
-              }}
             >
               <ActionHistoryFlyout
                 history={actionHistory}
@@ -755,7 +720,7 @@ export function RightToolbar() {
           src={redoIcon}
           label="Redo"
           shortcut="Cmd Y"
-          showTooltip={showTooltips && (openFlyout === null || openFlyout === 'render' || openFlyout === 'measure' || openFlyout === 'history')}
+          showTooltip={lowerDefaultTooltips}
           onClick={() => adapter.redo?.()}
         />
       </RightToolbarGroup>
@@ -766,11 +731,9 @@ export function RightToolbar() {
     <div
       ref={toolbarRef}
       id="right-toolbar"
-      className={`absolute right-2 top-2 flex flex-col gap-2 ${
+      className={`mv-toolbar-container absolute right-2 top-2 flex flex-col gap-2 ${
         activeMode === 'default' ? 'z-20' : 'z-[220]'
       }`}
-      onMouseEnter={() => setShowTooltips(true)}
-      onMouseLeave={() => setShowTooltips(false)}
     >
       {activeMode === 'default' ? defaultToolbar : (
         <>
@@ -794,15 +757,13 @@ export function RightToolbar() {
                 setActiveMeasureTool(null);
                 setActiveSectionTool(null);
               }}
-              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#D4EDDA] hover:bg-[#C3E6CB]"
+              className="group mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#D4EDDA] hover:bg-[#C3E6CB]"
             >
               <img src={saveIcon} width={24} height={24} alt="" aria-hidden="true" />
-              {showTooltips && (
-                <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left" aria-hidden="true">
-                  <span className="mv-toolbar-tooltip-shortcut">Enter</span>
-                  <span className="mv-toolbar-tooltip-label">Save and exit</span>
-                </div>
-              )}
+              <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left opacity-0 group-hover:opacity-100 transition-opacity duration-150" aria-hidden="true">
+                <span className="mv-toolbar-tooltip-shortcut">Enter</span>
+                <span className="mv-toolbar-tooltip-label">Save and exit</span>
+              </div>
             </button>
             {/* Exit and don't save */}
             <button
@@ -822,19 +783,17 @@ export function RightToolbar() {
                 setActiveMeasureTool(null);
                 setActiveSectionTool(null);
               }}
-              className="mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#F8D7DA] hover:bg-[#F5C6C6]"
+              className="group mv-toolbar-button relative flex items-center justify-center rounded p-1.5 transition-colors bg-[#F8D7DA] hover:bg-[#F5C6C6]"
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <g transform="translate(3 3)">
                   <path d="M11.3686 9.00025L18.0003 2.36856L15.6317 0L9 6.63169L2.36856 0.000253665L0 2.36881L6.63144 9.00025L0 15.6317L2.36856 18.0003L9 11.3688L15.6317 18.0005L18.0003 15.6319L11.3686 9.00025Z" fill="#842029"/>
                 </g>
               </svg>
-              {showTooltips && (
-                <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left" aria-hidden="true">
-                  <span className="mv-toolbar-tooltip-shortcut">Esc</span>
-                  <span className="mv-toolbar-tooltip-label">Exit and don't save</span>
-                </div>
-              )}
+              <div className="mv-toolbar-tooltip mv-toolbar-tooltip-left opacity-0 group-hover:opacity-100 transition-opacity duration-150" aria-hidden="true">
+                <span className="mv-toolbar-tooltip-shortcut">Esc</span>
+                <span className="mv-toolbar-tooltip-label">Exit and don't save</span>
+              </div>
             </button>
           </RightToolbarGroup>
 
@@ -843,8 +802,7 @@ export function RightToolbar() {
             <RightToolbarButton
               src={resetIcon}
               label={activeMode === 'sectioning' ? 'Clear sectioning' : 'Clear markup'}
-              showTooltip={showTooltips}
-              onClick={() => {
+                           onClick={() => {
                 if (activeMode === 'sectioning') {
                   adapter.clearActionCategory?.('sectioning');
                 } else if (activeMode === 'markup' || activeMode === 'create') {
@@ -858,9 +816,9 @@ export function RightToolbar() {
           {activeMode === 'sectioning' ? (
             <>
               <RightToolbarGroup>
-                <RightToolbarButton src={sectionPlaneIcon} label="Section plane" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-plane'} onClick={() => { setActiveSectionTool('section-plane'); adapter.setActiveSectioningTool?.('section-plane'); }} />
-                <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-box'} onClick={() => { setActiveSectionTool('section-box'); setActiveSectionBoxSubTool('move'); adapter.setActiveSectioningTool?.('section-box'); adapter.setSectionBoxSubTool?.('move'); }} />
-                <RightToolbarButton src={sectionCutIcon} label="Section cut" shortcut="--" showTooltip={showTooltips} isActive={activeSectionTool === 'section-cut'} onClick={() => { setActiveSectionTool('section-cut'); adapter.setActiveSectioningTool?.('section-cut'); }} />
+                <RightToolbarButton src={sectionPlaneIcon} label="Section plane" shortcut="--" isActive={activeSectionTool === 'section-plane'} onClick={() => { setActiveSectionTool('section-plane'); adapter.setActiveSectioningTool?.('section-plane'); }} />
+                <RightToolbarButton src={sectionBoxIcon} label="Section box" shortcut="--" isActive={activeSectionTool === 'section-box'} onClick={() => { setActiveSectionTool('section-box'); setActiveSectionBoxSubTool('move'); adapter.setActiveSectioningTool?.('section-box'); adapter.setSectionBoxSubTool?.('move'); }} />
+                <RightToolbarButton src={sectionCutIcon} label="Section cut" shortcut="--" isActive={activeSectionTool === 'section-cut'} onClick={() => { setActiveSectionTool('section-cut'); adapter.setActiveSectioningTool?.('section-cut'); }} />
               </RightToolbarGroup>
 
               {/* Section-box sub-tools */}
@@ -869,22 +827,19 @@ export function RightToolbar() {
                   <RightToolbarButton
                     src={sectionBoxMoveIcon}
                     label="Move box"
-                    showTooltip={showTooltips}
-                    isActive={activeSectionBoxSubTool === 'move'}
+                                       isActive={activeSectionBoxSubTool === 'move'}
                     onClick={() => setSectionBoxSubTool('move')}
                   />
                   <RightToolbarButton
                     src={sectionBoxDragFaceIcon}
                     label="Drag face"
-                    showTooltip={showTooltips}
-                    isActive={activeSectionBoxSubTool === 'drag-face'}
+                                       isActive={activeSectionBoxSubTool === 'drag-face'}
                     onClick={() => setSectionBoxSubTool('drag-face')}
                   />
                   <RightToolbarButton
                     src={sectionBoxRotateIcon}
                     label="Rotate box"
-                    showTooltip={showTooltips}
-                    isActive={activeSectionBoxSubTool === 'rotate'}
+                                       isActive={activeSectionBoxSubTool === 'rotate'}
                     onClick={() => setSectionBoxSubTool('rotate')}
                   />
                 </RightToolbarGroup>
@@ -893,23 +848,23 @@ export function RightToolbar() {
             </>
           ) : activeMode === 'measure' ? (
             <RightToolbarGroup>
-              <RightToolbarButton src={measureDistanceIcon} label="Dimensions" shortcut="R" showTooltip={showTooltips} isActive={activeMeasureTool === 'dimensions'} onClick={() => setActiveMeasureTool('dimensions')} />
-              <RightToolbarButton src={measurePointIcon} label="Point to Point" shortcut="P" showTooltip={showTooltips} isActive={activeMeasureTool === 'point-to-point'} onClick={() => setActiveMeasureTool('point-to-point')} />
-              <RightToolbarButton src={measureAngleIcon} label="Laser" shortcut="L" showTooltip={showTooltips} isActive={activeMeasureTool === 'laser'} onClick={() => setActiveMeasureTool('laser')} />
-              <RightToolbarButton src={measureAreaIcon} label="Manhole" shortcut="M" showTooltip={showTooltips} isActive={activeMeasureTool === 'manhole'} onClick={() => setActiveMeasureTool('manhole')} />
-              <RightToolbarButton src={measureHeightIcon} label="Coordinates" shortcut="C" showTooltip={showTooltips} isActive={activeMeasureTool === 'coordinates'} onClick={() => setActiveMeasureTool('coordinates')} />
+              <RightToolbarButton src={measureDistanceIcon} label="Dimensions" shortcut="R" isActive={activeMeasureTool === 'dimensions'} onClick={() => setActiveMeasureTool('dimensions')} />
+              <RightToolbarButton src={measurePointIcon} label="Point to Point" shortcut="P" isActive={activeMeasureTool === 'point-to-point'} onClick={() => setActiveMeasureTool('point-to-point')} />
+              <RightToolbarButton src={measureAngleIcon} label="Laser" shortcut="L" isActive={activeMeasureTool === 'laser'} onClick={() => setActiveMeasureTool('laser')} />
+              <RightToolbarButton src={measureAreaIcon} label="Manhole" shortcut="M" isActive={activeMeasureTool === 'manhole'} onClick={() => setActiveMeasureTool('manhole')} />
+              <RightToolbarButton src={measureHeightIcon} label="Coordinates" shortcut="C" isActive={activeMeasureTool === 'coordinates'} onClick={() => setActiveMeasureTool('coordinates')} />
             </RightToolbarGroup>
           ) : (
             // markup mode (and create mode falls back here until its own tools are designed)
             <RightToolbarGroup>
-              <RightToolbarButton src={markupSelectIcon} label="Select" shortcut="V" showTooltip={showTooltips} isActive={activeMarkupTool === 'select'} onClick={() => { setActiveMarkupTool('select'); adapter.setMarkupTool?.('select'); }} />
-              <RightToolbarButton src={markupTextIcon} label="Text" shortcut="T" showTooltip={showTooltips} isActive={activeMarkupTool === 'text'} onClick={() => { setActiveMarkupTool('text'); adapter.setMarkupTool?.('text'); }} />
-              <RightToolbarButton src={markupLineIcon} label="Line" shortcut="L" showTooltip={showTooltips} isActive={activeMarkupTool === 'line'} onClick={() => { setActiveMarkupTool('line'); adapter.setMarkupTool?.('line'); }} />
-              <RightToolbarButton src={markupRectIcon} label="Shape" shortcut="R" showTooltip={showTooltips} isActive={activeMarkupTool === 'shape'} onClick={() => { setActiveMarkupTool('shape'); adapter.setMarkupTool?.('shape'); }} />
-              <RightToolbarButton src={markupPenIcon} label="Freehand" shortcut="F" showTooltip={showTooltips} isActive={activeMarkupTool === 'freehand'} onClick={() => { setActiveMarkupTool('freehand'); adapter.setMarkupTool?.('freehand'); }} />
-              <RightToolbarButton src={markupFreehandIcon} label="Callout" shortcut="B" showTooltip={showTooltips} isActive={activeMarkupTool === 'callout'} onClick={() => { setActiveMarkupTool('callout'); adapter.setMarkupTool?.('callout'); }} />
-              <RightToolbarButton src={markupCalloutIcon} label="Highlighter" shortcut="H" showTooltip={showTooltips} isActive={activeMarkupTool === 'highlighter'} onClick={() => { setActiveMarkupTool('highlighter'); adapter.setMarkupTool?.('highlighter'); }} />
-              <RightToolbarButton src={markupHighlighterIcon} label="Cloud" shortcut="C" showTooltip={showTooltips} isActive={activeMarkupTool === 'cloud'} onClick={() => { setActiveMarkupTool('cloud'); adapter.setMarkupTool?.('cloud'); }} />
+              <RightToolbarButton src={markupSelectIcon} label="Select" shortcut="V" isActive={activeMarkupTool === 'select'} onClick={() => { setActiveMarkupTool('select'); adapter.setMarkupTool?.('select'); }} />
+              <RightToolbarButton src={markupTextIcon} label="Text" shortcut="T" isActive={activeMarkupTool === 'text'} onClick={() => { setActiveMarkupTool('text'); adapter.setMarkupTool?.('text'); }} />
+              <RightToolbarButton src={markupLineIcon} label="Line" shortcut="L" isActive={activeMarkupTool === 'line'} onClick={() => { setActiveMarkupTool('line'); adapter.setMarkupTool?.('line'); }} />
+              <RightToolbarButton src={markupRectIcon} label="Shape" shortcut="R" isActive={activeMarkupTool === 'shape'} onClick={() => { setActiveMarkupTool('shape'); adapter.setMarkupTool?.('shape'); }} />
+              <RightToolbarButton src={markupPenIcon} label="Freehand" shortcut="F" isActive={activeMarkupTool === 'freehand'} onClick={() => { setActiveMarkupTool('freehand'); adapter.setMarkupTool?.('freehand'); }} />
+              <RightToolbarButton src={markupFreehandIcon} label="Callout" shortcut="B" isActive={activeMarkupTool === 'callout'} onClick={() => { setActiveMarkupTool('callout'); adapter.setMarkupTool?.('callout'); }} />
+              <RightToolbarButton src={markupCalloutIcon} label="Highlighter" shortcut="H" isActive={activeMarkupTool === 'highlighter'} onClick={() => { setActiveMarkupTool('highlighter'); adapter.setMarkupTool?.('highlighter'); }} />
+              <RightToolbarButton src={markupHighlighterIcon} label="Cloud" shortcut="C" isActive={activeMarkupTool === 'cloud'} onClick={() => { setActiveMarkupTool('cloud'); adapter.setMarkupTool?.('cloud'); }} />
             </RightToolbarGroup>
           )}
 
@@ -975,18 +930,9 @@ export function RightToolbar() {
               {isOverflowOpen && (
                 <div
                   className="absolute right-full top-0 mr-2 z-[230] flex flex-col gap-2 w-max"
-                  onMouseEnter={(e) => {
-                    e.stopPropagation();
-                    setShowFlyoutTooltips(true);
-                    setShowTooltips(false);
-                  }}
-                  onMouseLeave={() => {
-                    setShowFlyoutTooltips(false);
-                    setShowTooltips(true);
-                  }}
                 >
                   <RightToolbarGroup>
-                    <TopDefaultButtons showTooltip={showFlyoutTooltips} />
+                    <TopDefaultButtons />
                   </RightToolbarGroup>
                   <RightToolbarGroup>
                     {overflowModeButtons.map((button) => (
@@ -995,7 +941,6 @@ export function RightToolbar() {
                         src={button.src}
                         label={button.label}
                         shortcut={button.shortcut}
-                        showTooltip={showFlyoutTooltips}
                         onClick={() => {
                           setIsOverflowOpen(false);
                           button.enterMode();

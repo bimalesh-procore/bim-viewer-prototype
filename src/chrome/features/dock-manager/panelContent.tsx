@@ -15,6 +15,10 @@ import {
   Check,
   Star,
 } from 'lucide-react';
+import { AssetsListView } from '../items-panel/AssetsListView';
+import { AssetDetailView } from '../items-panel/AssetDetailView';
+import type { Asset } from '../items-panel/types';
+import { useItemsView, setItemsView } from '../../shared/useItemsView';
 import editIcon from '../../assets/icons/views/edit.svg';
 import shareIcon from '../../assets/icons/views/share.svg';
 import moreIcon from '../../assets/icons/views/more.svg';
@@ -125,35 +129,75 @@ function SearchSetsContent() {
 // ─── Related Items ────────────────────────────────────────────────────────────
 
 const ITEMS = [
-  { label: 'Assets', Icon: Home },
-  { label: 'Coordination Issues', Icon: AlertTriangle },
-  { label: 'Punch List', Icon: Wrench },
-  { label: 'Quality Inspections', Icon: ClipboardList },
-  { label: 'Quality Observation', Icon: Binoculars },
-  { label: 'RFIs', Icon: FileQuestion },
-  { label: 'Safety Inspections', Icon: ShieldCheck },
-  { label: 'Safety Observation', Icon: Binoculars },
-  { label: 'Submittals', Icon: ListChecks },
+  { key: 'assets',                label: 'Assets',                Icon: Home          },
+  { key: 'coordination-issues',   label: 'Coordination Issues',   Icon: AlertTriangle },
+  { key: 'punch-list',            label: 'Punch List',            Icon: Wrench        },
+  { key: 'quality-inspections',   label: 'Quality Inspections',   Icon: ClipboardList },
+  { key: 'quality-observation',   label: 'Quality Observation',   Icon: Binoculars    },
+  { key: 'rfis',                  label: 'RFIs',                  Icon: FileQuestion  },
+  { key: 'safety-inspections',    label: 'Safety Inspections',    Icon: ShieldCheck   },
+  { key: 'safety-observation',    label: 'Safety Observation',    Icon: Binoculars    },
+  { key: 'submittals',            label: 'Submittals',            Icon: ListChecks    },
 ] as const;
 
 function ItemsContent() {
+  const view = useItemsView();
+  const adapter = useViewerAdapter();
+
+  const handleAssetClick = (asset: Asset) => {
+    // Bridge to the BIM model. linkedElementId is an IFC expressID today;
+    // when the adapter gains GUID lookup, only the values change.
+    adapter.selectAndFocusObject?.(asset.linkedElementId);
+    setItemsView({ kind: 'asset-detail', assetId: asset.id, assetName: asset.name });
+  };
+
   return (
-    <ul className="bg-white rounded-md overflow-hidden px-2 py-1">
-      {ITEMS.map(({ label, Icon }) => (
-        <li key={label}>
-          <button
-            type="button"
-            className="flex w-full items-center justify-between rounded-md px-2 py-[11px] text-left transition-colors hover:bg-gray-100"
-          >
-            <span className="flex items-center gap-3 text-sm font-semibold text-gray-700">
-              <Icon size={16} strokeWidth={2} className="text-gray-600" />
-              {label}
-            </span>
-            <span className="pr-1 text-xl leading-none text-gray-400">›</span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="bg-white rounded-md overflow-hidden">
+      {view.kind === 'hub' && (
+        <ul className="px-2 py-1">
+          {ITEMS.map(({ key, label, Icon }) => (
+            <li key={key}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (key === 'assets') {
+                    setItemsView({ kind: 'assets-list' });
+                  } else {
+                    setItemsView({ kind: 'category-placeholder', category: key, label });
+                  }
+                }}
+                className="flex w-full items-center justify-between rounded-md px-2 py-[11px] text-left transition-colors hover:bg-gray-100"
+              >
+                <span className="flex items-center gap-3 text-sm font-semibold text-gray-700">
+                  <Icon size={16} strokeWidth={2} className="text-gray-600" />
+                  {label}
+                </span>
+                <span className="pr-1 text-xl leading-none text-gray-400">›</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {view.kind === 'assets-list' && (
+        <AssetsListView onAssetClick={handleAssetClick} />
+      )}
+
+      {view.kind === 'asset-detail' && (
+        <AssetDetailView assetId={view.assetId} />
+      )}
+
+      {view.kind === 'category-placeholder' && (
+        <div className="px-4 py-10 text-center">
+          <p className="text-sm text-gray-700">
+            {view.label} content goes here.
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            Awaiting direction on what to show in this section.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

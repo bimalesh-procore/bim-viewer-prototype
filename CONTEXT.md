@@ -110,7 +110,11 @@ src/chrome/
 ├── shared/                  ← Shared UI primitives: TreeNode (extensible tree row with opt-in
 │                              actions/rename/DnD/subtitle/hideFolderIcon/labelBold props —
 │                              see CLAUDE.md §4f), DropdownMenu + DropdownMenuItem (portaled
-│                              context menus, right-aligned to anchor, outside-click dismiss)
+│                              context menus, right-aligned to anchor, outside-click dismiss),
+│                              ToolbarButton (CSS-hover tooltip via mv-toolbar-button class),
+│                              useItemsView (useSyncExternalStore singleton for Items panel
+│                              navigation state — lives in shared/ so DockManager can read
+│                              it without a cross-feature import)
 ├── assets/icons/            ← SVGs for all toolbars and header
 ├── index.css                ← Tailwind directives + dark-theme CSS overrides
 └── main.tsx                 ← Entry point: mounts ModelManagerPage when ?model= is absent,
@@ -237,13 +241,17 @@ When the cursor points at empty space (sky / open atrium / past the model edge),
 - **Orientation toggle** → rotate button on tablet/phone swaps `?orient=portrait`/`?orient=landscape`. Tablet default = landscape; phone default = portrait. URL omits `?orient=` when it matches the default
 - **Bottom toolbar ↔ right toolbar sync (Ortho / Render Settings / X-Ray)** → `ViewerSettingsContext` owns `isOrthographic`, `isXRayActive`, and `renderToggles`; both toolbars read/write through `useViewerSettings()`. Ortho/X-Ray delegate to the adapter; render-settings state is context-only until the engine has a concept for it
 - **Render style picker** → bottom toolbar dropdown (Default / Realism). Selection persists in URL via `?style=realism` (URL omitted when Default) using `URLSearchParams` + `history.replaceState` — preserves `?model=`, `?form=`, `?orient=` per [CLAUDE.md §3d](./CLAUDE.md). Visual-only — no adapter call yet
+- **Items panel (Related Items)** → hub list of 9 categories. Assets category is fully wired: list view with search/filter UI, tile cards (status pill, comment count, external-link icon), and a detail view behind each tile (6 tabs: General · Doc · Field · Cx · Ops · Maintenance — General tab fully populated with Photo hero + thumbnails, General Information, Specification Details, Maintenance Details, and Specialty Contractor collapsible cards). Clicking a tile calls `adapter.selectAndFocusObject(linkedElementId)` to highlight the corresponding BIM element. All other hub categories (Punch List, RFIs, etc.) show a placeholder. Internal navigation uses `useItemsView` (`src/chrome/shared/useItemsView.ts`) — a `useSyncExternalStore` singleton that DockManager reads to drive the panel header title and back-arrow without coupling `ItemsContent` to `DockManager`. Mock data lives in `assetsData.ts` behind `getAssets()` / `getAssetById()` Promises — swap to real API by replacing those two functions only. `linkedElementId` is an IFC `expressID` today; GUID swap is a data + adapter change only.
+- **Toolbar tooltips** → CSS-based, no JS timer. `ToolbarButton` renders a `.mv-toolbar-tooltip` div when `showTooltip` is true (default). Visibility is controlled entirely by CSS: `.mv-toolbar-container:hover .mv-toolbar-tooltip { opacity: 1 }` shows all tooltips when hovering any button in the left or right toolbar; `.mv-toolbar-button:hover .mv-toolbar-tooltip` handles per-button hover for standalone contexts (bottom toolbar, flyout panels). Left and right toolbar containers carry the `mv-toolbar-container` class. Bottom toolbar nav-mode, Render Settings, and Render Mode buttons have inline `.mv-toolbar-tooltip-top` divs since they are raw `<button>` elements not using `ToolbarButton`.
 - **Viewpoints panel** → full custom-viewpoint CRUD. Orange `+` in panel header opens a Create dropdown (Create Viewpoint wired; Create Folder and Import stubs). "Create Viewpoint" captures current camera + hiddenObjects + sectioning and saves to `public/viewpoints.json` via `POST /__viewpoints/custom`. Click a row to restore (camera + visibility + sectioning animated). Selected row auto-deselects on camera move (700ms cooldown after restore animation). Hover or selected state reveals Edit Name, Share, and More icon buttons; More dropdown offers Update (re-save to existing viewpoint in-place), Rename, Delete (all wired) plus Move to Folder and Add to Project Views (stubs). Double-click or Edit Name button renames inline (Enter/blur commits, Escape cancels). Drag-to-reorder persists order to file. Empty state shown when no viewpoints saved. Dev-write only — prod shows error toast on save. State lives in `ViewpointsContext`. Rows render via `TreeNode` directly (no `ViewRow` wrapper); both the Create and More dropdowns use the shared `DropdownMenu` component. See CLAUDE.md §4e and §4f.
 
 ### Wired to stubs (engine feature not built)
 - Properties, Measure, Undo, Redo — log to console
 
 ### Not wired yet
-- Search Sets, Items, Deviation, Render Modes (mesh/lines/terrain/point-cloud toggles — context-only, no engine concept), Markup, Quick Create, ViewCube faces, Header Search, MiniMap
+- Search Sets, Deviation, Render Modes (mesh/lines/terrain/point-cloud toggles — context-only, no engine concept), Markup, Quick Create, ViewCube faces, Header Search, MiniMap
+- Items panel non-Assets categories (Punch List, RFIs, Quality Inspections, etc.) — placeholder views only; real data + sub-views not yet built
+- Items panel Asset detail tabs Doc / Field / Cx / Ops / Maintenance — stub content
 
 ## React StrictMode Consideration
 

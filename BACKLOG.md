@@ -16,7 +16,7 @@ Future work items that have been discussed but not yet implemented.
 Don't put session-scoped work here — that belongs in the agent's task
 list. This file is for things that survive across sessions.
 
-See [`CLAUDE.md` §10](./CLAUDE.md) for the full workflow, and §9 for the
+See [`CLAUDE.md` §9](./CLAUDE.md) for the full workflow, and §1 for the
 documentation sweep that runs alongside it on every commit.
 
 ---

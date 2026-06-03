@@ -1,6 +1,10 @@
-# Search Set Manager — Implementation Reference
+# Search Set Manager — Legacy Engine-Layer Implementation
 
-This document fully describes the implemented Search Set Manager feature. It is self-contained: an engineer can rebuild the feature from scratch using only this file.
+> **Scope:** This document describes the **legacy dark-theme implementation** of Search Sets — the vanilla JS engine layer that powers `demo/old.html` and the Playwright test suite (`evals/tests/search-sets.spec.js`). The files it references (`src/ui/SearchSetsPanel.js`, `src/ui/LeftSidebar.js`, `src/styles/dark-theme.css`) are the engine-layer UI and are tested by the existing 28-test Playwright suite.
+>
+> The **React chrome version** lives at `src/chrome/features/search-sets/` and communicates through the ViewerAdapter interface (`adapter.getSearchSets?.()`, `adapter.executeSearchSet?.()`) — not through the `LeftSidebar` or `src/ui/` layer described here. If you are building or modifying the chrome Search Sets panel, read `CLAUDE.md §4` and the ViewerAdapter types instead.
+
+This document is retained as a full reference for the engine-layer implementation. An engineer can rebuild that layer from scratch using only this file.
 
 ---
 

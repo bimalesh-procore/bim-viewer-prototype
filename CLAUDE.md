@@ -24,7 +24,7 @@ Both steps below are **required** every time the agent runs `git commit` or `git
    | Z-fighting fix history / follow-ups | [`Z_FIGHTING.md`](./Z_FIGHTING.md) |
    | Test infrastructure / suites / fixtures | [`TEST_PLAN.md`](./TEST_PLAN.md) |
    | Dead-end experiments worth remembering | [`EXPERIMENTS.md`](./EXPERIMENTS.md) |
-   | Anything surfaced but not built | [`BACKLOG.md`](./BACKLOG.md) — see §10 |
+   | Anything surfaced but not built | [`BACKLOG.md`](./BACKLOG.md) — see §9 |
 
 2. **Update each relevant file.** Write the *behavior* and the *reason*, not the line-by-line diff. Future readers want to know what to expect and why decisions were made, not what got renamed.
 
@@ -196,6 +196,7 @@ The model picker uses native `<a href="?model=…">` navigation (per §3, the co
 - **`demo/old.html`** — the legacy dark-theme entry point. Used by existing Playwright tests. **Do not modify.**
 - **`demo/test-page.html`** — mock scene test page. Used by regression and selection tests. **Do not modify.**
 - `ChromeApp.tsx` creates `ModelViewer` with `showToolbar: false, showStatusBar: false` (Chrome provides its own UI), overrides the dark scene background to light gray, and provides the real adapter via React Context.
+- **`src/chrome/main.tsx` routes on load:** if `?model=` is present in the URL it mounts `<ChromeApp>`; if absent it mounts `<ModelManagerPage>` — a standalone landing page (static Procore header, empty-state UI, "Create Project Model" CTA that navigates to `?model=condos`). The viewer header's Close button navigates back to the Model Manager by stripping all query params. Routing is URL-based with no router library.
 - `src/chrome/index.css` contains Tailwind directives and CSS overrides that neutralize `dark-theme.css` styles (transparent background, hidden dark toolbar/status bar, light-themed panels).
 
 ### 4b. Model Files (`public/models/`)
@@ -300,7 +301,8 @@ of truth; localStorage is **not** used.
   "models": {
     "condos": {
       "homeView": { /* Viewpoint */ } | null,
-      "customViews": [ /* Viewpoint, ... */ ]   // user-saved views from the Views panel
+      "folders": [ /* ViewpointFolder, ... */ ],  // folder hierarchy for the Viewpoints panel
+      "customViews": [ /* Viewpoint, ... */ ]   // user-saved views; each may carry a folderId
     },
     ...
   }
@@ -312,6 +314,20 @@ Each `Viewpoint` captures the camera (`cameraPosition`, `cameraTarget`,
 sectioning state (`sectioning: SectioningSnapshot | null` — planes + box),
 and `markups: MarkupData[]` (always `[]` for now — reserved for future markup capture). Types live in
 `src/chrome/features/viewpoints/types.ts`.
+
+`ViewpointFolder` shape: `{ id: string; name: string; parentFolderId?: string | null }`.
+`parentFolderId` supports arbitrary nesting — `null` or absent means root level. Each
+`Viewpoint` in `customViews` carries an optional `folderId` pointing to its parent folder.
+
+**Drag-and-drop ordering invariants** (enforced at every nesting level): folders must
+precede viewpoints — drops that would violate this snap to the nearest valid boundary.
+Dropping a folder into one of its own descendants is a no-op (circular ancestry guard).
+
+**Writer bug (historical, fixed):** `migrateEntry` and `ensureModelEntry` in
+`vite-plugin-viewpoints-writer.mjs` were stripping the `folders` array on every write,
+blanking the Viewpoints panel after any D&D operation. Both functions now explicitly
+preserve `folders`. When modifying the writer, always verify `folders` survives a
+round-trip read → mutate → write → read.
 
 **Reading** — the chrome fetches `/viewpoints.json` with `cache: 'no-cache'`
 once on app boot via the module-level promise-cached `viewpointStore`
@@ -325,8 +341,10 @@ middleware endpoints on the Vite dev server:
 
 - `POST /__viewpoints/home` — used by Settings "Update Home View"; replaces
   `homeView` for the given `modelId`.
-- `POST /__viewpoints/custom` — used by the Views panel; supports actions
-  `add`, `delete`, `rename`, and `reorder` against `customViews`.
+- `POST /__viewpoints/custom` — used by the Viewpoints panel; supports actions
+  `add`, `delete`, `rename`, `reorder`, and `update` against `customViews`. The `reorder`
+  action receives the full `customViews` array with updated `folderId` values so cross-folder
+  D&D (which changes a viewpoint's folder assignment) persists in a single call.
 
 Both endpoints read the file, apply the mutation, write back, and respond
 with the updated JSON. The in-memory cache in `viewpointStore.ts` is updated
@@ -471,6 +489,21 @@ element (e.g. Settings anchors to the right toolbar), compute the
 component, not inside FloatingWindow itself. The right toolbar carries
 `id="right-toolbar"` for this purpose.
 
+**TreeNode (`src/chrome/shared/TreeNode.tsx`) — opt-in props:**
+
+| Prop | Purpose |
+|---|---|
+| `subtitle` | Second line of text below the label. Used in the Sheets panel for sheet number / status. |
+| `hideFolderIcon` | Suppress the folder chevron icon for folder-type rows used as section headers rather than navigable folders. |
+| `labelBold` | Render the label text in bold. Used for section-header emphasis in the Sheets panel. |
+| `showActionsOnHover` | Show the `actions` slot only when the row is hovered or selected; otherwise always visible. |
+
+**Folder-row click vs chevron toggle — do not re-couple:**
+Clicking a folder row fires only `onClick` (selection). Clicking the chevron fires only `onToggle`
+(expand/collapse) and calls `stopPropagation` so the row `onClick` does not also fire. This split
+is intentional — folder rows need to be selectable without accidentally toggling expand state. If
+you extend TreeNode or build a new panel with folder rows, preserve this decoupling.
+
 ### 4g. Toast Notifications (`src/chrome/features/toast/`)
 
 Reusable toast surface for transient, non-modal feedback. Variants:
@@ -545,6 +578,41 @@ The mitigation lives in `finalizeMeshAfterReveal`:
 hypotheses, residual limitations, tier-1 / tier-2 follow-ups if we ever
 want to fully eliminate the residual speckle): see
 [`Z_FIGHTING.md`](./Z_FIGHTING.md).
+
+### 4i. Sectioning Tool (`src/features/Sectioning.js`)
+
+The sectioning tool has three sub-modes, all producing WebGL clip planes managed by the renderer.
+The active sub-tool is set via `adapter.setActiveSectioningTool(tool)`.
+
+| Sub-tool | Value | Description |
+|---|---|---|
+| Section Plane | `'section-plane'` | Place + drag a single clip plane on an object face |
+| Section Cut | `'section-cut'` | Drag a cross-section slice through the model |
+| Section Box | `'section-box'` | Surround geometry with 6 clip planes; inner sub-modes: drag-face / move / rotate |
+
+**Gizmo overlay vs clip planes — critical distinction:**
+- `setActiveTool(null)` — hides the gizmo overlay and wireframe box **without removing clip planes**. Used by `setViewpointState` when restoring a saved viewpoint that includes sectioning: the planes stay active and clip the scene, but no tool UI is shown.
+- `clearSectioningPlanes()` — actually removes the clip planes from the renderer. Called only by the "Exit and don't save" button. Do not call this when you simply want to hide the gizmo.
+
+**Section box specifics:**
+- Default box dimensions scale with camera distance: 20% of cam-to-center distance, clamped to 8%–30% of the scene's largest dimension. The size feels appropriate from the user's current viewpoint but may be unexpectedly small if the camera is positioned far from the model center.
+- **Re-entry guard:** `hasSectionBox` prevents recreating the box when re-entering section-box mode — existing planes are reused. To reset the box to default sizing, call `clearSectioningPlanes()` before re-entering.
+- **"Isolate in section box"** context menu option (right-click → Isolate → Isolate in section box): fits the section box around the clicked object with 25% padding and activates section-box/move mode automatically.
+
+**Gizmo overflow button — capture phase, do not change:**
+The white circle overflow button on section plane/cut gizmos uses `document.addEventListener('mousemove', …, { capture: true })`. Never switch to bubble phase: the gizmo's own `el.stopPropagation()` silently blocks a bubble-phase listener for axis-aligned section-cut gizmos (no bounding-rect corner gap for the event to bubble through). The capture fix is also noted in CONTEXT.md "Wired and working."
+
+**MarkupTool (`src/features/MarkupTool.js`) — ResizeObserver:**
+`MarkupTool` observes canvas size changes via `ResizeObserver` on the canvas parent element, not `window.addEventListener('resize', …)`. This is intentional: layout-driven size changes (panels docking/undocking) resize the canvas without triggering a `window.resize` event. Do not revert to `window.resize`.
+
+**Adapter methods for markup and sectioning-view-mode:**
+Several adapter methods in `types.ts` are defined but partially stubbed pending full markup / sectioning-view-mode buildout:
+- `subscribeMarkupModeActive`, `subscribeMarkupChange`, `registerMarkupCommitCallback` — markup mode lifecycle events
+- `showMarkupOverlay(markups, animate?)`, `hideMarkupOverlay()` — overlay show/hide
+- `enterSectioningViewMode(viewId?)`, `exitSectioningViewMode(save)`, `subscribeSectioningViewModeActive` — sectioning-view-mode draft pattern (entering/exiting the "modify + save" loop for a specific viewpoint)
+- `getSectioningViewId`, `setSectioningViewId`, `setAutoSectioningViewId`, `getAutoSectioningViewId` — view ID tracking within sectioning-view-mode
+
+These are optional (`?:`) on the interface so existing callers compile without them. Implement in `modelViewerAdapter.ts` as this feature area is built out.
 
 ### 5. Sync Source (`model-chrome/`)
 - `model-chrome/` is a **read-only reference copy** of the external ModelChrome repository maintained by colleagues.

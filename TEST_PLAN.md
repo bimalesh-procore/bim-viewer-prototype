@@ -102,7 +102,7 @@ Tests click-based element selection, multi-select (Ctrl+click), deselection, hov
 
 ### 4. Left Sidebar Suite (`left-sidebar.spec.js`) — 11 tests
 
-Tests the vertical toolbar on the left side of the viewer.
+Tests the **legacy dark-theme** vertical toolbar (`demo/test-page.html`, `.mv-left-sidebar`) — not the React chrome's `src/chrome/features/left-toolbar/`. This suite exists to verify the engine-layer sidebar that powers `demo/old.html`. Chrome left-toolbar tests belong in `src/chrome/__tests__/`.
 
 | Test | What It Verifies |
 |---|---|
@@ -139,7 +139,7 @@ Tests the current 3D engine against every capability that the Chrome UI requires
 | Right toolbar features | CHROME-RT-001 to 008 | Orthographic, Render Modes, X-Ray, Markup, Measure, Quick Create, Sectioning, Reset |
 | Unique components | CHROME-UC-001 to 005 | ViewCube camera API, preset orientations, MiniMap bounds, NavigationWheel modes, Header search |
 | UI replacement tracking | CHROME-RPL-001 to 007 | Confirms current UI elements that Chrome will replace |
-| New UI tracking | CHROME-NEW-001 to 005 | Confirms Chrome elements that don't exist yet (Header, Right Toolbar, ViewCube, MiniMap, NavigationWheel) |
+| New UI tracking | CHROME-NEW-001 to 005 | Confirms that chrome-specific UI elements (Header, Right Toolbar, ViewCube, MiniMap, NavigationWheel) are absent from the legacy engine layer (`demo/old.html`). These elements all exist in the React chrome layer — the tests verify the engine itself does not ship them. NavigationWheel was replaced by the bottom-toolbar nav-mode picker. |
 
 **Note:** Some tests are expected to fail — they document missing features (undo/redo, measure, markup, etc.). As features are implemented, these tests should turn green.
 
@@ -176,7 +176,6 @@ When written, this suite should cover the following behaviors (all use the mock 
 | NAV-004 | WASD keys move camera in world space when model is loaded |
 | NAV-005 | Movement direction is camera-relative (not world-axis-aligned) |
 | NAV-006 | Q/E keys move camera up/down |
-| NAV-007 | Escape key returns to Default (look) mode from any mode |
 | NAV-008 | Right-click drag in Default mode orbits (camera position changes) |
 | NAV-009 | Right-click drag in Orbit mode performs look-around (camera position unchanged) |
 | NAV-010 | `right-drag-orbit-start` event fires on right-mousedown in Default/Fly mode |
@@ -254,7 +253,7 @@ test.describe('Feature Name', () => {
 - **Prefer the mock scene** (`setupViewer`) over real IFC loading (`setupViewerWithModel`) — it is 10x faster.
 - **Use `page.evaluate()`** to call viewer APIs and read state. Avoid relying on DOM selectors for internal state.
 - **Capture events** with the `captureEvents` helper when testing that the viewer emits the correct events.
-- **Timeouts:** The global timeout is 180s. For IFC loading tests, use explicit `{ timeout: 120000 }` on `waitForFunction`.
+- **Timeouts:** The global timeout is 30s (matches `playwright.config.js`). Use explicit `{ timeout }` overrides only for tests that must wait for external resources or unusually slow animations. Do not set timeouts > 30s without a clear reason — the synthetic fixture loads in ~100ms, so a test needing more than a few seconds is usually waiting for the wrong thing.
 - **No flaky waits:** Prefer `waitForFunction` over `waitForTimeout` wherever possible. Use `waitForTimeout` only for rendering settle time after setup.
 - **Cleanup:** Features with `destroy()` methods should have a test verifying cleanup (listeners removed, state cleared).
 

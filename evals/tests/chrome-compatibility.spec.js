@@ -216,12 +216,9 @@ test.describe('Chrome Compatibility — Right Toolbar Features', () => {
 
   test('CHROME-RT-001: Orthographic camera toggle exists', async ({ page }) => {
     const result = await page.evaluate(() => {
-      const cam = window.viewer.sceneManager.getCamera();
-      // Check if camera is perspective (can we switch to ortho?)
-      return cam?.isPerspectiveCamera === true
-        && typeof window.viewer.sceneManager.setOrthographic === 'function';
+      // Orthographic toggle lives on navigation, not sceneManager.
+      return typeof window.viewer.navigation.setOrthographic === 'function';
     });
-    // Expected: FAIL — no ortho toggle method, only perspective camera
     expect(result).toBe(true);
   });
 
@@ -375,9 +372,13 @@ test.describe('Chrome Compatibility — Current UI Elements That Will Be Replace
     expect(exists).toBeGreaterThan(0);
   });
 
-  test('CHROME-RPL-002: .mv-sidebar-btn exists with 7 buttons (Chrome has 6)', async ({ page }) => {
+  test('CHROME-RPL-002: .mv-sidebar-btn exists with 7 buttons (Chrome LeftToolbar also has 7)', async ({ page }) => {
     const count = await page.locator('.mv-sidebar-btn').count();
-    expect(count).toBe(7); // Chrome LeftToolbar has only 6 (no Object Groups)
+    // Legacy engine sidebar: 7 buttons (Views & Markups, All Items, Object Tree,
+    // Properties, Object Groups, Deviation, Search Sets).
+    // Chrome LeftToolbar also has 7: Viewpoints, Related Items, 2D Sheets,
+    // Object Tree, Properties, Search Sets, Deviation.
+    expect(count).toBe(7);
   });
 
   test('CHROME-RPL-003: .mv-tree-panel exists (Chrome needs equivalent)', async ({ page }) => {

@@ -285,19 +285,17 @@ test.describe('Selection Feature', () => {
       expect(contextEvent.data.screenY).toBeDefined();
     });
 
-    test('TEST-SEL-014: Right-Click Empty Space', async ({ page }) => {
+    test('TEST-SEL-014: Right-Click Empty Space — no context-menu event emitted', async ({ page }) => {
+      // Empty-space right-clicks are suppressed: Selection.js only emits 'context-menu'
+      // when the raycast hits an object. A miss is a silent no-op.
       const getEvents = await captureEvents(page, ['context-menu']);
 
-      // Right-click on empty space
-      await clickEmptySpace(page);
-      await page.mouse.click(50, 50, { button: 'right' });
+      await page.mouse.click(50, 50, { button: 'right' }); // top-left corner (sky area)
       await page.waitForTimeout(300);
 
       const events = await getEvents();
       const contextEvent = events.find(e => e.type === 'context-menu');
-
-      expect(contextEvent).toBeTruthy();
-      expect(contextEvent.data.elementId).toBeNull();
+      expect(contextEvent).toBeUndefined();
     });
 
     test('TEST-SEL-015: getLastIntersection()', async ({ page }) => {

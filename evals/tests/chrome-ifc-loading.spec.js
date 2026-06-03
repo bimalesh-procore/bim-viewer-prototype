@@ -1,46 +1,38 @@
 import { test, expect } from '@playwright/test';
 
-async function setupChrome(page) {
-  await page.goto('/chrome.html');
-  await page.waitForFunction(() => window.__viewerAdapterReady === true, { timeout: 15000 });
-}
-
 test.describe('Chrome IFC Streaming Loading', () => {
-  test.beforeEach(async ({ page }) => {
-    await setupChrome(page);
-  });
-
   test('shows progressive loading indicator while object stream is active', async ({ page }) => {
-    await page.evaluate(() => {
+    // Use addInitScript so listeners are registered before ChromeApp starts auto-loading.
+    // page.evaluate() after goto() risks missing early stream events on fast connections.
+    await page.addInitScript(() => {
       window.__streamEvents = [];
       window.__streamDone = false;
       window.__streamFailed = null;
       window.__indicatorSeen = false;
 
-      const capture = (type) => (data) => {
-        window.__streamEvents.push({ type, data });
+      const tryAttach = () => {
+        if (!window.viewer) { setTimeout(tryAttach, 50); return; }
+        const capture = (type) => (data) => window.__streamEvents.push({ type, data });
+        window.viewer.on('stream-capability', capture('stream-capability'));
+        window.viewer.on('object-load-progress', capture('object-load-progress'));
+        window.viewer.on('model-stream-complete', () => { window.__streamDone = true; });
+        window.viewer.on('load-error', (data) => {
+          window.__streamFailed = data?.error || 'unknown load error';
+        });
+        window.__indicatorPoll = setInterval(() => {
+          if (document.querySelector('.mv-object-streaming-indicator')) {
+            window.__indicatorSeen = true;
+          }
+          if (window.__streamDone || window.__streamFailed) {
+            clearInterval(window.__indicatorPoll);
+          }
+        }, 60);
       };
-
-      window.viewer.on('stream-capability', capture('stream-capability'));
-      window.viewer.on('object-load-progress', capture('object-load-progress'));
-      window.viewer.on('model-stream-complete', () => {
-        window.__streamDone = true;
-      });
-      window.viewer.on('load-error', (data) => {
-        window.__streamFailed = data?.error || 'unknown load error';
-      });
-
-      window.__indicatorPoll = window.setInterval(() => {
-        if (document.querySelector('.mv-object-streaming-indicator')) {
-          window.__indicatorSeen = true;
-        }
-        if (window.__streamDone || window.__streamFailed) {
-          window.clearInterval(window.__indicatorPoll);
-        }
-      }, 60);
+      tryAttach();
     });
 
-    await page.getByRole('button', { name: 'Condos Building' }).click();
+    // /?model=condos auto-loads the Condos model on mount — no button click needed.
+    await page.goto('/?model=condos');
 
     await page.waitForFunction(
       () => window.__streamDone || window.__streamFailed,

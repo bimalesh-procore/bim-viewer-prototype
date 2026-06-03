@@ -12,7 +12,9 @@ import { test, expect } from '@playwright/test';
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 async function setupChrome(page) {
-  await page.goto('/chrome.html');
+  // /?model=condos auto-loads ChromeApp with the real adapter.
+  // Bare / shows ModelManagerPage (no viewer), so a ?model= param is required.
+  await page.goto('/?model=condos');
   // __viewerAdapterReady is set in ChromeApp after the real adapter replaces
   // the mock — this guarantees toolbar button clicks reach the engine.
   await page.waitForFunction(() => window.__viewerAdapterReady === true, { timeout: 15000 });

@@ -113,7 +113,8 @@ test.describe('Left Sidebar', () => {
   });
 
   test('SIDEBAR-009: Stub buttons do not crash when clicked', async ({ page }) => {
-    const stubs = ['viewsMarkups', 'allItems', 'properties', 'objectGroups', 'deviation', 'searchSets'];
+    // searchSets is excluded — it opens a real panel, not a stub.
+    const stubs = ['viewsMarkups', 'allItems', 'properties', 'objectGroups', 'deviation'];
     const pageErrors = [];
     page.on('pageerror', error => pageErrors.push(error.message));
 

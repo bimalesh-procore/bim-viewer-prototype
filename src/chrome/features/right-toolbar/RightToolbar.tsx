@@ -688,7 +688,7 @@ export function RightToolbar() {
       <RightToolbarGroup>
         <div className="relative">
           <RightToolbarButton
-            src={settingsIcon}
+            src={resetIcon}
             label="Refresh"
             shortcut="Cmd R"
             showTooltip={lowerDefaultTooltips && openFlyout !== 'history'}

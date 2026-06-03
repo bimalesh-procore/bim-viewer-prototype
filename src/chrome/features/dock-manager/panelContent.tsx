@@ -18,7 +18,7 @@ import {
 import { AssetsListView } from '../items-panel/AssetsListView';
 import { AssetDetailView } from '../items-panel/AssetDetailView';
 import type { Asset } from '../items-panel/types';
-import { useItemsView, setItemsView } from '../items-panel/useItemsView';
+import { useItemsView, setItemsView } from '../../shared/useItemsView';
 import editIcon from '../../assets/icons/views/edit.svg';
 import shareIcon from '../../assets/icons/views/share.svg';
 import moreIcon from '../../assets/icons/views/more.svg';

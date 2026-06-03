@@ -164,7 +164,7 @@ export function BottomToolbar() {
               aria-expanded={openFlyout === 'nav-mode'}
               onClick={() => setOpenFlyout((prev) => (prev === 'nav-mode' ? null : 'nav-mode'))}
               {...hoverHandlers('nav-mode')}
-              className={`flex items-center gap-1.5 rounded px-2 py-1 transition-colors ${
+              className={`mv-toolbar-button relative flex items-center gap-1.5 rounded px-2 py-1 transition-colors ${
                 openFlyout === 'nav-mode' || activeMode !== 'select'
                   ? 'bg-[#D2E0F9] hover:bg-[#BCD1F5]'
                   : 'hover:bg-[#E3E6E8]'
@@ -172,6 +172,9 @@ export function BottomToolbar() {
             >
               <img src={activeNavIcon} alt="" width={20} height={20} aria-hidden="true" />
               <ChevronDown size={16} className="text-[#232729]" aria-hidden="true" />
+              <div className="mv-toolbar-tooltip mv-toolbar-tooltip-top" aria-hidden="true">
+                <span className="mv-toolbar-tooltip-label">Navigation Mode</span>
+              </div>
             </button>
             {openFlyout === 'nav-mode' && (
               <NavModeMenu activeMode={activeMode} onSelect={handleSelectMode} />
@@ -199,12 +202,15 @@ export function BottomToolbar() {
               aria-expanded={openFlyout === 'render'}
               onClick={() => setOpenFlyout((prev) => (prev === 'render' ? null : 'render'))}
               {...hoverHandlers('render')}
-              className={`flex items-center gap-1 rounded p-1.5 transition-colors ${
+              className={`mv-toolbar-button relative flex items-center gap-1 rounded p-1.5 transition-colors ${
                 openFlyout === 'render' ? 'bg-[#D2E0F9] hover:bg-[#BCD1F5]' : 'hover:bg-[#E3E6E8]'
               }`}
             >
               <img src={renderModesIcon} alt="" width={24} height={24} aria-hidden="true" />
               <ChevronDown size={14} className="text-[#232729]" aria-hidden="true" />
+              <div className="mv-toolbar-tooltip mv-toolbar-tooltip-top" aria-hidden="true">
+                <span className="mv-toolbar-tooltip-label">Render Settings</span>
+              </div>
             </button>
             {openFlyout === 'render' && <RenderSettingsFlyout />}
           </div>
@@ -229,7 +235,7 @@ export function BottomToolbar() {
             aria-haspopup="menu"
             aria-expanded={openFlyout === 'style'}
             onClick={() => setOpenFlyout((prev) => (prev === 'style' ? null : 'style'))}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 transition-colors ${
+            className={`mv-toolbar-button relative flex items-center gap-1.5 rounded px-2 py-1 transition-colors ${
               openFlyout === 'style' ? 'bg-[#D2E0F9] hover:bg-[#BCD1F5]' : 'hover:bg-[#E3E6E8]'
             }`}
           >
@@ -238,6 +244,9 @@ export function BottomToolbar() {
               {activeStyleOption.label}
             </span>
             <ChevronDown size={16} className="text-[#232729]" aria-hidden="true" />
+            <div className="mv-toolbar-tooltip mv-toolbar-tooltip-top" aria-hidden="true">
+              <span className="mv-toolbar-tooltip-label">Render Mode</span>
+            </div>
           </button>
           {openFlyout === 'style' && (
             <RenderStyleMenu activeStyle={renderStyle} onSelect={handleSelectStyle} />

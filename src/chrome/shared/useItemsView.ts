@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from 'react';
-import type { ItemsView } from './types';
+import type { ItemsView } from '../features/items-panel/types';
 
 // Module-level state — shared between ItemsContent (writer) and DockManager
 // (reader, so it can render the correct outer-panel title/back-arrow).
-// Plain useSyncExternalStore-based singleton; no zustand dependency needed.
+// Lives in shared/ rather than items-panel/ so DockManager can import it
+// without creating a cross-feature dependency.
 let currentView: ItemsView = { kind: 'hub' };
 const listeners = new Set<() => void>();
 

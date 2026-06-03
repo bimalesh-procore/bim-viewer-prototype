@@ -108,9 +108,7 @@ export function DockedPanel({
   const w = floatWidth ?? 320;
   const h = minimized ? 'auto' : (floatHeight ?? 480);
 
-  const deemphStyles: React.CSSProperties = deemphasized
-    ? { filter: 'blur(3px)' }
-    : {};
+  const deemphStyles: React.CSSProperties = {};
   const deemphTransition = 'filter 120ms ease';
 
   const containerStyle: React.CSSProperties = isDetached

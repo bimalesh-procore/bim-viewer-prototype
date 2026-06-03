@@ -35,7 +35,7 @@ import {
 import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import type { GlobalSearchObjectEntry } from '../viewer-adapter/types';
 import type { DockStore, PanelId, PanelState } from './useDockStore';
-import { useItemsView, goBackItemsView, resetItemsView } from '../items-panel/useItemsView';
+import { useItemsView, goBackItemsView, resetItemsView } from '../../shared/useItemsView';
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 const TOOLBAR_RIGHT_EDGE = 52;
@@ -786,6 +786,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
               ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
               : undefined}
             onAdd={panel.id === 'views' ? () => handleAddForPanel(panel.id) : undefined}
+            onBack={panel.id === 'items' && itemsView.kind !== 'hub' ? goBackItemsView : undefined}
             onClose={()        => handleClosePanel(panel.id)}
             onToggleMinimize={() => toggleMinimized(panel.id)}
             onDragStart={(ev)  => handleDragStart(panel.id, ev)}
@@ -831,6 +832,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
               onTabChange={panel.id === 'properties'
                 ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
                 : undefined}
+              onBack={panel.id === 'items' && itemsView.kind !== 'hub' ? goBackItemsView : undefined}
               onClose={() => handleClosePanel(panel.id)}
               onToggleMinimize={() => {}}
               onDragStart={() => {}}

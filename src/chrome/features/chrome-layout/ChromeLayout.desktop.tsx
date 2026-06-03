@@ -23,7 +23,6 @@ export function ChromeLayoutDesktop({
   onSelectModel,
 }: ChromeLayoutProps) {
   const store = useDockStore();
-  const [toolbarHovered, setToolbarHovered] = useState(false);
 
   const [popoverVisible, setPopoverVisible] = useState(false);
   const barHoveredRef = useRef(false);
@@ -112,8 +111,8 @@ export function ChromeLayoutDesktop({
         {showOverlays && (
           <>
             <ModeIdentifierOverlay />
-            <LeftToolbar store={store} onHoverChange={setToolbarHovered} />
-            <DockManager store={store} deemphasized={toolbarHovered} />
+            <LeftToolbar store={store} />
+            <DockManager store={store} />
 
             <RightToolbar />
             <MiniMap />

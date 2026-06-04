@@ -96,6 +96,7 @@ interface ModelViewerInstance {
     clearHistory(): void;
     on(event: string, callback: (data: unknown) => void): void;
     getClipPlanes(): Array<{ id: string }>;
+    setPlaneEnabled(planeId: string, enabled: boolean): void;
     serializeState(): unknown;
     restoreState(snapshot: unknown): void;
   };
@@ -599,6 +600,14 @@ export function createModelViewerAdapter(
   // Updated by showMarkupOverlay / hideMarkupOverlay so the flyout chip stays current.
   let readOnlyMarkupsCount = 0;
 
+  // Tracks which modification categories the user has temporarily suspended via
+  // the flyout toggle. When a category is disabled the engine effect is paused
+  // (objects re-shown, section planes disabled) but the data is preserved so it
+  // can be restored when the toggle is flipped back on.
+  const _disabledCategories = new Set<ActionHistoryCategory>();
+  // Snapshot of hidden elements taken the moment the user toggles hidden objects OFF.
+  let _hiddenBeforeDisable: string[] = [];
+
   // Marks how deep the undoStack was when sectioning view mode was entered.
   // On exit, entries above this watermark (camera moves made during the session)
   // are removed so they don't pollute the default-mode undo stack.
@@ -702,7 +711,9 @@ export function createModelViewerAdapter(
   const buildActionSummary = (): ActionHistorySummary => {
     return {
       sectioningCount: viewer.sectioning.getClipPlanes().length,
-      hiddenObjectsCount: viewer.visibility.getHiddenElements().length,
+      hiddenObjectsCount: _disabledCategories.has('hidden')
+        ? _hiddenBeforeDisable.length
+        : viewer.visibility.getHiddenElements().length,
       isolateCount,
       markupsCount: readOnlyMarkupsCount,
       measurementsCount: 0,
@@ -712,6 +723,7 @@ export function createModelViewerAdapter(
       canRedo: markupModeActive ? markupRedoDepth > 0
              : sectioningActive  ? sectionRedoDepth > 0 || redoStack.length > 0
              : redoStack.length > 0,
+      disabledCategories: Array.from(_disabledCategories),
     };
   };
 
@@ -1457,6 +1469,12 @@ export function createModelViewerAdapter(
       };
     },
     clearActionCategory(category: ActionHistoryCategory) {
+      // If this category was suspended, clear the disabled state first so we
+      // start from a consistent baseline before clearing the underlying data.
+      if (_disabledCategories.has(category)) {
+        _disabledCategories.delete(category);
+        if (category === 'hidden') _hiddenBeforeDisable = [];
+      }
       switch (category) {
         case 'sectioning':
           viewer.sectioning.clearAll();
@@ -1497,6 +1515,15 @@ export function createModelViewerAdapter(
     clearAllActions() {
       _suppressVisibilityUndo = true;
       pushSnapshotUndo();
+      // Re-enable any suspended categories before clearing so all engine state
+      // is active when showAll / clearAll run.
+      if (_disabledCategories.has('sectioning')) {
+        for (const { id } of viewer.sectioning.getClipPlanes()) {
+          viewer.sectioning.setPlaneEnabled(id, true);
+        }
+      }
+      _disabledCategories.clear();
+      _hiddenBeforeDisable = [];
       viewer.sectioning.clearAll();
       isolateCount = 0;
       viewer.visibility.showAll();
@@ -1504,6 +1531,59 @@ export function createModelViewerAdapter(
       readOnlyRevealToken++;
       readOnlyMarkupsCount = 0;
       viewer.markup.hideOverlay();
+      emitActionHistory();
+    },
+    setActionCategoryEnabled(category: ActionHistoryCategory, enabled: boolean) {
+      if (enabled) {
+        // Re-activating a suspended category.
+        _disabledCategories.delete(category);
+        switch (category) {
+          case 'hidden': {
+            // Restore the hidden list that was saved when the toggle was turned off.
+            const toRestore = _hiddenBeforeDisable.slice();
+            _hiddenBeforeDisable = [];
+            if (toRestore.length > 0) {
+              _suppressVisibilityUndo = true;
+              viewer.visibility.hide(toRestore);
+              _suppressVisibilityUndo = false;
+            }
+            break;
+          }
+          case 'sectioning':
+            for (const { id } of viewer.sectioning.getClipPlanes()) {
+              viewer.sectioning.setPlaneEnabled(id, true);
+            }
+            break;
+          case 'measurements':
+            // TODO: show measurement overlays when measurements engine exists
+            break;
+          default:
+            break;
+        }
+      } else {
+        // Suspending an active category.
+        if (_disabledCategories.has(category)) return; // already disabled
+        _disabledCategories.add(category);
+        switch (category) {
+          case 'hidden': {
+            _hiddenBeforeDisable = viewer.visibility.getHiddenElements().slice();
+            _suppressVisibilityUndo = true;
+            viewer.visibility.showAll();
+            _suppressVisibilityUndo = false;
+            break;
+          }
+          case 'sectioning':
+            for (const { id } of viewer.sectioning.getClipPlanes()) {
+              viewer.sectioning.setPlaneEnabled(id, false);
+            }
+            break;
+          case 'measurements':
+            // TODO: hide measurement overlays when measurements engine exists
+            break;
+          default:
+            break;
+        }
+      }
       emitActionHistory();
     },
     commitActiveCut() {

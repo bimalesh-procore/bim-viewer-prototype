@@ -64,6 +64,7 @@ export interface ActionHistorySummary {
   measurementsCount: number;
   canUndo: boolean;
   canRedo: boolean;
+  disabledCategories: ActionHistoryCategory[];
 }
 
 // ── Object Properties ────────────────────────────────────────────────────────
@@ -258,6 +259,7 @@ export interface ViewerAdapter {
   ): () => void;
   clearActionCategory?(category: ActionHistoryCategory): void;
   clearAllActions?(): void;
+  setActionCategoryEnabled?(category: ActionHistoryCategory, enabled: boolean): void;
   commitActiveCut?(): void;
 
   // ── Views ────────────────────────────────────────────────────────────────

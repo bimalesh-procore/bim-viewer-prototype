@@ -233,6 +233,7 @@ export const mockViewerAdapter: ViewerAdapter = {
       measurementsCount: 0,
       canUndo: false,
       canRedo: false,
+      disabledCategories: [],
     };
   },
   subscribeActionHistory(listener) {
@@ -244,6 +245,7 @@ export const mockViewerAdapter: ViewerAdapter = {
       measurementsCount: 0,
       canUndo: false,
       canRedo: false,
+      disabledCategories: [],
     });
     return () => {
       log('unsubscribeActionHistory');
@@ -254,6 +256,9 @@ export const mockViewerAdapter: ViewerAdapter = {
   },
   clearAllActions() {
     log('clearAllActions');
+  },
+  setActionCategoryEnabled(category, enabled) {
+    log(`setActionCategoryEnabled ${category} ${enabled}`);
   },
   commitActiveCut() {
     log('commitActiveCut');

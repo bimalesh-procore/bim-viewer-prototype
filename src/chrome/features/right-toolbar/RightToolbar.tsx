@@ -68,6 +68,7 @@ export function RightToolbar() {
     () => adapter.getActionHistory?.() ?? {
       sectioningCount: 0, hiddenObjectsCount: 0, isolateCount: 0,
       markupsCount: 0, measurementsCount: 0, canUndo: false, canRedo: false,
+      disabledCategories: [],
     },
   );
   const [freshLabel, setFreshLabel] = useState<string | null>(null);
@@ -75,19 +76,40 @@ export function RightToolbar() {
   const prevHistoryRef = useRef<ActionHistorySummary>(actionHistory);
   const actionHistoryRef = useRef(actionHistory);
   const prevModeRef = useRef<ModeId>(activeMode);
-  const [pillExiting, setPillExiting] = useState(false);
-  const [pillMounted, setPillMounted] = useState(false);
-  const prevTotalCountRef = useRef(0);
+  const [showTooltips, setShowTooltips] = useState(true);
   const toolbarRef = useRef<HTMLDivElement>(null);
+
+  // ── Pill / dot badge state ──────────────────────────────────────────────────
+  // pillPhase drives the pill element's visual state:
+  //   'hidden'    → not in DOM
+  //   'showing'   → orange pill pops in with label text
+  //   'collapsing'→ text fades + pill shrinks toward nothing (transitioning to dot)
+  const [pillPhase, setPillPhase] = useState<'hidden' | 'showing' | 'collapsing'>('hidden');
+  // dotVisible: the persistent orange dot at the button's top-left corner.
+  // It appears after the pill collapses and stays until all modifications are cleared.
+  const [dotVisible, setDotVisible] = useState(false);
+  const [dotExiting, setDotExiting] = useState(false);
+
+  // Keep a stable label for the collapsing phase (so text is still there to fade out).
+  const displayLabelRef = useRef<string | null>(null);
+  if (freshLabel !== null) displayLabelRef.current = freshLabel;
+  const displayLabel = displayLabelRef.current;
+
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Refs so effects can read current values without stale closure issues.
+  const totalCountRef = useRef(0);
+  const dotVisibleRef = useRef(false);
+  useEffect(() => { dotVisibleRef.current = dotVisible; }, [dotVisible]);
 
   useEffect(() => {
     const prev = prevHistoryRef.current;
     const checks: Array<[number, number, string]> = [
-      [actionHistory.sectioningCount, prev.sectioningCount, 'Sectioning'],
-      [actionHistory.hiddenObjectsCount, prev.hiddenObjectsCount, 'Hidden'],
-      [actionHistory.isolateCount, prev.isolateCount, 'Isolate'],
-      [actionHistory.markupsCount, prev.markupsCount, 'Markups'],
-      [actionHistory.measurementsCount, prev.measurementsCount, 'Measurements'],
+      [actionHistory.sectioningCount,   prev.sectioningCount,   'Sectioning Applied'],
+      [actionHistory.hiddenObjectsCount, prev.hiddenObjectsCount, 'Objects Hidden'],
+      [actionHistory.isolateCount,       prev.isolateCount,       'Objects Isolated'],
+      [actionHistory.markupsCount,       prev.markupsCount,       'Markups Added'],
+      [actionHistory.measurementsCount,  prev.measurementsCount,  'Measurements Added'],
     ];
     const changed = checks.find(([curr, prev]) => curr > prev);
     if (changed) {
@@ -99,7 +121,11 @@ export function RightToolbar() {
   }, [actionHistory]);
 
   useEffect(() => {
-    return () => { if (freshTimer.current) clearTimeout(freshTimer.current); };
+    return () => {
+      if (freshTimer.current) clearTimeout(freshTimer.current);
+      if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
+      if (dotTimerRef.current) clearTimeout(dotTimerRef.current);
+    };
   }, []);
 
   // Keep actionHistoryRef current so other effects can read it without stale closures.
@@ -114,29 +140,68 @@ export function RightToolbar() {
     const prev = prevModeRef.current;
     prevModeRef.current = activeMode;
     if (prev === 'sectioning' && activeMode === 'default' && actionHistoryRef.current.sectioningCount > 0) {
-      setFreshLabel('Sectioning');
+      setFreshLabel('Sectioning Applied');
       if (freshTimer.current) clearTimeout(freshTimer.current);
       freshTimer.current = setTimeout(() => setFreshLabel(null), 3000);
       prevHistoryRef.current = { ...prevHistoryRef.current, sectioningCount: actionHistoryRef.current.sectioningCount };
     }
   }, [activeMode]);
 
-  // Manage the pill's mount/exit lifecycle for the pop-out animation.
   const totalCount =
     actionHistory.sectioningCount + actionHistory.hiddenObjectsCount +
     actionHistory.isolateCount + actionHistory.markupsCount + actionHistory.measurementsCount;
 
+  // Keep totalCountRef current.
+  useEffect(() => { totalCountRef.current = totalCount; }, [totalCount]);
+
+  // Drive pill → dot transition whenever freshLabel changes.
+  const prevFreshLabelRef = useRef<string | null>(null);
   useEffect(() => {
-    const prev = prevTotalCountRef.current;
-    prevTotalCountRef.current = totalCount;
-    if (totalCount > 0) {
-      setPillMounted(true);
-      setPillExiting(false);
-    } else if (prev > 0 && totalCount === 0) {
-      setPillExiting(true);
-      const t = setTimeout(() => { setPillMounted(false); setPillExiting(false); }, 250);
-      return () => clearTimeout(t);
+    const prev = prevFreshLabelRef.current;
+    prevFreshLabelRef.current = freshLabel;
+
+    if (freshLabel !== null) {
+      // A new (or updated) fresh label: abort any in-progress collapse, hide dot, show pill.
+      if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
+      if (dotTimerRef.current) clearTimeout(dotTimerRef.current);
+      setDotVisible(false);
+      setDotExiting(false);
+      setPillPhase('showing');
+    } else if (prev !== null && freshLabel === null) {
+      // Timer fired — fresh label cleared. Start pill→dot handoff.
+      if (totalCountRef.current > 0) {
+        // Kick off collapse animation.
+        setPillPhase('collapsing');
+        // At 300ms the pill has mostly contracted — pop the dot in so there's overlap.
+        dotTimerRef.current = setTimeout(() => {
+          setDotVisible(true);
+          setDotExiting(false);
+        }, 300);
+        // At 500ms unmount the pill (it's fully gone by then).
+        collapseTimerRef.current = setTimeout(() => setPillPhase('hidden'), 500);
+      } else {
+        // No modifications left — just hide the pill.
+        setPillPhase('hidden');
+      }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freshLabel]);
+
+  // When all modifications are cleared, tear everything down.
+  useEffect(() => {
+    if (totalCount === 0) {
+      if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
+      if (dotTimerRef.current) clearTimeout(dotTimerRef.current);
+      setPillPhase('hidden');
+      if (dotVisibleRef.current) {
+        setDotExiting(true);
+        dotTimerRef.current = setTimeout(() => {
+          setDotVisible(false);
+          setDotExiting(false);
+        }, 250);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalCount]);
 
   const exitMarkupIfActive = () => {
@@ -693,13 +758,16 @@ export function RightToolbar() {
             isActive={openFlyout === 'history'}
             onClick={() => setOpenFlyout(prev => prev === 'history' ? null : 'history')}
           />
-          {pillMounted && (
-            <div className="pointer-events-none absolute top-1/2 -translate-y-[135%] translate-x-[15%] right-full -mr-2 z-[240]">
-              <ModificationPill
-                totalCount={totalCount}
-                freshLabel={freshLabel}
-                isExiting={pillExiting}
-              />
+          {/* Pill — visible only during fresh / collapsing phases */}
+          {pillPhase !== 'hidden' && (
+            <div className="pointer-events-none absolute top-1/2 -translate-y-[135%] translate-x-[15%] right-full -mr-2 z-[241]">
+              <ModificationPill label={displayLabel} phase={pillPhase} />
+            </div>
+          )}
+          {/* Persistent dot — sits at the top-left corner of the button while any modification is active */}
+          {dotVisible && (
+            <div className="pointer-events-none absolute z-[241]" style={{ top: 3, left: 3 }}>
+              <ModificationDot exiting={dotExiting} />
             </div>
           )}
           {openFlyout === 'history' && (
@@ -710,6 +778,7 @@ export function RightToolbar() {
                 history={actionHistory}
                 onClear={(cat) => adapter.clearActionCategory?.(cat)}
                 onClearAll={() => adapter.clearAllActions?.()}
+                onToggleCategory={(cat, enable) => adapter.setActionCategoryEnabled?.(cat, enable)}
               />
             </div>
           )}
@@ -1005,27 +1074,54 @@ export function RightToolbar() {
 
 type HistoryCategory = 'sectioning' | 'hidden' | 'isolate' | 'markups' | 'measurements';
 
-function ActionHistoryPill({
+function FilterTokenToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      className="relative flex-shrink-0 rounded-[16px] transition-colors duration-150 focus:outline-none"
+      style={{ width: 36, height: 20, backgroundColor: enabled ? '#2066DF' : '#8B98A1' }}
+    >
+      <span
+        className="absolute top-[2px] h-[16px] w-[16px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-[left] duration-150"
+        style={{ left: enabled ? 18 : 2 }}
+      />
+    </button>
+  );
+}
+
+function FilterToken({
   label,
+  enabled,
+  onToggle,
   onRemove,
 }: {
   label: string;
+  enabled: boolean;
+  onToggle: () => void;
   onRemove: () => void;
 }) {
   return (
-    <span className="inline-flex items-center gap-2 bg-[#2066DF] text-white text-[12px] font-semibold leading-[16px] tracking-[0.25px] rounded-full px-3 py-[4px] w-fit">
-      <span className="whitespace-nowrap">{label}</span>
+    <div className="flex h-[36px] w-full items-center justify-between gap-[8px] rounded-[4px] bg-[#EDF2FC] px-[6px] py-[4px]">
+      <div className="flex min-w-0 items-center gap-[8px] px-[6px] py-[2px]">
+        <FilterTokenToggle enabled={enabled} onToggle={onToggle} />
+        <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[14px] font-semibold leading-[20px] tracking-[0.15px] text-[#1D5CC9]">
+          {label}
+        </span>
+      </div>
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        className="flex items-center justify-center hover:opacity-70 transition-opacity flex-shrink-0"
         aria-label={`Remove ${label}`}
+        className="flex flex-shrink-0 items-center justify-center rounded p-[4px] text-[#1D5CC9] transition-colors hover:bg-[#D2E0F9]"
       >
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-          <path d="M2 2L8 8M8 2L2 8" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </button>
-    </span>
+    </div>
   );
 }
 
@@ -1033,131 +1129,144 @@ function ActionHistoryFlyout({
   history,
   onClear,
   onClearAll,
+  onToggleCategory,
 }: {
   history: ActionHistorySummary;
   onClear: (category: HistoryCategory) => void;
   onClearAll: () => void;
+  onToggleCategory: (category: HistoryCategory, enabled: boolean) => void;
 }) {
-  const visibilityItems: Array<{ key: HistoryCategory; label: string; count: number }> = [
+  const disabled = new Set(history.disabledCategories ?? []);
+
+  const items: Array<{ key: HistoryCategory; label: string; count: number | null }> = [
+    { key: 'hidden', label: 'Objects Hidden', count: history.hiddenObjectsCount },
     { key: 'sectioning', label: 'Sectioning', count: history.sectioningCount },
-    { key: 'hidden', label: 'Hidden Objects', count: history.hiddenObjectsCount },
-    { key: 'isolate', label: 'Isolate', count: history.isolateCount },
-  ];
-  const markupItems: Array<{ key: HistoryCategory; label: string; count: number }> = [
-    { key: 'markups', label: 'Markups', count: history.markupsCount },
     { key: 'measurements', label: 'Measurements', count: history.measurementsCount },
   ];
 
-  const visibleVisibility = visibilityItems.filter(i => i.count > 0);
-  const visibleMarkups = markupItems.filter(i => i.count > 0);
-  const hasAny = visibleVisibility.length > 0 || visibleMarkups.length > 0;
+  const visible = items.filter(i => i.count !== null && i.count > 0);
 
   return (
-    <div className="bg-white rounded-l-lg rounded-br-lg shadow-[0_4px_12px_0_rgba(0,0,0,0.2)] flex flex-col min-w-[180px]">
-      <div className="flex flex-col gap-3 px-2 py-3">
-        {!hasAny && (
-          <p className="text-[12px] leading-[16px] text-[#6C757D] text-center py-2">No actions to display</p>
-        )}
-
-        {visibleVisibility.length > 0 && (
-          <div className="flex flex-col gap-2 items-start">
-            <span className="text-[12px] font-semibold leading-[16px] tracking-[0.25px] text-[#232729]">Visibility</span>
-            <div className="flex flex-col gap-2 items-start">
-              {visibleVisibility.map(item => (
-                <ActionHistoryPill
-                  key={item.key}
-                  label={`${item.label} (${item.count})`}
-                  onRemove={() => onClear(item.key)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {visibleMarkups.length > 0 && (
-          <div className="flex flex-col gap-2 items-start">
-            <span className="text-[12px] font-semibold leading-[16px] tracking-[0.25px] text-[#232729]">Markups</span>
-            <div className="flex flex-col gap-2 items-start">
-              {visibleMarkups.map(item => (
-                <ActionHistoryPill
-                  key={item.key}
-                  label={`${item.label} (${item.count})`}
-                  onRemove={() => onClear(item.key)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
+    <div className="flex flex-col overflow-clip rounded-l-lg rounded-br-lg bg-white shadow-[0_4px_12px_0_rgba(0,0,0,0.2)]" style={{ minWidth: 240 }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-[16px] py-[8px] shadow-[0_2px_3px_rgba(0,0,0,0.1)]">
+        <span className="text-[14px] font-semibold leading-[20px] tracking-[0.15px] text-[#232729]">
+          View Modifications
+        </span>
+        <button
+          type="button"
+          onClick={onClearAll}
+          className="flex items-center gap-[4px] rounded-[4px] bg-[#E3E6E8] px-[8px] py-[5px] text-[12px] font-semibold leading-[16px] tracking-[0.25px] text-[#232729] transition-colors hover:bg-[#D6DADC] active:bg-[#C2CAD0]"
+        >
+          <img src={resetIcon} alt="" width={14} height={14} aria-hidden="true" />
+          Reset
+        </button>
       </div>
 
-      {hasAny && (
-        <div className="bg-[#EEF0F1] rounded-b-lg flex items-center justify-end px-2 py-2">
-          <button
-            type="button"
-            onClick={onClearAll}
-            className="flex items-center gap-1.5 px-2 py-1 text-[12px] leading-[16px] tracking-[0.25px] text-[#232729] hover:bg-[#D6DADC] rounded transition-colors"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path fillRule="evenodd" clipRule="evenodd" d="M11.333 1.33337H5.33301V2.33337H1.33301V4.33337H2.83301L3.33301 15.3334H13.2421L13.833 4.33337H15.333V2.33337H11.333V1.33337ZM5.33301 5.33337H6.33301V13.3334H5.33301V5.33337ZM7.83301 5.33337H8.83301V13.3334H7.83301V5.33337ZM10.333 5.33337H11.333V13.3334H10.333V5.33337Z" fill="#232729" />
-            </svg>
-            Clear All
-          </button>
-        </div>
-      )}
+      {/* Token list */}
+      <div className="flex flex-col gap-[4px] p-[16px]">
+        {visible.length === 0 && (
+          <p className="py-2 text-center text-[12px] leading-[16px] text-[#6C757D]">No active modifications</p>
+        )}
+        {visible.map(item => (
+          <FilterToken
+            key={item.key}
+            label={item.count != null && item.count > 0 ? `${item.label} (${item.count})` : item.label}
+            enabled={!disabled.has(item.key)}
+            onToggle={() => onToggleCategory(item.key, disabled.has(item.key))}
+            onRemove={() => onClear(item.key)}
+          />
+        ))}
+      </div>
     </div>
   );
 }
 
-const COUNT_TEXT_STYLE: CSSProperties = {
+// ── Modification badge components ─────────────────────────────────────────────
+
+const PILL_TEXT_STYLE: CSSProperties = {
   fontFamily: 'Inter, sans-serif',
   fontSize: '12px',
   fontWeight: 600,
   lineHeight: '16px',
   letterSpacing: '0.25px',
-  flexShrink: 0,
+  color: 'white',
+  whiteSpace: 'nowrap',
 };
 
-function ModificationPill({ totalCount, freshLabel, isExiting }: { totalCount: number; freshLabel: string | null; isExiting: boolean }) {
-  // Keep the last label rendered so the collapse animation has something to fade out.
-  const displayLabelRef = useRef<string | null>(null);
-  if (freshLabel !== null) displayLabelRef.current = freshLabel;
-  const displayLabel = displayLabelRef.current;
-  const isFresh = freshLabel !== null;
-
+/**
+ * ModificationPill
+ *
+ * Orange pill that pops in with a label when a modification fires, then
+ * smoothly collapses (width + opacity) as it hands off to ModificationDot.
+ *
+ * phase='showing'    → pop-in animation, full width, text visible
+ * phase='collapsing' → text fades, max-width contracts to 0 over ~350ms
+ */
+function ModificationPill({ label, phase }: {
+  label: string | null;
+  phase: 'showing' | 'collapsing';
+}) {
+  const isCollapsing = phase === 'collapsing';
   return (
     <div
-      aria-label={isFresh && displayLabel ? `${displayLabel}: ${totalCount} total` : `${totalCount} modifications`}
-      className="flex items-center justify-center text-white"
+      aria-label={label ?? undefined}
       style={{
-        height: '20px',
-        minWidth: '20px',
-        borderRadius: '10px',
-        padding: '0 6px',
-        backgroundColor: isFresh ? '#FF5100' : '#8B98A1',
-        transition: 'background-color 0.5s ease-out',
-        animation: isExiting
-          ? 'mv-badge-pop-out 0.25s cubic-bezier(0.34,1.56,0.64,1) both'
-          : 'mv-badge-pop 0.25s cubic-bezier(0.34,1.56,0.64,1) both',
+        height: 20,
+        // max-width drives the width collapse; generous cap for any label string.
+        maxWidth: isCollapsing ? 0 : 220,
+        borderRadius: 10,
+        backgroundColor: '#FF5100',
+        paddingLeft: isCollapsing ? 0 : 8,
+        paddingRight: isCollapsing ? 0 : 8,
         overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        // Entry: pop-in scale animation (runs once on mount).
+        // Collapse: transition max-width + padding to contract the pill.
+        animation: isCollapsing ? undefined : 'mv-badge-pop 0.25s cubic-bezier(0.34,1.56,0.64,1) both',
+        transition: isCollapsing
+          ? 'max-width 0.35s ease-in, padding-left 0.35s ease-in, padding-right 0.35s ease-in'
+          : undefined,
       }}
     >
-      {displayLabel && (
+      {label && (
         <span
           style={{
-            ...COUNT_TEXT_STYLE,
-            display: 'inline-block',
-            maxWidth: isFresh ? '120px' : '0px',
-            overflow: 'hidden',
-            opacity: isFresh ? 1 : 0,
-            marginRight: isFresh ? '4px' : '0px',
-            transition: 'max-width 0.4s ease-out, opacity 0.25s ease-out, margin-right 0.4s ease-out',
-            whiteSpace: 'nowrap',
+            ...PILL_TEXT_STYLE,
+            // Fade text out slightly ahead of the width collapse.
+            opacity: isCollapsing ? 0 : 1,
+            transition: isCollapsing ? 'opacity 0.2s ease-out' : undefined,
           }}
         >
-          {displayLabel}
+          {label}
         </span>
       )}
-      <span style={COUNT_TEXT_STYLE}>{totalCount}</span>
     </div>
+  );
+}
+
+/**
+ * ModificationDot
+ *
+ * Persistent 8 px orange circle that lives at the top-left corner of the
+ * reset button. Pops in after the pill collapses; pops out when all
+ * modifications are cleared.
+ */
+function ModificationDot({ exiting }: { exiting: boolean }) {
+  return (
+    <div
+      aria-label="View has active modifications"
+      style={{
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        backgroundColor: '#FF5100',
+        animation: exiting
+          ? 'mv-badge-pop-out 0.25s cubic-bezier(0.34,1.56,0.64,1) both'
+          : 'mv-badge-pop 0.3s cubic-bezier(0.34,1.56,0.64,1) both',
+      }}
+    />
   );
 }

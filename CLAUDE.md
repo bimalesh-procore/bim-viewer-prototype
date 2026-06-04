@@ -614,6 +614,51 @@ Several adapter methods in `types.ts` are defined but partially stubbed pending 
 
 These are optional (`?:`) on the interface so existing callers compile without them. Implement in `modelViewerAdapter.ts` as this feature area is built out.
 
+### 4j. Undo/Redo System (`src/chrome/features/viewer-adapter/modelViewerAdapter.ts`)
+
+The right-toolbar undo/redo buttons are fully wired across all three interaction modes.
+
+**Typed undo stack (`UndoEntry` union)**
+
+Every undoable action is one of five types pushed to `undoStack`:
+
+| Kind | When pushed | Undo applies |
+|---|---|---|
+| `vis-hide` | Any `visibility-change` event where `hidden.length > 0` | `viewer.visibility.show(ids)` |
+| `vis-show` | Any `visibility-change` event where `shown.length > 0` (no hidden siblings) | `viewer.visibility.hide(ids)` |
+| `vis-snapshot` | Isolate, clear-all, clear-category — complex ops where a delta inverse isn't clean | `showAll()` + `hide(snapshot.hidden)` |
+| `camera` | 1 s after the camera stops moving (debounced), only if position/target moved > 1 mm | `applyCameraSnapshot(snap, { animate: true })` |
+| `section-step` | N times on `exitSectioningViewMode(save=true)` — once per plane-add/drag/etc. | `viewer.sectioning.undo()` |
+
+**Visibility tracking via event (not adapter methods)**
+
+All visibility changes are tracked by listening to `viewer.visibility.on('visibility-change', ...)`. This fires for **every** hide/show regardless of source — the object-tree eye icon, the 3D canvas right-click context menu (which calls `this.visibility.hide()` directly on the engine, bypassing the adapter), or the adapter methods. Do not revert to tracking in `hideObjects`/`showObjects` only.
+
+The `_suppressVisibilityUndo` flag (boolean) prevents double-tracking for operations that shouldn't go into the undo stack: `setViewpointState` (home view restore), `toggleIsolationMode` (uses snapshot), `clearAllActions`, `clearActionCategory`, and undo/redo handlers themselves.
+
+**Camera debounce**
+
+A 1-second debounce (not per-frame) catches user navigation pauses. After the timer fires, the current position is compared to `_cameraBeforeMove`; if the delta is < 1 mm (squared), the entry is discarded. This prevents phantom entries from OrbitControls damping and post-undo camera settling.
+
+`_suppressCameraUndoCount` (reference counter) wraps all programmatic camera animations: `setViewpointState`, `setCameraSnapshot`, `setViewOrientation`, `exitSectioningViewMode(discard)`, and the undo/redo camera restore itself.
+
+**Sectioning session lifecycle**
+
+- On `enterSectioningViewMode`: record `_preSectioningUndoStackLength` (watermark) and reset `sectionUndoDepth = 0`.
+- During the session: `plane-add`, `plane-remove`, `drag-end`, `section-box-activate` each increment `sectionUndoDepth`. The `drag-end` event is emitted once per completed drag gesture (plane move, box face drag, box rotate) after `_pushAction` has run in the engine.
+- On `exitSectioningViewMode(save)`: trim camera entries added during the session (above the watermark), then push `sectionUndoDepth` × `{ kind: 'section-step' }` to the default undo stack. Each entry delegates to `viewer.sectioning.undo()` — the engine's `_actionHistory` is NOT cleared on exit, so these calls work. Entering a NEW session calls `setSectioningActive(true)` which calls `viewer.sectioning.clearHistory()`, at which point all stale `section-step` entries are removed from both stacks.
+- On `exitSectioningViewMode(discard)`: just trim the stack. No entries pushed.
+- While in sectioning mode: `undo()`/`redo()` use `sectionUndoDepth`/`sectionRedoDepth` + engine undo/redo directly. When section depth hits 0, undo falls through to camera entries.
+
+**`canUndo`/`canRedo` in `buildActionSummary()`**
+
+The `ActionHistorySummary` interface has `canUndo: boolean` and `canRedo: boolean`. In default mode these read from `undoStack.length > 0` / `redoStack.length > 0`. In sectioning mode, `sectionUndoDepth > 0` / `sectionRedoDepth > 0`. In markup mode, `markupUndoDepth > 0` / `markupRedoDepth > 0`. The toolbar buttons render `disabled={!actionHistory.canUndo}` etc.
+
+**Do not:**
+- Call `viewer.sectioning.clearHistory()` in `exitSectioningViewMode` — that would orphan the `section-step` entries.
+- Add `|| sectioningActive` back to the camera debounce guard — camera moves during sectioning are intentionally tracked so they can be undone after exiting the mode (via the section-step fall-through).
+- Move visibility tracking back into `hideObjects`/`showObjects` — the context-menu path bypasses those methods entirely.
+
 ### 5. Sync Source (`model-chrome/`)
 - `model-chrome/` is a **read-only reference copy** of the external ModelChrome repository maintained by colleagues.
 - It is periodically updated by pulling from their repo.

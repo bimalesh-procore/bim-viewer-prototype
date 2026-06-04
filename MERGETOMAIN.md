@@ -40,6 +40,7 @@ Before running `gh pr merge` (or any equivalent merge-to-main command):
 | `src/chrome/shared/useItemsView.ts` | `evals/tests/chrome-items-panel.spec.js` |
 | `src/chrome/features/dock-manager/` | `evals/tests/chrome-items-panel.spec.js` + `evals/tests/regression.spec.js` (items panel title + back-arrow logic lives in DockManager) |
 | `src/chrome/features/search-sets/` | `evals/tests/chrome-search-sets-panel.spec.js` + `evals/tests/search-sets.spec.js` |
+| `src/chrome/features/viewer-adapter/modelViewerAdapter.ts` | `evals/tests/chrome-compatibility.spec.js` + `evals/tests/regression.spec.js` (undo/redo stack, visibility tracking, sectioning lifecycle — cross-cutting) |
 | `src/chrome/features/viewer-adapter/` | `evals/tests/chrome-compatibility.spec.js` |
 | `src/chrome/features/form-factor/` | `evals/tests/regression.spec.js` (no dedicated suite yet — see [`MOBILE_VARIANTS.md`](./MOBILE_VARIANTS.md) §7) |
 | `src/chrome/features/chrome-layout/` | `evals/tests/regression.spec.js` + `evals/tests/chrome-compatibility.spec.js` (touches viewer mount and variant routing — see [CLAUDE.md §3c](./CLAUDE.md)) |
@@ -53,6 +54,7 @@ Before running `gh pr merge` (or any equivalent merge-to-main command):
 | `public/viewpoints.json` | None — data file. Sanity check that JSON parses. |
 | `src/features/Navigation.js` (the `getEffectiveCamera` addition) | `evals/tests/navigation.spec.js` (covered by existing navigation suite) |
 | `src/features/Sectioning.js` | `evals/tests/regression.spec.js` (no dedicated sectioning suite yet; covers section planes, section cut, section box sub-modes, isolate-in-section-box, `serializeState`/`restoreState`) |
+| `src/chrome/features/right-toolbar/RightToolbar.tsx` | `evals/tests/regression.spec.js` + `evals/tests/chrome-compatibility.spec.js` (undo/redo buttons, sectioning tool entry, action history flyout) |
 | `src/chrome/app/ChromeApp.tsx` | `evals/tests/chrome-compatibility.spec.js` + `evals/tests/chrome-ifc-loading.spec.js` (viewer container migration logic lives here — see [CLAUDE.md §3c](./CLAUDE.md)) |
 | `src/chrome/` (any other) | `evals/tests/chrome-ifc-loading.spec.js` + `evals/tests/chrome-compatibility.spec.js` |
 | `src/chrome/shared/TreeNode.tsx` | `evals/tests/regression.spec.js` + `evals/tests/chrome-compatibility.spec.js` (shared by all docked panels — Viewpoints, Sheets, Object Tree) |

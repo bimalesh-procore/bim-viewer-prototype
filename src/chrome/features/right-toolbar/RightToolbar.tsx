@@ -2,7 +2,7 @@ import { RightToolbarGroup } from './RightToolbarGroup';
 import { RightToolbarButton } from './RightToolbarButton';
 import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import { useViewerSettings } from '../viewer-settings/ViewerSettingsContext';
-import type { ActionHistorySummary } from '../viewer-adapter/types';
+import type { ActionHistorySummary, MarkupData } from '../viewer-adapter/types';
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { MoreVertical } from 'lucide-react';
@@ -61,13 +61,13 @@ export function RightToolbar() {
   const [activeMarkupTool, setActiveMarkupTool] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [markupColor, setMarkupColor] = useState('#FF0000');
-  const [isSectioningActive, setIsSectioningActive] = useState(
+  const [, setIsSectioningActive] = useState(
     () => adapter.isSectioningActive?.() ?? false,
   );
   const [actionHistory, setActionHistory] = useState<ActionHistorySummary>(
     () => adapter.getActionHistory?.() ?? {
       sectioningCount: 0, hiddenObjectsCount: 0, isolateCount: 0,
-      markupsCount: 0, measurementsCount: 0,
+      markupsCount: 0, measurementsCount: 0, canUndo: false, canRedo: false,
     },
   );
   const [freshLabel, setFreshLabel] = useState<string | null>(null);
@@ -277,7 +277,7 @@ export function RightToolbar() {
       if (!sourceId) return;
 
       if (sourceId === 'mode:markup') {
-        const d = detail as { viewId?: string; existingMarkups?: unknown[] };
+        const d = detail as { viewId?: string; existingMarkups?: MarkupData[] };
         enterMarkup(d?.viewId, d?.existingMarkups);
         setOpenFlyout(null);
         return;
@@ -470,7 +470,7 @@ export function RightToolbar() {
     </>
   );
 
-  const enterMarkup = (viewId?: string, existingMarkups?: unknown[]) => {
+  const enterMarkup = (viewId?: string, existingMarkups?: MarkupData[]) => {
     adapter.enterMarkupMode?.(viewId, existingMarkups);
     setActiveMode('markup');
     setActiveMarkupTool('freehand');
@@ -515,7 +515,6 @@ export function RightToolbar() {
         setOpenFlyout(null);
         adapter.enterSectioningViewMode?.();
         adapter.setActiveSectioningTool?.('section-plane');
-        window.dispatchEvent(new CustomEvent('mv:open-panel', { detail: { panelId: 'views', label: 'Viewpoints' } }));
       },
       enterMode: () => {
         exitMarkupIfActive();
@@ -523,13 +522,11 @@ export function RightToolbar() {
         setActiveSectionTool('section-plane');
         adapter.enterSectioningViewMode?.();
         adapter.setActiveSectioningTool?.('section-plane');
-        window.dispatchEvent(new CustomEvent('mv:open-panel', { detail: { panelId: 'views', label: 'Viewpoints' } }));
       },
     },
   ];
 
   const overflowModeButtons = modeButtons.filter((button) => button.id !== activeMode && button.id !== 'create');
-  const isSectioningMode = activeMode === 'sectioning';
 
   // Suppress tooltips on buttons whose tooltip area overlaps the mode toolbar overflow flyout
   const lowerGroupTooltips = !isOverflowOpen;
@@ -717,12 +714,13 @@ export function RightToolbar() {
             </div>
           )}
         </div>
-        <RightToolbarButton src={undoIcon} label="Undo" shortcut="Cmd Z" showTooltip={lowerDefaultTooltips} onClick={() => adapter.undo?.()} />
+        <RightToolbarButton src={undoIcon} label="Undo" shortcut="Cmd Z" showTooltip={lowerDefaultTooltips} disabled={!actionHistory.canUndo} onClick={() => adapter.undo?.()} />
         <RightToolbarButton
           src={redoIcon}
           label="Redo"
           shortcut="Cmd Y"
           showTooltip={lowerDefaultTooltips}
+          disabled={!actionHistory.canRedo}
           onClick={() => adapter.redo?.()}
         />
       </RightToolbarGroup>
@@ -994,8 +992,8 @@ export function RightToolbar() {
 
           <RightToolbarGroup>
             <RightToolbarButton src={resetIcon} label="Reset" shortcut="Ctrl + R" showTooltip={lowerGroupTooltips} onClick={() => adapter.resetView()} />
-            <RightToolbarButton src={undoIcon} label="Undo" shortcut="Ctrl + Z" showTooltip={lowerGroupTooltips} onClick={() => adapter.undo?.()} />
-            <RightToolbarButton src={redoIcon} label="Redo" shortcut="Ctrl + Y" showTooltip={lowerGroupTooltips} onClick={() => adapter.redo?.()} />
+            <RightToolbarButton src={undoIcon} label="Undo" shortcut="Ctrl + Z" showTooltip={lowerGroupTooltips} disabled={!actionHistory.canUndo} onClick={() => adapter.undo?.()} />
+            <RightToolbarButton src={redoIcon} label="Redo" shortcut="Ctrl + Y" showTooltip={lowerGroupTooltips} disabled={!actionHistory.canRedo} onClick={() => adapter.redo?.()} />
           </RightToolbarGroup>
         </>
       )}

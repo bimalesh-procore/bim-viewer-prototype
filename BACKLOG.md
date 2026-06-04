@@ -138,3 +138,23 @@ For joystick behavior, either:
   visual-only to pointer-interactive controls.
 - `src/chrome/features/viewer-adapter/types.ts` and `modelViewerAdapter.ts` —
   add/bridge any missing movement primitives needed for continuous touch input.
+
+---
+
+## Undo/Redo — measurement mode
+
+**Why:** When the Measure tool is actually implemented, undo/redo should work within measurement mode just like markup and sectioning. Currently measurements are not implemented so there is nothing to track.
+
+**Approach:** Mirror the markup pattern. Add `measureUndoDepth`/`measureRedoDepth` counters. When the measurement engine fires a "measurement-added" or equivalent event, increment `measureUndoDepth`. In `undo()`, when `measurementsModeActive`, call the measurement engine's undo and decrement the counter. Wire `canUndo`/`canRedo` in `buildActionSummary` to include the measurement depth check.
+
+**Touchpoints:** `src/chrome/features/viewer-adapter/modelViewerAdapter.ts` (counters + undo/redo dispatch), `src/chrome/features/viewer-adapter/types.ts` (no changes needed — `measurementsCount` field already in `ActionHistorySummary`).
+
+---
+
+## Undo/Redo — clear-all doesn't restore section planes
+
+**Why:** `clearAllActions()` calls `viewer.sectioning.clearAll()` which removes clip planes. The undo entry pushed is a `vis-snapshot` (visibility only). So undoing "Clear All" restores visibility but does NOT restore the section planes that were cleared.
+
+**Approach:** Change `clearAllActions` to also capture the current sectioning state and push a combined `vis-snapshot + sectioning-state` entry. On undo, restore both. Alternatively, push a `SectioningUndoEntry` first (for the plane state) and a `VisibilitySnapshotEntry` second (for visibility), so they undo in the correct order (visibility first, then planes).
+
+**Touchpoints:** `modelViewerAdapter.ts` — `clearAllActions()` and the undo/redo dispatch branches.

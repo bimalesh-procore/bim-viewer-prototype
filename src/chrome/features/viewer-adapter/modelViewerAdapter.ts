@@ -11,8 +11,10 @@ import type {
   ViewFolder,
   PropertyGroup,
   ViewpointStateSnapshot,
+  MarkupData,
 } from './types';
-import * as THREE from 'three';
+
+type Vec3 = { x: number; y: number; z: number };
 
 /**
  * Shape of the ModelViewer instance we consume.
@@ -49,6 +51,8 @@ interface ModelViewerInstance {
     deselect(): void;
     setHoverEnabled?(enabled: boolean): void;
     setContextMenuEnabled?(enabled: boolean): void;
+    setHoverEffectMode?(mode: 'gradient' | 'edgeTrace'): void;
+    getHoverEffectMode?(): string;
   };
   visibility: {
     showAll(): void;
@@ -73,7 +77,7 @@ interface ModelViewerInstance {
     treeData: unknown[];
   } | null;
   sectioning: {
-    addClipPlane(normal: THREE.Vector3, point: THREE.Vector3): void;
+    addClipPlane(normal: Vec3, point: Vec3): void;
     clearClipPlanes(): void;
     setActiveTool(tool: 'section-plane' | 'section-box' | 'section-cut' | null): void;
     activateSectionBox(): void;
@@ -316,7 +320,6 @@ export function createModelViewerAdapter(
   };
   const streamingListeners = new Set<(state: ObjectStreamingState) => void>();
   let sectioningActive = false;
-  let activeSectionTool: 'section-plane' | 'section-box' | 'section-cut' | null = null;
   const sectioningStateListeners = new Set<(active: boolean) => void>();
 
   const emitSectioningState = () => {
@@ -352,6 +355,16 @@ export function createModelViewerAdapter(
     streamingState.phase = 'init';
     streamingState.bytesLoaded = 0;
     streamingState.bytesTotal = 0;
+    // Reset undo/redo state for the new model.
+    undoStack.length = 0;
+    redoStack.length = 0;
+    if (_cameraDebounceTimer !== null) { clearTimeout(_cameraDebounceTimer); _cameraDebounceTimer = null; }
+    _cameraBeforeMove = null;
+    _suppressCameraUndoCount = 0;
+    markupUndoDepth = 0;
+    markupRedoDepth = 0;
+    sectionUndoDepth = 0;
+    sectionRedoDepth = 0;
     emitStreamingState();
   };
 
@@ -422,7 +435,6 @@ export function createModelViewerAdapter(
       sectioningActive = true;
       emitSectioningState();
     }
-    activeSectionTool = 'section-cut';
     viewer.selection.setHoverEnabled?.(false);
     for (const listener of requestEditCutListeners) {
       listener();
@@ -430,7 +442,8 @@ export function createModelViewerAdapter(
   });
 
   const requestEditPlaneListeners = new Set<(tool: 'section-plane' | 'section-cut') => void>();
-  viewer.sectioning.on('request-edit-plane', (payload?: { tool?: 'section-plane' | 'section-cut' }) => {
+  viewer.sectioning.on('request-edit-plane', (data: unknown) => {
+    const payload = data as { tool?: 'section-plane' | 'section-cut' } | undefined;
     if (!sectioningActive) {
       sectioningActive = true;
       emitSectioningState();
@@ -442,7 +455,6 @@ export function createModelViewerAdapter(
     const nextTool = payload?.tool === 'section-cut' || payload?.tool === 'section-plane'
       ? payload.tool
       : 'section-plane';
-    activeSectionTool = nextTool;
     viewer.selection.setHoverEnabled?.(false);
     for (const listener of requestEditPlaneListeners) {
       listener(nextTool);
@@ -456,7 +468,8 @@ export function createModelViewerAdapter(
   const emitActivePlane = () => {
     for (const listener of activePlaneListeners) listener(activeSectionPlanePresent);
   };
-  viewer.sectioning.on('active-plane-change', (payload?: { planeId?: string | null }) => {
+  viewer.sectioning.on('active-plane-change', (data: unknown) => {
+    const payload = data as { planeId?: string | null } | undefined;
     const next = Boolean(payload?.planeId);
     if (next !== activeSectionPlanePresent) {
       activeSectionPlanePresent = next;
@@ -470,7 +483,8 @@ export function createModelViewerAdapter(
   >();
   viewer.sectioning.on(
     'request-plane-context-menu',
-    (payload?: { planeId?: string; x?: number; y?: number }) => {
+    (data: unknown) => {
+      const payload = data as { planeId?: string; x?: number; y?: number } | undefined;
       if (!payload?.planeId || typeof payload.x !== 'number' || typeof payload.y !== 'number') return;
       for (const listener of planeContextMenuListeners) {
         listener({ planeId: payload.planeId, x: payload.x, y: payload.y });
@@ -481,9 +495,114 @@ export function createModelViewerAdapter(
   // ── Action History Tracking ───────────────────────────────────────
   const actionHistoryListeners = new Set<(s: ActionHistorySummary) => void>();
   let isolateCount = 0;
+
+  // ── Undo/redo stack (default mode) — typed entries ─────────────────
+  type CameraUndoEntry = { kind: 'camera'; position: Vec3; target: Vec3; isOrthographic: boolean };
+
+  // Delta visibility entries: store the exact IDs that were hidden/shown so
+  // undo can call the direct inverse (show/hide) without needing showAll() +
+  // re-hiding hundreds of home-view elements (which is fragile and slow).
+  type VisibilityHideEntry = { kind: 'vis-hide'; ids: string[] };
+  type VisibilityShowEntry = { kind: 'vis-show'; ids: string[] };
+
+  // Full snapshot for complex ops (isolate, clear-all, clear-category) where
+  // a simple inverse isn't expressible as a single hide/show call.
+  type VisibilitySnapshotEntry = { kind: 'vis-snapshot'; hidden: string[]; isolateCount: number };
+
+  // One entry per sectioning action committed during a saved sectioning session.
+  // Pushed N times (once per plane-add, drag, etc.) so each step is individually
+  // undoable from default mode via viewer.sectioning.undo()/redo().
+  // The engine's _actionHistory persists after exitSectioningViewMode, so the
+  // engine can actually execute these undos/redos.
+  type SectioningStepEntry = { kind: 'section-step' };
+
+  type UndoEntry =
+    | CameraUndoEntry
+    | VisibilityHideEntry
+    | VisibilityShowEntry
+    | VisibilitySnapshotEntry
+    | SectioningStepEntry;
+
+  const undoStack: UndoEntry[] = [];
+  const redoStack: UndoEntry[] = [];
+  const MAX_UNDO = 50;
+
+  const snapshotCamera = (): CameraUndoEntry => {
+    const cam = viewer.navigation.getEffectiveCamera();
+    return {
+      kind: 'camera',
+      position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },
+      target:   { x: cam.target.x,   y: cam.target.y,   z: cam.target.z },
+      isOrthographic: viewer.navigation.getIsOrthographic(),
+    };
+  };
+
+  // Incremented around programmatic camera animations so that setViewpointState,
+  // setCameraSnapshot, undo/redo restores etc. don't push ghost camera entries.
+  let _suppressCameraUndoCount = 0;
+
+  // Set to true while the adapter itself is applying a visibility change so the
+  // visibility-change event listener doesn't double-push an undo entry.
+  // Also set during setViewpointState (home view restore) and other non-user ops.
+  let _suppressVisibilityUndo = false;
+
+  // Camera debounce — after 1000 ms of stillness, push the "before-move" snapshot.
+  // 1 second filters out brief pauses during continuous navigation so only
+  // deliberate "I've arrived at a new viewpoint" stops create undo entries.
+  let _cameraDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let _cameraBeforeMove: CameraUndoEntry | null = null;
+
+  // Flush any pending camera debounce entry so that visibility/sectioning entries
+  // pushed immediately after a camera move maintain correct stack order.
+  const flushCameraDebounce = () => {
+    if (_cameraDebounceTimer !== null && _cameraBeforeMove !== null) {
+      clearTimeout(_cameraDebounceTimer);
+      _cameraDebounceTimer = null;
+      undoStack.push(_cameraBeforeMove);
+      if (undoStack.length > MAX_UNDO) undoStack.shift();
+      _cameraBeforeMove = null;
+    }
+  };
+
+  // Full snapshot for complex ops where a delta inverse isn't clean
+  // (isolate, clear-all, clear-category).
+  const pushSnapshotUndo = () => {
+    flushCameraDebounce();
+    undoStack.push({
+      kind: 'vis-snapshot',
+      // .slice() is critical — getHiddenElements() may return a live reference.
+      hidden: viewer.visibility.getHiddenElements().slice(),
+      isolateCount,
+    });
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
+  };
+
+  const applyVisibilitySnapshot = (snap: VisibilitySnapshotEntry) => {
+    isolateCount = snap.isolateCount;
+    viewer.visibility.showAll();
+    if (snap.hidden.length > 0) viewer.visibility.hide(snap.hidden);
+    emitActionHistory();
+  };
+
+  // ── Markup undo depth counters ──────────────────────────────────────
+  let markupUndoDepth = 0;
+  let markupRedoDepth = 0;
+  let _markupChanging = false;
+
+  // ── Sectioning undo depth counters ─────────────────────────────────
+  let sectionUndoDepth = 0;
+  let sectionRedoDepth = 0;
+  let _sectionChanging = false;
+
   // Tracks the count of markups currently shown in the read-only overlay.
   // Updated by showMarkupOverlay / hideMarkupOverlay so the flyout chip stays current.
   let readOnlyMarkupsCount = 0;
+
+  // Marks how deep the undoStack was when sectioning view mode was entered.
+  // On exit, entries above this watermark (camera moves made during the session)
+  // are removed so they don't pollute the default-mode undo stack.
+  let _preSectioningUndoStackLength = 0;
 
   // ── Sectioning view mode state ──────────────────────────────────────
   // Parallel to markup mode: tracks a view-aware sectioning session where
@@ -507,18 +626,18 @@ export function createModelViewerAdapter(
   let markupModeActive = false;
   let markupEditingViewId: string | null = null;   // internal ViewsManager ID
   let markupExternalViewId: string | null = null;  // viewpoint ID from ViewpointsContext
-  let markupPersistedMarkups: unknown[] | null = null; // markups as saved on disk when entering
+  let markupPersistedMarkups: MarkupData[] | null = null; // markups as saved on disk when entering
   let markupColor = '#FF0000';
   let readOnlyRevealToken = 0;
   const viewsListeners = new Set<(views: ViewData[], selectedId: string | null) => void>();
   const markupModeActiveListeners = new Set<(active: boolean) => void>();
   const markupChangeListeners = new Set<() => void>();
   // External viewpoint ID → markups for all views touched in the current session.
-  const markupDirtyViews = new Map<string, unknown[]>();
+  const markupDirtyViews = new Map<string, MarkupData[]>();
   // Called with the full dirty set when exitMarkupMode(true) is invoked.
-  let markupCommitCallback: ((dirty: Array<{ viewId: string; markups: unknown[] }>) => void) | null = null;
+  let markupCommitCallback: ((dirty: Array<{ viewId: string; markups: MarkupData[] }>) => void) | null = null;
 
-  const revealReadOnlyMarkupsAfterTransition = (viewId: string, markups: unknown[]) => {
+  const revealReadOnlyMarkupsAfterTransition = (viewId: string, markups: MarkupData[]) => {
     const token = ++readOnlyRevealToken;
     const tryReveal = () => {
       if (token !== readOnlyRevealToken) return;
@@ -556,6 +675,10 @@ export function createModelViewerAdapter(
   });
 
   viewer.markup.on('markups-changed', () => {
+    if (!_markupChanging) {
+      markupUndoDepth++;
+      markupRedoDepth = 0;
+    }
     emitActionHistory();
     for (const listener of markupChangeListeners) listener();
   });
@@ -583,6 +706,12 @@ export function createModelViewerAdapter(
       isolateCount,
       markupsCount: readOnlyMarkupsCount,
       measurementsCount: 0,
+      canUndo: markupModeActive ? markupUndoDepth > 0
+             : sectioningActive  ? sectionUndoDepth > 0 || undoStack.length > 0
+             : undoStack.length > 0,
+      canRedo: markupModeActive ? markupRedoDepth > 0
+             : sectioningActive  ? sectionRedoDepth > 0 || redoStack.length > 0
+             : redoStack.length > 0,
     };
   };
 
@@ -593,11 +722,40 @@ export function createModelViewerAdapter(
     }
   };
 
-  // React to sectioning changes
-  viewer.sectioning.on('plane-add', () => emitActionHistory());
-  viewer.sectioning.on('plane-remove', () => emitActionHistory());
-  viewer.sectioning.on('planes-clear', () => emitActionHistory());
-  viewer.sectioning.on('section-box-activate', () => emitActionHistory());
+  // React to sectioning changes — track depth for canUndo/canRedo.
+  // Each entry corresponds to one undoable action in the engine's _actionHistory.
+  const _incrementSection = () => {
+    if (sectioningActive && !_sectionChanging) {
+      sectionUndoDepth++;
+      sectionRedoDepth = 0;
+      emitActionHistory();
+    }
+  };
+  viewer.sectioning.on('plane-add', _incrementSection);
+
+  // Explicit user-initiated plane delete (context menu Delete) is also undoable.
+  viewer.sectioning.on('plane-remove', () => {
+    if (sectioningActive && !_sectionChanging) {
+      sectionUndoDepth++;
+      sectionRedoDepth = 0;
+    }
+    emitActionHistory();
+  });
+
+  // drag-end fires once per completed drag for ALL drag types:
+  //   section-plane move, section-box face-drag, section-box rotate.
+  // The engine has already pushed a { undo, redo } action to _actionHistory
+  // by the time this event fires, so incrementing our counter is safe.
+  viewer.sectioning.on('drag-end', _incrementSection);
+
+  viewer.sectioning.on('planes-clear', () => {
+    if (!_sectionChanging) {
+      sectionUndoDepth = 0;
+      sectionRedoDepth = 0;
+    }
+    emitActionHistory();
+  });
+  viewer.sectioning.on('section-box-activate', _incrementSection);
 
   // Isolate in section box — wire ModelViewer event into adapter subscriptions.
   // The engine has already positioned the section box; we update adapter state
@@ -608,16 +766,75 @@ export function createModelViewerAdapter(
   viewer.on('camera-change', () => {
     cameraChangeListeners.forEach((l) => l());
   });
+
+  // ── Camera undo debounce ─────────────────────────────────────────────
+  // After 400 ms of camera stillness, push the "before-move" snapshot so
+  // the user can undo camera movements. Suppressed during programmatic
+  // camera animations (viewpoint restore, undo/redo, orientation snap).
+  viewer.on('camera-change', () => {
+    if (_suppressCameraUndoCount > 0 || markupModeActive) return;
+    if (_cameraDebounceTimer === null) {
+      // First frame of this movement — capture the state before it began.
+      _cameraBeforeMove = snapshotCamera();
+    } else {
+      clearTimeout(_cameraDebounceTimer);
+    }
+    _cameraDebounceTimer = setTimeout(() => {
+      _cameraDebounceTimer = null;
+      if (_cameraBeforeMove) {
+        const cur = snapshotCamera();
+        // Only commit if the camera actually moved meaningfully. OrbitControls
+        // fires 'change' on every animation-loop tick even when the user isn't
+        // interacting (damping settle, post-undo settling). Tiny deltas are noise.
+        const posMovedSq =
+          Math.pow(cur.position.x - _cameraBeforeMove.position.x, 2) +
+          Math.pow(cur.position.y - _cameraBeforeMove.position.y, 2) +
+          Math.pow(cur.position.z - _cameraBeforeMove.position.z, 2);
+        const targetMovedSq =
+          Math.pow(cur.target.x - _cameraBeforeMove.target.x, 2) +
+          Math.pow(cur.target.y - _cameraBeforeMove.target.y, 2) +
+          Math.pow(cur.target.z - _cameraBeforeMove.target.z, 2);
+        if (posMovedSq > 1e-6 || targetMovedSq > 1e-6) {
+          undoStack.push(_cameraBeforeMove);
+          if (undoStack.length > MAX_UNDO) undoStack.shift();
+          redoStack.length = 0;
+          emitActionHistory();
+        }
+        _cameraBeforeMove = null;
+      }
+    }, 1000);
+  });
   const visibilityChangeListeners = new Set<() => void>();
-  viewer.visibility.on('visibility-change', () => {
+  viewer.visibility.on('visibility-change', (data: unknown) => {
+    // Track every user-driven visibility change regardless of whether it came from
+    // the adapter (hideObjects/showObjects) or the engine's own context menu
+    // (ModelViewer.js calls visibility.hide/show directly, bypassing the adapter).
+    if (!_suppressVisibilityUndo && !markupModeActive) {
+      const payload = data as { shown?: unknown[]; hidden?: unknown[] };
+      const hidden = (Array.isArray(payload?.hidden) ? payload.hidden : []).map(String).filter(Boolean);
+      const shown  = (Array.isArray(payload?.shown)  ? payload.shown  : []).map(String).filter(Boolean);
+
+      if (hidden.length > 0) {
+        flushCameraDebounce();
+        undoStack.push({ kind: 'vis-hide', ids: hidden });
+        if (undoStack.length > MAX_UNDO) undoStack.shift();
+        redoStack.length = 0;
+      } else if (shown.length > 0) {
+        // Only track pure-show events (no hidden siblings) to avoid double-tracking
+        // events like isolate() that report both shown and hidden in one payload.
+        flushCameraDebounce();
+        undoStack.push({ kind: 'vis-show', ids: shown });
+        if (undoStack.length > MAX_UNDO) undoStack.shift();
+        redoStack.length = 0;
+      }
+    }
     emitActionHistory();
     visibilityChangeListeners.forEach((l) => l());
   });
   viewer.on('isolate-in-section-box', () => {
     // Engine already called setActiveTool('section-box'), activateSectionBox, and
     // setBoxSubTool('move'). Just sync the adapter's local state and notify React.
-    sectioningActive  = true;
-    activeSectionTool = 'section-box';
+    sectioningActive = true;
     emitSectioningState();
     isolateInSectionBoxListeners.forEach(l => l());
   });
@@ -678,7 +895,9 @@ export function createModelViewerAdapter(
       };
     },
     setCameraSnapshot(snapshot, options) {
+      _suppressCameraUndoCount++;
       applyCameraSnapshot(snapshot, options);
+      setTimeout(() => { _suppressCameraUndoCount--; }, (options?.durationMs ?? 550) + 150);
     },
     getViewpointState() {
       const cam = viewer.navigation.getEffectiveCamera();
@@ -703,18 +922,26 @@ export function createModelViewerAdapter(
       if (!sxModeActive) {
         viewer.sectioning.setActiveTool(null);
       }
+      _suppressVisibilityUndo = true;
       viewer.visibility.showAll();
       if (state.hiddenObjects.length > 0) {
         viewer.visibility.hide(state.hiddenObjects);
       }
+      _suppressVisibilityUndo = false;
+      _suppressCameraUndoCount++;
       applyCameraSnapshot(state.camera, options);
+      setTimeout(() => { _suppressCameraUndoCount--; }, (options?.durationMs ?? 550) + 150);
     },
     setViewOrientation(view: ViewOrientation) {
       const preset = ORIENTATIONS[view];
+      // setCamera fires camera-change synchronously; bracket with suppression
+      // so it doesn't register as a user-driven camera move.
+      _suppressCameraUndoCount++;
       viewer.navigation.setCamera(
         { x: preset.position[0], y: preset.position[1], z: preset.position[2] },
         { x: preset.target[0], y: preset.target[1], z: preset.target[2] },
       );
+      _suppressCameraUndoCount--;
     },
     setInteractionMode(mode: InteractionMode) {
       viewer.setInteractionMode(mode);
@@ -731,14 +958,12 @@ export function createModelViewerAdapter(
     toggleSectionTool() {
       sectioningActive = !sectioningActive;
       if (!sectioningActive) {
-        activeSectionTool = null;
         viewer.sectioning.setActiveTool(null);
         viewer.selection.setHoverEnabled?.(true);
       }
       emitSectioningState();
     },
     setActiveSectioningTool(tool: 'section-plane' | 'section-box' | 'section-cut' | null) {
-      activeSectionTool = tool;
       viewer.sectioning.setActiveTool(tool);
 
       // Disable Selection hover while surface-cut authoring gizmo is active to prevent
@@ -799,12 +1024,23 @@ export function createModelViewerAdapter(
       sectioningActive = active;
       if (active) {
         viewer.sectioning.clearHistory();
+        sectionUndoDepth = 0;
+        sectionRedoDepth = 0;
+        // Engine history cleared — stale section-step entries in the default
+        // stacks would call undo() on a now-empty engine stack, so remove them.
+        for (let i = undoStack.length - 1; i >= 0; i--) {
+          if (undoStack[i].kind === 'section-step') undoStack.splice(i, 1);
+        }
+        for (let i = redoStack.length - 1; i >= 0; i--) {
+          if (redoStack[i].kind === 'section-step') redoStack.splice(i, 1);
+        }
       }
       if (!sectioningActive) {
-        activeSectionTool = null;
         viewer.sectioning.setActiveTool(null);
         viewer.selection.setHoverEnabled?.(true);
         viewer.sectioning.clearHistory();
+        sectionUndoDepth = 0;
+        sectionRedoDepth = 0;
       }
       emitSectioningState();
     },
@@ -828,6 +1064,8 @@ export function createModelViewerAdapter(
       };
     },
     toggleIsolationMode() {
+      _suppressVisibilityUndo = true;
+      pushSnapshotUndo();
       const selected = viewer.selection.getSelected();
       if (selected.length > 0) {
         isolateCount = selected.length;
@@ -836,6 +1074,7 @@ export function createModelViewerAdapter(
         isolateCount = 0;
         viewer.visibility.showAll();
       }
+      _suppressVisibilityUndo = false;
       emitActionHistory();
     },
     toggleSearchSetsPanel() {
@@ -899,14 +1138,14 @@ export function createModelViewerAdapter(
     },
     hideObjects(expressIDs: string[]) {
       if (expressIDs.length === 0) return;
+      // Do NOT push manually — the visibility-change event handler tracks this
+      // so that hides from the engine's own context menu are also covered.
       viewer.visibility.hide(expressIDs);
-      viewer.selection.deselect(expressIDs);
-      emitActionHistory();
+      viewer.selection.deselect();
     },
     showObjects(expressIDs: string[]) {
       if (expressIDs.length === 0) return;
       viewer.visibility.show(expressIDs);
-      emitActionHistory();
     },
     subscribeHiddenObjects(listener: (expressIDs: string[]) => void) {
       const handler = (data: unknown) => {
@@ -1022,29 +1261,189 @@ export function createModelViewerAdapter(
       viewer.setRenderStyle(style);
     },
     setHoverEffect(mode: 'gradient' | 'edgeTrace') {
-      viewer.selection.setHoverEffectMode(mode);
+      viewer.selection.setHoverEffectMode?.(mode);
     },
     getHoverEffect() {
-      return viewer.selection.getHoverEffectMode() as 'gradient' | 'edgeTrace';
+      return (viewer.selection.getHoverEffectMode?.() ?? 'gradient') as 'gradient' | 'edgeTrace';
     },
     undo() {
       if (markupModeActive) {
-        viewer.markup.undo();
+        if (markupUndoDepth > 0) {
+          _markupChanging = true;
+          viewer.markup.undo();
+          _markupChanging = false;
+          markupUndoDepth--;
+          markupRedoDepth++;
+          emitActionHistory();
+        }
         return;
       }
       if (sectioningActive) {
-        viewer.sectioning.undo();
+        if (sectionUndoDepth > 0) {
+          // Sectioning planes still on the stack — undo the most recent plane op.
+          _sectionChanging = true;
+          viewer.sectioning.undo();
+          _sectionChanging = false;
+          sectionUndoDepth--;
+          sectionRedoDepth++;
+          emitActionHistory();
+        } else {
+          // No more sectioning to undo — fall through to camera undo so the
+          // user can also revert camera moves made during sectioning mode.
+          if (_cameraDebounceTimer !== null) {
+            clearTimeout(_cameraDebounceTimer);
+            _cameraDebounceTimer = null;
+            _cameraBeforeMove = null;
+          }
+          const camSnap = undoStack.pop();
+          if (camSnap?.kind === 'camera') {
+            redoStack.push(snapshotCamera());
+            _suppressCameraUndoCount++;
+            applyCameraSnapshot(
+              { position: camSnap.position, target: camSnap.target, isOrthographic: camSnap.isOrthographic },
+              { animate: true },
+            );
+            setTimeout(() => { _suppressCameraUndoCount--; }, 700);
+            emitActionHistory();
+          } else if (camSnap) {
+            // Non-camera entry (visibility) — put it back; we don't undo visibility in sectioning mode.
+            undoStack.push(camSnap);
+          }
+        }
         return;
+      }
+      // Default mode: typed undo
+      // Cancel any in-flight camera debounce so it doesn't pollute the stack.
+      if (_cameraDebounceTimer !== null) {
+        clearTimeout(_cameraDebounceTimer);
+        _cameraDebounceTimer = null;
+        _cameraBeforeMove = null;
+      }
+      const snap = undoStack.pop();
+      if (!snap) return;
+      if (snap.kind === 'vis-hide') {
+        // Undo a hide → show those exact objects; redo entry = re-hide them.
+        redoStack.push(snap);
+        _suppressVisibilityUndo = true;
+        viewer.visibility.show(snap.ids);
+        _suppressVisibilityUndo = false;
+        emitActionHistory();
+      } else if (snap.kind === 'vis-show') {
+        // Undo a show → hide those exact objects; redo entry = re-show them.
+        redoStack.push(snap);
+        _suppressVisibilityUndo = true;
+        viewer.visibility.hide(snap.ids);
+        _suppressVisibilityUndo = false;
+        emitActionHistory();
+      } else if (snap.kind === 'vis-snapshot') {
+        // Complex op (isolate, clear-all, etc.) — full state restore.
+        redoStack.push({ kind: 'vis-snapshot', hidden: viewer.visibility.getHiddenElements().slice(), isolateCount });
+        _suppressVisibilityUndo = true;
+        applyVisibilitySnapshot(snap);
+        _suppressVisibilityUndo = false;
+      } else if (snap.kind === 'camera') {
+        redoStack.push(snapshotCamera());
+        _suppressCameraUndoCount++;
+        applyCameraSnapshot(
+          { position: snap.position, target: snap.target, isOrthographic: snap.isOrthographic },
+          { animate: true },
+        );
+        setTimeout(() => { _suppressCameraUndoCount--; }, 700);
+        emitActionHistory();
+      } else {
+        // 'section-step' — delegate to the engine's own undo for this one step.
+        // The engine's _actionHistory persists after the session was saved.
+        redoStack.push({ kind: 'section-step' });
+        viewer.sectioning.undo();
+        emitActionHistory();
       }
     },
     redo() {
       if (markupModeActive) {
-        viewer.markup.redo();
+        if (markupRedoDepth > 0) {
+          _markupChanging = true;
+          viewer.markup.redo();
+          _markupChanging = false;
+          markupRedoDepth--;
+          markupUndoDepth++;
+          emitActionHistory();
+        }
         return;
       }
       if (sectioningActive) {
-        viewer.sectioning.redo();
+        if (sectionRedoDepth > 0) {
+          // Redo sectioning first (mirrors the undo priority).
+          _sectionChanging = true;
+          viewer.sectioning.redo();
+          _sectionChanging = false;
+          sectionRedoDepth--;
+          sectionUndoDepth++;
+          emitActionHistory();
+        } else {
+          // No more sectioning to redo — fall through to camera redo.
+          if (_cameraDebounceTimer !== null) {
+            clearTimeout(_cameraDebounceTimer);
+            _cameraDebounceTimer = null;
+            _cameraBeforeMove = null;
+          }
+          const camSnap = redoStack.pop();
+          if (camSnap?.kind === 'camera') {
+            undoStack.push(snapshotCamera());
+            _suppressCameraUndoCount++;
+            applyCameraSnapshot(
+              { position: camSnap.position, target: camSnap.target, isOrthographic: camSnap.isOrthographic },
+              { animate: true },
+            );
+            setTimeout(() => { _suppressCameraUndoCount--; }, 700);
+            emitActionHistory();
+          } else if (camSnap) {
+            redoStack.push(camSnap);
+          }
+        }
         return;
+      }
+      // Default mode: typed redo
+      // Cancel any in-flight camera debounce so it doesn't pollute the stack.
+      if (_cameraDebounceTimer !== null) {
+        clearTimeout(_cameraDebounceTimer);
+        _cameraDebounceTimer = null;
+        _cameraBeforeMove = null;
+      }
+      const snap = redoStack.pop();
+      if (!snap) return;
+      if (snap.kind === 'vis-hide') {
+        // Redo a hide → hide those objects again; undo entry = re-show them.
+        undoStack.push(snap);
+        _suppressVisibilityUndo = true;
+        viewer.visibility.hide(snap.ids);
+        _suppressVisibilityUndo = false;
+        emitActionHistory();
+      } else if (snap.kind === 'vis-show') {
+        // Redo a show → show those objects again; undo entry = re-hide them.
+        undoStack.push(snap);
+        _suppressVisibilityUndo = true;
+        viewer.visibility.show(snap.ids);
+        _suppressVisibilityUndo = false;
+        emitActionHistory();
+      } else if (snap.kind === 'vis-snapshot') {
+        undoStack.push({ kind: 'vis-snapshot', hidden: viewer.visibility.getHiddenElements().slice(), isolateCount });
+        _suppressVisibilityUndo = true;
+        applyVisibilitySnapshot(snap);
+        _suppressVisibilityUndo = false;
+      } else if (snap.kind === 'camera') {
+        undoStack.push(snapshotCamera());
+        _suppressCameraUndoCount++;
+        applyCameraSnapshot(
+          { position: snap.position, target: snap.target, isOrthographic: snap.isOrthographic },
+          { animate: true },
+        );
+        setTimeout(() => { _suppressCameraUndoCount--; }, 700);
+        emitActionHistory();
+      } else {
+        // 'section-step' — delegate to the engine's redo for this one step.
+        undoStack.push({ kind: 'section-step' });
+        viewer.sectioning.redo();
+        emitActionHistory();
       }
     },
     getActionHistory() {
@@ -1063,11 +1462,17 @@ export function createModelViewerAdapter(
           viewer.sectioning.clearAll();
           break;
         case 'hidden':
+          _suppressVisibilityUndo = true;
+          pushSnapshotUndo();
           viewer.visibility.showAll();
+          _suppressVisibilityUndo = false;
           break;
         case 'isolate':
+          _suppressVisibilityUndo = true;
+          pushSnapshotUndo();
           isolateCount = 0;
           viewer.visibility.showAll();
+          _suppressVisibilityUndo = false;
           break;
         case 'markups': {
           if (markupModeActive) {
@@ -1090,9 +1495,12 @@ export function createModelViewerAdapter(
       emitActionHistory();
     },
     clearAllActions() {
+      _suppressVisibilityUndo = true;
+      pushSnapshotUndo();
       viewer.sectioning.clearAll();
       isolateCount = 0;
       viewer.visibility.showAll();
+      _suppressVisibilityUndo = false;
       readOnlyRevealToken++;
       readOnlyMarkupsCount = 0;
       viewer.markup.hideOverlay();
@@ -1177,7 +1585,7 @@ export function createModelViewerAdapter(
     },
 
     // ── Markup mode ───────────────────────────────────────────────────
-    enterMarkupMode(viewId?: string, existingMarkups?: unknown[]) {
+    enterMarkupMode(viewId?: string, existingMarkups?: MarkupData[]) {
       // Auto-save current view's markups as a draft before switching.
       if (markupModeActive && markupExternalViewId) {
         const currentMarkups = JSON.parse(JSON.stringify(viewer.markup.getMarkups()));
@@ -1212,6 +1620,9 @@ export function createModelViewerAdapter(
       if (viewId) {
         markupPersistedMarkups = JSON.parse(JSON.stringify(existingMarkups ?? []));
       }
+      // Reset markup undo/redo depth for each new editing session.
+      markupUndoDepth = 0;
+      markupRedoDepth = 0;
       // The editable canvas replaces the read-only overlay — clear the chip count.
       readOnlyMarkupsCount = 0;
       emitActionHistory();
@@ -1329,11 +1740,11 @@ export function createModelViewerAdapter(
       markupChangeListeners.add(listener);
       return () => { markupChangeListeners.delete(listener); };
     },
-    registerMarkupCommitCallback(callback: (dirty: Array<{ viewId: string; markups: unknown[] }>) => void) {
+    registerMarkupCommitCallback(callback: (dirty: Array<{ viewId: string; markups: MarkupData[] }>) => void) {
       markupCommitCallback = callback;
       return () => { if (markupCommitCallback === callback) markupCommitCallback = null; };
     },
-    showMarkupOverlay(markups: unknown[], animate?: boolean) {
+    showMarkupOverlay(markups: MarkupData[], animate?: boolean) {
       readOnlyRevealToken++;
       if (!markups || markups.length === 0) {
         readOnlyMarkupsCount = 0;
@@ -1403,6 +1814,10 @@ export function createModelViewerAdapter(
         };
         sxModeActive = true;
         sectioningActive = true;
+        sectionUndoDepth = 0;
+        sectionRedoDepth = 0;
+        // Watermark the undo stack so we can trim in-session camera entries on exit.
+        _preSectioningUndoStackLength = undoStack.length;
         // Set sxViewId BEFORE firing listeners so that any listener that calls
         // setSectioningViewId() to register a pre-selected view can overwrite it
         // safely — and the view-switch code below never runs for first-time entry.
@@ -1437,6 +1852,10 @@ export function createModelViewerAdapter(
     exitSectioningViewMode(save: boolean) {
       if (!sxModeActive) return;
 
+      // (preModeSection was previously used for the single-step SectioningUndoEntry
+      // approach; now each step is pushed individually — kept as const to avoid
+      // touching the rest of the if/else chain below.)
+
       if (save && sxViewId) {
         // Draft the current view before committing everything.
         const cam = viewer.navigation.getEffectiveCamera();
@@ -1457,15 +1876,40 @@ export function createModelViewerAdapter(
         if (sxPreModeState.sectioning) {
           viewer.sectioning.restoreState(sxPreModeState.sectioning);
         }
+        _suppressCameraUndoCount++;
         applyCameraSnapshot(sxPreModeState.camera, { animate: true });
+        setTimeout(() => { _suppressCameraUndoCount--; }, 700);
       }
+
+      // ── Undo stack cleanup ──────────────────────────────────────────
+      // Trim any camera/visibility entries added during the session (above the
+      // watermark) — they're mid-session navigation and don't belong in
+      // default-mode undo.
+      if (_cameraDebounceTimer !== null) {
+        clearTimeout(_cameraDebounceTimer);
+        _cameraDebounceTimer = null;
+        _cameraBeforeMove = null;
+      }
+      undoStack.splice(_preSectioningUndoStackLength);
+
+      // On save: push one section-step entry per undoable action performed in
+      // the session (plane-add, drag, etc.). Each step calls viewer.sectioning.undo()
+      // individually so the user can step back through changes one at a time.
+      // The engine's _actionHistory persists after exitSectioningViewMode because
+      // we don't call clearHistory() here — it's only cleared on next session entry.
+      if (save && sectionUndoDepth > 0) {
+        for (let i = 0; i < sectionUndoDepth; i++) {
+          undoStack.push({ kind: 'section-step' });
+          if (undoStack.length > MAX_UNDO) undoStack.shift();
+        }
+      }
+      redoStack.length = 0;
 
       sxModeActive = false;
       sxViewId = null;
       sxAutoViewId = null;
       sxPreModeState = null;
       sectioningActive = false;
-      activeSectionTool = null;
       viewer.sectioning.setActiveTool(null);
       // On save: leave clip planes live so the user sees their work immediately.
       // The commit callback will re-apply via setViewpointState, but leaving them

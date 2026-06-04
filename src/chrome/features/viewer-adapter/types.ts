@@ -62,6 +62,8 @@ export interface ActionHistorySummary {
   isolateCount: number;
   markupsCount: number;
   measurementsCount: number;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 // ── Object Properties ────────────────────────────────────────────────────────

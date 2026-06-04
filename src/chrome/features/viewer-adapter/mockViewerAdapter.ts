@@ -231,6 +231,8 @@ export const mockViewerAdapter: ViewerAdapter = {
       isolateCount: 0,
       markupsCount: 0,
       measurementsCount: 0,
+      canUndo: false,
+      canRedo: false,
     };
   },
   subscribeActionHistory(listener) {
@@ -240,6 +242,8 @@ export const mockViewerAdapter: ViewerAdapter = {
       isolateCount: 0,
       markupsCount: 0,
       measurementsCount: 0,
+      canUndo: false,
+      canRedo: false,
     });
     return () => {
       log('unsubscribeActionHistory');

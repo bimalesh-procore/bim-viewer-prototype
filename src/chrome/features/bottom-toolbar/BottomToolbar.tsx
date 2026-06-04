@@ -6,12 +6,6 @@ import { useViewpoints } from '../viewpoints';
 import { BottomToolbarButton } from './BottomToolbarButton';
 import { BottomToolbarDivider } from './BottomToolbarDivider';
 import { NavModeMenu, NAV_MODE_ICONS, type NavMode } from './NavModeMenu';
-
-const NAV_MODE_LABEL: Record<NavMode, string> = {
-  select: 'Default',
-  orbit: 'Orbit',
-  fly: 'Fly',
-};
 import { RenderSettingsFlyout } from './RenderSettingsFlyout';
 import {
   RenderStyleMenu,

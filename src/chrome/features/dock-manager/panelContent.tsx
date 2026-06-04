@@ -1,20 +1,21 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import type { ReactElement } from 'react';
 import { DropdownMenu, DropdownMenuItem } from '../../shared/DropdownMenu';
 import {
-  AlertTriangle,
-  Binoculars,
-  ClipboardList,
-  FileQuestion,
-  Home,
-  ListChecks,
   MoreVertical,
-  ShieldCheck,
-  Wrench,
   ChevronRight,
   ChevronDown,
   Check,
   Star,
 } from 'lucide-react';
+import itemsAssetIcon           from '../../assets/icons/items/asset.svg';
+import itemsCoordIssueIcon      from '../../assets/icons/items/coordination-issue.svg';
+import itemsInspectionIcon      from '../../assets/icons/items/inspection.svg';
+import itemsObservationIcon     from '../../assets/icons/items/observation.svg';
+import itemsPunchListIcon       from '../../assets/icons/items/punch-list.svg';
+import itemsRfiIcon             from '../../assets/icons/items/rfi.svg';
+import itemsSubmittalIcon       from '../../assets/icons/items/submittal.svg';
+import itemsArrowIcon          from '../../assets/icons/items/arrow.svg';
 import { AssetsListView } from '../items-panel/AssetsListView';
 import { AssetDetailView } from '../items-panel/AssetDetailView';
 import type { Asset } from '../items-panel/types';
@@ -129,15 +130,15 @@ function SearchSetsContent() {
 // ─── Related Items ────────────────────────────────────────────────────────────
 
 const ITEMS = [
-  { key: 'assets',                label: 'Assets',                Icon: Home          },
-  { key: 'coordination-issues',   label: 'Coordination Issues',   Icon: AlertTriangle },
-  { key: 'punch-list',            label: 'Punch List',            Icon: Wrench        },
-  { key: 'quality-inspections',   label: 'Quality Inspections',   Icon: ClipboardList },
-  { key: 'quality-observation',   label: 'Quality Observation',   Icon: Binoculars    },
-  { key: 'rfis',                  label: 'RFIs',                  Icon: FileQuestion  },
-  { key: 'safety-inspections',    label: 'Safety Inspections',    Icon: ShieldCheck   },
-  { key: 'safety-observation',    label: 'Safety Observation',    Icon: Binoculars    },
-  { key: 'submittals',            label: 'Submittals',            Icon: ListChecks    },
+  { key: 'assets',                label: 'Assets',                icon: itemsAssetIcon        },
+  { key: 'coordination-issues',   label: 'Coordination Issues',   icon: itemsCoordIssueIcon   },
+  { key: 'punch-list',            label: 'Punch List',            icon: itemsPunchListIcon    },
+  { key: 'quality-inspections',   label: 'Quality Inspections',   icon: itemsInspectionIcon   },
+  { key: 'quality-observation',   label: 'Quality Observation',   icon: itemsObservationIcon  },
+  { key: 'rfis',                  label: 'RFIs',                  icon: itemsRfiIcon          },
+  { key: 'safety-inspections',    label: 'Safety Inspections',    icon: itemsInspectionIcon   },
+  { key: 'safety-observation',    label: 'Safety Observation',    icon: itemsObservationIcon  },
+  { key: 'submittals',            label: 'Submittals',            icon: itemsSubmittalIcon    },
 ] as const;
 
 function ItemsContent() {
@@ -155,7 +156,7 @@ function ItemsContent() {
     <div className="bg-white rounded-md overflow-hidden">
       {view.kind === 'hub' && (
         <ul className="px-2 py-1">
-          {ITEMS.map(({ key, label, Icon }) => (
+          {ITEMS.map(({ key, label, icon }) => (
             <li key={key}>
               <button
                 type="button"
@@ -169,10 +170,10 @@ function ItemsContent() {
                 className="flex w-full items-center justify-between rounded-md px-2 py-[11px] text-left transition-colors hover:bg-gray-100"
               >
                 <span className="flex items-center gap-3 text-sm font-semibold text-gray-700">
-                  <Icon size={16} strokeWidth={2} className="text-gray-600" />
+                  <img src={icon} alt="" width={16} height={16} className="flex-shrink-0" />
                   {label}
                 </span>
-                <span className="pr-1 text-xl leading-none text-gray-400">›</span>
+                <img src={itemsArrowIcon} alt="" width={24} height={24} className="flex-shrink-0" />
               </button>
             </li>
           ))}
@@ -2175,7 +2176,7 @@ function DeviationContent() {
 
 // ─── Registry ────────────────────────────────────────────────────────────────
 
-export const PANEL_REGISTRY: Record<PanelId, { Content: () => JSX.Element; Toolbar?: () => JSX.Element }> = {
+export const PANEL_REGISTRY: Record<PanelId, { Content: () => ReactElement | null; Toolbar?: () => ReactElement | null }> = {
   'views':       { Content: ViewsContent, Toolbar: ViewsToolbar },
   'items':       { Content: ItemsContent },
   'sheets':      { Content: SheetsContent, Toolbar: SheetsToolbar },

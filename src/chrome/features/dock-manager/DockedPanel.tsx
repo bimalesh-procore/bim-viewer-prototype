@@ -85,8 +85,9 @@ export function DockedPanel({
   onResizeSize,
   onResizeStart,
   onResizeEnd,
-  deemphasized = false,
+  deemphasized: _deemphasized = false,
 }: DockedPanelProps) {
+  void _deemphasized; // prop accepted for API compatibility; visual de-emphasis not yet implemented
   const hasTabs = !minimized && !!tabs && tabs.length > 0;
 
   // ── Resize drag state (declared early — used in containerStyle) ──
@@ -108,9 +109,6 @@ export function DockedPanel({
   const w = floatWidth ?? 320;
   const h = minimized ? 'auto' : (floatHeight ?? 480);
 
-  const deemphStyles: React.CSSProperties = {};
-  const deemphTransition = 'filter 120ms ease';
-
   const containerStyle: React.CSSProperties = isDetached
     ? {
         width: '100%',
@@ -125,8 +123,7 @@ export function DockedPanel({
           height: minimized ? 'auto' : '100%',
           minHeight: 0,
           boxShadow,
-          transition: `box-shadow 200ms ease, ${deemphTransition}`,
-          ...deemphStyles,
+          transition: 'box-shadow 200ms ease',
         }
       : {
           position: 'fixed',
@@ -134,10 +131,9 @@ export function DockedPanel({
           top: floatPosition?.y ?? 80,
           width: w,
           height: h,
-          zIndex: 200,
+          zIndex: 10,
           boxShadow,
-          transition: resizing ? deemphTransition : `height 200ms cubic-bezier(0.22, 1, 0.36, 1), ${deemphTransition}`,
-          ...deemphStyles,
+          transition: resizing ? 'none' : 'height 200ms cubic-bezier(0.22, 1, 0.36, 1)',
         };
 
   const handleResizePointerDown = useCallback((

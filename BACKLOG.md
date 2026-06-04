@@ -21,6 +21,16 @@ documentation sweep that runs alongside it on every commit.
 
 ---
 
+## Items panel — ItemCard styling updates
+
+**Why:** The generic `ItemCard` component was extracted but styling changes were deferred — the user wanted to describe them during implementation. Paused due to repo migration.
+
+**Approach:** Open `src/chrome/features/items-panel/ItemCard.tsx` and apply the styling changes the user describes. Since `AssetTile` is a thin wrapper, any change to `ItemCard` automatically updates the Assets list view.
+
+**Touchpoints:** `src/chrome/features/items-panel/ItemCard.tsx` only.
+
+---
+
 ## Items panel — non-Assets categories
 
 **Why:** Clicking Punch List, RFIs, Quality Inspections, etc. shows a generic placeholder ("X content goes here"). These need real sub-views built out.

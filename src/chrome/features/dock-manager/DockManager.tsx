@@ -49,6 +49,18 @@ const SETTLE_MS          = 200;
 const MINIMIZED_PANEL_HEIGHT = 58;
 const EASE               = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
+// Floating panels must stay reachable — clamp so the drag handle (panel header)
+// is never hidden behind the app header or off the screen edges.
+const FLOAT_MIN_Y      = 64;  // clear the ~56px app header + 8px breathing room
+const FLOAT_EDGE_STRIP = 60;  // min px of panel that must remain on-screen horizontally
+
+function clampFloatPos(x: number, y: number): { x: number; y: number } {
+  return {
+    x: Math.max(-(DOCK_PANEL_WIDTH - FLOAT_EDGE_STRIP), Math.min(x, window.innerWidth  - FLOAT_EDGE_STRIP)),
+    y: Math.max(FLOAT_MIN_Y,                             Math.min(y, window.innerHeight - FLOAT_EDGE_STRIP)),
+  };
+}
+
 // ─── Drag state ───────────────────────────────────────────────────────────────
 interface DragState {
   /** 'drag' = pointer tracking active; 'drop' = overlay animating, inputs frozen */
@@ -91,8 +103,6 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
     openPanels,
     undockPanel,
     insertDockedPanel,
-    reorderDockedPanels,
-    setFloatPosition,
     toggleMinimized,
     closePanel,
     setDockedHeight,
@@ -438,7 +448,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
           s.detachPanel(d.panelId);
         } else {
           const panel = panels.find((p) => p.id === d.panelId);
-          s.undockPanel(d.panelId, { x: d.overlayX, y: d.overlayY });
+          s.undockPanel(d.panelId, clampFloatPos(d.overlayX, d.overlayY));
           if (panel?.minimized) s.setFloatSize(d.panelId, { height: 400 });
         }
         dragRef.current = null;
@@ -451,7 +461,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
         if (outsideViewport) {
           s.detachPanel(d.panelId);
         } else {
-          s.setFloatPosition(d.panelId, { x: d.overlayX, y: d.overlayY });
+          s.setFloatPosition(d.panelId, clampFloatPos(d.overlayX, d.overlayY));
         }
         dragRef.current = null;
         setDragState(null);
@@ -623,7 +633,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
                 height:        slotH,
                 flexShrink:    (isDockedDrag || isResizingDocked) ? 0 : 1,
                 minHeight:     MINIMIZED_PANEL_HEIGHT,
-                willChange:    'transform',
+                willChange:    isDockedDrag ? 'transform' : 'auto',
                 pointerEvents: isPlaceholder ? 'none'  : 'auto',
                 // Placeholder is invisible. The overlay renders the actual content.
                 opacity:       isPlaceholder ? 0       : 1,

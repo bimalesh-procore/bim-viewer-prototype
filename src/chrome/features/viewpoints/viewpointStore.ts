@@ -32,18 +32,20 @@ function migrateEntry(entry: ModelViewpoints): ModelViewpoints {
 
 function normalize(raw: unknown): ViewpointsFile {
   if (!raw || typeof raw !== 'object') return { ...EMPTY_FILE };
-  const r = raw as Partial<ViewpointsFile> & { schemaVersion?: number };
+  const r = raw as Record<string, unknown>;
+  const schemaVersion = r.schemaVersion as number | undefined;
+  const models = r.models;
   // Accept v2 and v3 — migrate v2 to v3 on read so callers see one shape.
-  if ((r.schemaVersion !== 2 && r.schemaVersion !== 3) || !r.models || typeof r.models !== 'object') {
+  if ((schemaVersion !== 2 && schemaVersion !== 3) || !models || typeof models !== 'object') {
     return { ...EMPTY_FILE };
   }
-  const models: Record<string, ModelViewpoints> = {};
-  for (const [modelId, entry] of Object.entries(r.models)) {
+  const result: Record<string, ModelViewpoints> = {};
+  for (const [modelId, entry] of Object.entries(models as Record<string, unknown>)) {
     if (entry && typeof entry === 'object') {
-      models[modelId] = migrateEntry(entry as ModelViewpoints);
+      result[modelId] = migrateEntry(entry as ModelViewpoints);
     }
   }
-  return { schemaVersion: 3, models };
+  return { schemaVersion: 3, models: result };
 }
 
 async function fetchFile(): Promise<ViewpointsFile> {

@@ -11,17 +11,16 @@ import { mockViewerAdapter } from '../features/viewer-adapter/mockViewerAdapter'
 import type { ViewerAdapter, ObjectStreamingState } from '../features/viewer-adapter/types';
 import type { ModelEntry } from '../features/header';
 // This is the sole engine import — isolated to this entry file.
-// @ts-expect-error -- ModelViewer is vanilla JS with no type declarations
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 import { ModelViewer } from '../../index.js';
 
 // Registered sample models that show up in the header's "Project Model" dropdown.
 // Files live in `public/models/`; spaces in filenames are URL-encoded.
 const MODELS: readonly ModelEntry[] = [
   { id: 'condos',      label: 'Condos',      url: '/models/condos.frag.gz' },
-  { id: 'data-center',   label: 'Data Center',   url: '/models/data-center.frag.gz' },
-  { id: 'tower',          label: 'Tower',          url: '/models/tower.frag.gz' },
-  { id: 'vortex',        label: 'Vortex Architectural', url: '/models/vortex-architectural.frag.gz' },
-  { id: 'mastodon',      label: 'Mastodon',             url: '/models/mastodon.frag.gz' },
+  { id: 'data-center', label: 'Data Center', url: '/models/data-center.frag.gz' },
+  { id: 'tower',       label: 'Tower',       url: '/models/tower.frag.gz' },
+  { id: 'vortex',      label: 'Vortex Architectural', url: '/models/vortex-architectural.frag.gz' },
 ] as const;
 
 const DEFAULT_MODEL = MODELS[0];
@@ -35,7 +34,8 @@ function getInitialModel(): ModelEntry {
   return MODELS.find((m) => m.id === requestedId) ?? DEFAULT_MODEL;
 }
 
-function setInitialLoadingCamera(viewer: InstanceType<typeof ModelViewer>) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function setInitialLoadingCamera(viewer: any) {
   // Keep a stable wide framing before any geometry appears.
   viewer.navigation.setCamera(
     { x: 55, y: 40, z: 55 },
@@ -50,9 +50,9 @@ export function ChromeApp() {
   const setViewerContainer = useCallback((node: HTMLDivElement | null) => {
     setViewerContainerState(node);
   }, []);
-  const viewerInstanceRef = useRef<InstanceType<typeof ModelViewer> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const viewerInstanceRef = useRef<any>(null);
   const [adapter, setAdapter] = useState<ViewerAdapter>(mockViewerAdapter);
-  const [modelLoaded, setModelLoaded] = useState(false);
   const [loadRequested, setLoadRequested] = useState(false);
   const initialModelRef = useRef<ModelEntry>(getInitialModel());
   const [activeModelId, setActiveModelId] = useState<string | null>(initialModelRef.current.id);
@@ -98,7 +98,8 @@ export function ChromeApp() {
       return;
     }
 
-    const viewer = new ModelViewer(container, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const viewer: any = new ModelViewer(container, {
       showToolbar: false,
       showStatusBar: false,
       showGrid: false,
@@ -128,7 +129,6 @@ export function ChromeApp() {
 
       // Auto-load the default sample model
       setLoadRequested(true);
-      setModelLoaded(true);
       const initial = initialModelRef.current;
 
       // Seed the camera with the saved home view (if any) BEFORE the model
@@ -156,7 +156,6 @@ export function ChromeApp() {
         viewer.navigation.on('camera-change', onUserMove);
         viewer.loadModel(initial.url, initial.label).catch((err: unknown) => {
           console.error('Failed to auto-load default model:', err);
-          setModelLoaded(false);
           setLoadError('Failed to load model. Please try again.');
         });
       });
@@ -167,8 +166,6 @@ export function ChromeApp() {
     });
 
     viewer.on('load-complete', () => {
-      setModelLoaded(true);
-
       // Stop tracking user movement — from here on we're no longer in the
       // "snap back to home" window, so any future camera-change is just
       // ordinary navigation.
@@ -216,7 +213,6 @@ export function ChromeApp() {
       setActiveModelId(model.id);
       setLoadError(null);
       setLoadRequested(true);
-      setModelLoaded(true);
       // Reset streaming state so the progress bar starts fresh for the new model.
       setStreamingState({
         streamingSupported: false,

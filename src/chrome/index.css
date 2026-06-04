@@ -35,18 +35,17 @@ body,
   white-space: nowrap;
   pointer-events: none;
   z-index: 60;
-  opacity: 0;
-  transition: opacity 120ms ease;
+  visibility: hidden;
 }
 
 /* All tooltips in a toolbar become visible when hovering anywhere on that toolbar */
 .mv-toolbar-container:hover .mv-toolbar-tooltip {
-  opacity: 1;
+  visibility: visible;
 }
 
 /* The hovered button's tooltip gets the lighter background */
 .mv-toolbar-button:hover .mv-toolbar-tooltip {
-  opacity: 1;
+  visibility: visible;
   background: #ffffff;
 }
 

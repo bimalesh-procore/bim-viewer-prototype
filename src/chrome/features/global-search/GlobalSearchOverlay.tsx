@@ -153,7 +153,6 @@ export function GlobalSearchOverlay() {
     results,
     isLoading,
     hasQuery,
-    availableCategories,
     resetSearch,
   } = useGlobalSearch();
 

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ArrowDownNarrowWide, Filter, Search } from 'lucide-react';
+import { ArrowDownNarrowWide } from 'lucide-react';
+import searchFieldIcon from '../../assets/icons/panel/searchField.svg';
+import filterButtonIcon from '../../assets/icons/panel/filterButton.svg';
 import { AssetTile } from './AssetTile';
 import { getAssets } from './assetsData';
 import type { Asset } from './types';
@@ -33,28 +35,24 @@ export function AssetsListView({ onAssetClick }: AssetsListViewProps) {
 
   return (
     <div className="flex flex-col bg-[#F4F5F6]">
-      {/* Search + filter row */}
-      <div className="flex items-center gap-2 px-3 py-3 bg-white">
-        <div className="relative flex-1">
+      {/* Search + filter row — matches PanelSearchBar styling used by all other panels */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-white">
+        <div className="flex items-center flex-1 h-7 rounded bg-[#EEF0F1] pl-3 pr-2 gap-1">
           <input
-            type="search"
+            type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search"
-            className="w-full rounded-md bg-[#EEF0F1] px-3 py-2 pr-9 text-sm text-[#232729] placeholder:text-[#75838A] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#BCD1F5]"
+            className="flex-1 min-w-0 bg-transparent text-sm text-[#111827] placeholder-[#6B7785] outline-none"
           />
-          <Search
-            size={16}
-            strokeWidth={2}
-            className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#5E696E]"
-          />
+          <img src={searchFieldIcon} alt="" width={24} height={24} className="shrink-0" />
         </div>
         <button
           type="button"
-          className="inline-flex items-center rounded-md px-2 py-2 text-[#5E696E] hover:bg-[#EEF0F1]"
           aria-label="Filter assets"
+          className="w-6 h-6 flex items-center justify-center rounded shrink-0 hover:bg-black/5"
         >
-          <Filter size={16} strokeWidth={2} />
+          <img src={filterButtonIcon} alt="" width={16} height={16} />
         </button>
       </div>
 

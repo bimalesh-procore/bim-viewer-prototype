@@ -36,7 +36,7 @@ Both steps below are **required** every time the agent runs `git commit` or `git
 
 ### 2. Post-Push Slack Notification
 
-After every `git push` to main, send a message to `#bim-designers` (channel ID: `C0ACL0MGBTN`) using the Slack MCP tool (`server: plugin-slack-slack`, tool: `slack_send_message`). The channel is in the `procoretech.slack.com` workspace — if you get `channel_not_found`, the Slack plugin is authenticated to the wrong workspace (`procore.slack.com` instead of `procoretech.slack.com`); reinstall the plugin and re-authenticate. Format:
+After **every** `git push` to main — including housekeeping, empty, chore, and trigger commits — send a message to `#bim-designers` (channel ID: `C0ACL0MGBTN`) using the Slack MCP tool (`server: plugin-slack-slack`, tool: `slack_send_message`). The channel is in the `procoretech.slack.com` workspace — if you get `channel_not_found`, the Slack plugin is authenticated to the wrong workspace (`procore.slack.com` instead of `procoretech.slack.com`); reinstall the plugin and re-authenticate. Format:
 
 ```
 **BIM Viewer — New Push** by <commit author full name>

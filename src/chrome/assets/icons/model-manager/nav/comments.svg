@@ -1,0 +1,6 @@
+<svg preserveAspectRatio="none" width="100%" height="100%" overflow="visible" style="display: block;" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Vector">
+<path d="M16 16L20 20V4C20 3.44772 19.5523 3 19 3H17V12C17 12.55 16.55 13 16 13H4V15C4 15.5523 4.44771 16 5 16H16Z" fill="white"/>
+<path d="M15 1C15 0.447715 14.5523 0 14 0H1C0.447715 0 0 0.447715 0 1V15L4 11H14C14.5523 11 15 10.5523 15 10V1Z" fill="white"/>
+</g>
+</svg>

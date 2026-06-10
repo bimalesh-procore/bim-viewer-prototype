@@ -12,6 +12,7 @@ import type {
   PropertyGroup,
   ViewpointStateSnapshot,
   MarkupData,
+  SearchSet,
 } from './types';
 
 type Vec3 = { x: number; y: number; z: number };
@@ -107,6 +108,9 @@ interface ModelViewerInstance {
     getAll(): Array<{ id: string; name: string; createdAt: string }>;
     executeAndSelect(id: string): void;
     delete(id: string): void;
+    getFolders(): Array<{ id: string; name: string }>;
+    saveFolder(folder: { id: string; name: string }): unknown;
+    deleteFolder(id: string): void;
   };
   views: {
     createView(name?: string): ViewData;
@@ -320,8 +324,16 @@ export function createModelViewerAdapter(
     bytesTotal: 0,
   };
   const streamingListeners = new Set<(state: ObjectStreamingState) => void>();
+  const searchSetsListeners = new Set<(sets: SearchSet[]) => void>();
   let sectioningActive = false;
   const sectioningStateListeners = new Set<(active: boolean) => void>();
+
+  const emitSearchSets = () => {
+    const sets = viewer.searchSets.getAll();
+    for (const listener of searchSetsListeners) {
+      listener(sets);
+    }
+  };
 
   const emitSectioningState = () => {
     // Suppress the element-level right-click menu while in sectioning mode —
@@ -1095,11 +1107,41 @@ export function createModelViewerAdapter(
     getSearchSets() {
       return viewer.searchSets.getAll();
     },
-    executeSearchSet(id: string) {
-      viewer.searchSets.executeAndSelect(id);
+    executeSearchSet(id: string, options?: { additive?: boolean }) {
+      const results = viewer.searchSets.executeAndSelect(id, options);
+      return Array.isArray(results) ? results.length : 0;
     },
     deleteSearchSet(id: string) {
       viewer.searchSets.delete(id);
+      emitSearchSets();
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    saveSearchSet(set: { id?: string; name: string; source?: string; folderPath?: string[]; conditions?: any }) {
+      const saved = viewer.searchSets.save(set);
+      emitSearchSets();
+      return saved;
+    },
+    subscribeSearchSets(listener: (sets: SearchSet[]) => void) {
+      searchSetsListeners.add(listener);
+      listener(viewer.searchSets.getAll());
+      return () => {
+        searchSetsListeners.delete(listener);
+      };
+    },
+    getSearchSetFolders() {
+      return viewer.searchSets.getFolders();
+    },
+    saveSearchSetFolder(folder: { id: string; name: string }) {
+      viewer.searchSets.saveFolder(folder);
+    },
+    deleteSearchSetFolder(id: string) {
+      viewer.searchSets.deleteFolder(id);
+    },
+    getSearchSetOrder() {
+      return viewer.searchSets.getOrder();
+    },
+    saveSearchSetOrder(orderMap: Record<string, string[]>) {
+      viewer.searchSets.saveOrder(orderMap);
     },
     getObjectStreamingState() {
       return { ...streamingState };

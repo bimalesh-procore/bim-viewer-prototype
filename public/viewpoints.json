@@ -14518,6 +14518,120 @@
       },
       "folders": [],
       "customViews": []
+    },
+    "duplex": {
+      "homeView": null,
+      "folders": [],
+      "customViews": [
+        {
+          "id": "view-1781075084840",
+          "name": "View 2",
+          "cameraPosition": {
+            "x": 55,
+            "y": 40,
+            "z": 55.00000000000001
+          },
+          "cameraTarget": {
+            "x": -1.4210854715202004e-14,
+            "y": -7.105427357601002e-15,
+            "z": 0
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1781075084840,
+          "isXRayActive": false,
+          "renderToggles": {
+            "mesh": true,
+            "lines": true,
+            "terrain": true,
+            "pointCloud": true
+          },
+          "folderId": null
+        },
+        {
+          "id": "view-1781075128340",
+          "name": "View 3",
+          "cameraPosition": {
+            "x": 55,
+            "y": 40,
+            "z": 55.00000000000001
+          },
+          "cameraTarget": {
+            "x": -2.1316282072803006e-14,
+            "y": -1.4210854715202004e-14,
+            "z": -7.105427357601002e-15
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1781075128340,
+          "isXRayActive": false,
+          "renderToggles": {
+            "mesh": true,
+            "lines": true,
+            "terrain": true,
+            "pointCloud": true
+          },
+          "folderId": null
+        },
+        {
+          "id": "view-1781075081934",
+          "name": "View 1",
+          "cameraPosition": {
+            "x": 55,
+            "y": 40,
+            "z": 55.00000000000001
+          },
+          "cameraTarget": {
+            "x": -1.4210854715202004e-14,
+            "y": -7.105427357601002e-15,
+            "z": 0
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1781075081934,
+          "isXRayActive": false,
+          "renderToggles": {
+            "mesh": true,
+            "lines": true,
+            "terrain": true,
+            "pointCloud": true
+          },
+          "folderId": null
+        },
+        {
+          "id": "view-1781075130790",
+          "name": "View 4",
+          "cameraPosition": {
+            "x": 55,
+            "y": 40,
+            "z": 55.00000000000001
+          },
+          "cameraTarget": {
+            "x": -2.1316282072803006e-14,
+            "y": -1.4210854715202004e-14,
+            "z": -7.105427357601002e-15
+          },
+          "isOrthographic": false,
+          "hiddenObjects": [],
+          "sectioning": null,
+          "markups": [],
+          "createdAt": 1781075130790,
+          "isXRayActive": false,
+          "renderToggles": {
+            "mesh": true,
+            "lines": true,
+            "terrain": true,
+            "pointCloud": true
+          },
+          "folderId": null
+        }
+      ]
     }
   }
 }

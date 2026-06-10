@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactElement } from 'react';
 import { DropdownMenu, DropdownMenuItem } from '../../shared/DropdownMenu';
 import {
@@ -7,6 +8,7 @@ import {
   ChevronDown,
   Check,
   Star,
+  X,
 } from 'lucide-react';
 import itemsAssetIcon           from '../../assets/icons/items/asset.svg';
 import itemsCoordIssueIcon      from '../../assets/icons/items/coordination-issue.svg';
@@ -32,11 +34,19 @@ import type { Viewpoint, ViewpointFolder } from '../viewpoints';
 import { useViewerSettings } from '../viewer-settings/ViewerSettingsContext';
 import type { RenderToggles } from '../viewer-settings/types';
 import { useToast } from '../toast/ToastContext';
+import { parseSearchSetsXml, XmlParseError } from '../search-sets/xmlParser';
+import type { ParsedImportFile, ParsedSearchSet, ParsedNode } from '../search-sets/xmlParser';
+import { collectLeafSets, collectLeafGuids } from '../search-sets/xmlParser';
+import { useSearchSetsView, setSearchSetsView, resetSearchSetsView, useSearchSetsQuery, setSearchSetsQuery } from '../../shared/useSearchSetsView';
 import searchFieldIcon from '../../assets/icons/panel/searchField.svg';
 import filterButtonIcon from '../../assets/icons/panel/filterButton.svg';
 import hideIcon from '../../assets/icons/panel/hide.svg';
 import showIcon from '../../assets/icons/panel/show.svg';
 import propertiesEmptyIllustration from '../../assets/icons/panel/properties-empty.svg';
+import searchSetsEmptyIllustration from '../../assets/icons/panel/search-sets-empty.png';
+import caretDownIcon from '../../assets/icons/header/caret-down.svg';
+import searchFieldFigmaIcon from '../../assets/icons/panel/searchField-figma.svg';
+import folderIconSrc from '../../assets/icons/shared/folder.svg';
 
 export type PropertiesTabId = 'all-properties' | 'related-items';
 
@@ -79,51 +89,2387 @@ function PanelSearchBar({
 
 // ─── Search Sets ─────────────────────────────────────────────────────────────
 
+function SearchSetsToolbar() {
+  const query = useSearchSetsQuery();
+  return (
+    <div className="flex flex-wrap items-center gap-2 bg-white border-b border-[#D6DADC] px-4 py-2 w-full">
+      <div className="flex items-center flex-1 h-7 min-w-[256px] overflow-hidden rounded bg-[#EEF0F1] pl-3 pr-2 gap-2">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setSearchSetsQuery(e.target.value)}
+          placeholder="Search by name"
+          className="flex-1 min-w-0 bg-transparent text-sm leading-5 tracking-[0.15px] text-[#232729] placeholder-[#6A767C] outline-none"
+        />
+        {query && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => setSearchSetsQuery('')}
+            className="flex items-center justify-center p-1 rounded shrink-0 text-[#6A767C] hover:text-[#232729]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+        )}
+        <button
+          type="button"
+          aria-label="Search"
+          className="flex items-center justify-end p-1 rounded shrink-0"
+        >
+          <div className="relative shrink-0 size-4">
+            <div className="absolute inset-[10.41%_9.55%_9.55%_10.41%]">
+              <img src={searchFieldFigmaIcon} alt="" className="absolute block inset-0 max-w-none size-full" />
+            </div>
+          </div>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Import Search Sets view ────────────────────────────────────────────────
+//
+// Activated when the user picks an XML file from the Import / + dropdowns.
+// Renders a Navisworks-style two-level tree: root folder = the imported file,
+// children = each parsed <selectionset>. Footer holds the orange Import
+// button which commits the checked sets via adapter.saveSearchSet.
+
+function ImportSearchSetsView({
+  file,
+  isImporting,
+  onCancel,
+  onImport,
+}: {
+  file: ParsedImportFile;
+  isImporting: boolean;
+  onCancel: () => void;
+  onImport: (sets: { guid: string; name: string; conditions: ParsedSearchSet['conditions']; folderPath: string[] }[]) => void;
+}) {
+  // Pre-expand all folders present in the parsed tree.
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
+    const ids = new Set<string>();
+    function collectFolderIds(nodes: ParsedNode[]) {
+      for (const n of nodes) {
+        if (n.type === 'folder') {
+          ids.add(n.guid);
+          collectFolderIds(n.children);
+        }
+      }
+    }
+    collectFolderIds(file.children);
+    return ids;
+  });
+
+  // Nothing selected by default — the user opts in to what they want to import.
+  const [checkedGuids, setCheckedGuids] = useState<Set<string>>(() => new Set());
+
+  const query = useSearchSetsQuery();
+
+  const allLeafSets = useMemo(() => collectLeafSets(file.children), [file]);
+  const allLeafGuids = useMemo(() => allLeafSets.map((s) => s.guid), [allLeafSets]);
+
+  // visibleNodes must be declared before filteredNodes (which depends on it).
+  const visibleNodes = useMemo(() => {
+    // Strip a single synthetic root folder only when its children themselves
+    // contain at least one sub-folder — that indicates it's a namespace wrapper
+    // (e.g. "Duplex Apartment - Search Sets" → By Level / By Element Type / …).
+    // When the root's children are all leaf sets (flat list), keep the folder
+    // so the user sees the grouping (e.g. "Sample Search Sets" with 4 sets inside).
+    if (file.children.length === 1 && file.children[0]?.type === 'folder') {
+      const rootChildren = file.children[0].children;
+      const hasSubFolder = rootChildren.some((n) => n.type === 'folder');
+      if (hasSubFolder) return rootChildren;
+    }
+    return file.children;
+  }, [file]);
+
+  // When the toolbar search query is active, prune tree to only branches that
+  // contain at least one matching leaf. Returns null when no query is active.
+  const filteredNodes = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return null; // null = show full tree
+
+    function pruneNodes(nodes: ParsedNode[]): ParsedNode[] {
+      const result: ParsedNode[] = [];
+      for (const node of nodes) {
+        if (node.type === 'set') {
+          if (node.name.toLowerCase().includes(q)) result.push(node);
+        } else {
+          const prunedChildren = pruneNodes(node.children);
+          if (prunedChildren.length > 0) {
+            result.push({ ...node, children: prunedChildren });
+          }
+        }
+      }
+      return result;
+    }
+    return pruneNodes(visibleNodes);
+  }, [visibleNodes, query]);
+
+  // When a search query is active, only the visible (filtered) leaves are in scope
+  // for Select All / deselect-all and the checked/indeterminate state of the header checkbox.
+  const activeLeafGuids = useMemo(
+    () => (filteredNodes !== null ? collectLeafGuids(filteredNodes) : allLeafGuids),
+    [filteredNodes, allLeafGuids],
+  );
+
+  const allChecked = activeLeafGuids.length > 0 && activeLeafGuids.every((g) => checkedGuids.has(g));
+  const someChecked = activeLeafGuids.some((g) => checkedGuids.has(g));
+  const masterState: 'unchecked' | 'checked' | 'indeterminate' = allChecked
+    ? 'checked'
+    : someChecked
+      ? 'indeterminate'
+      : 'unchecked';
+
+  const totalChecked = checkedGuids.size;
+
+  const toggleSet = useCallback((guid: string, checked: boolean) => {
+    setCheckedGuids((prev) => {
+      const next = new Set(prev);
+      checked ? next.add(guid) : next.delete(guid);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = () => {
+    if (someChecked) {
+      // Deselect only the visible ones; keep any checked items outside the filter.
+      setCheckedGuids((prev) => {
+        const next = new Set(prev);
+        activeLeafGuids.forEach((g) => next.delete(g));
+        return next;
+      });
+    } else {
+      setCheckedGuids((prev) => {
+        const next = new Set(prev);
+        activeLeafGuids.forEach((g) => next.add(g));
+        return next;
+      });
+    }
+  };
+
+  // Toggle all leaf descendants of a folder node.
+  const toggleFolderCheck = useCallback((guid: string, checked: boolean) => {
+    function findNode(nodes: ParsedNode[]): ParsedNode | null {
+      for (const n of nodes) {
+        if (n.guid === guid) return n;
+        if (n.type === 'folder') {
+          const found = findNode(n.children);
+          if (found) return found;
+        }
+      }
+      return null;
+    }
+    const node = findNode(file.children);
+    const leafGuids = node ? collectLeafGuids(node.type === 'folder' ? node.children : [node]) : [];
+    setCheckedGuids((prev) => {
+      const next = new Set(prev);
+      leafGuids.forEach((g) => (checked ? next.add(g) : next.delete(g)));
+      return next;
+    });
+  }, [file]);
+
+  const toggleFolderExpand = useCallback((guid: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      next.has(guid) ? next.delete(guid) : next.add(guid);
+      return next;
+    });
+  }, []);
+
+  // Build a map from leaf guid → folder path (array of ancestor folder names)
+  // using visibleNodes as the root so paths match what the user sees in the tree.
+  const folderPathMap = useMemo(() => {
+    function walk(nodes: ParsedNode[], path: string[]): Map<string, string[]> {
+      const map = new Map<string, string[]>();
+      for (const n of nodes) {
+        if (n.type === 'set') {
+          map.set(n.guid, path);
+        } else {
+          for (const [k, v] of walk(n.children, [...path, n.name])) map.set(k, v);
+        }
+      }
+      return map;
+    }
+    return walk(visibleNodes, []);
+  }, [visibleNodes]);
+
+  const handleImport = () => {
+    const sets = allLeafSets
+      .filter((s) => checkedGuids.has(s.guid))
+      .map((s) => ({
+        guid: s.guid,
+        name: s.name,
+        conditions: s.conditions,
+        folderPath: folderPathMap.get(s.guid) ?? [],
+      }));
+    if (sets.length === 0) return;
+    // Duplicate check + animation are owned by SearchSetsContent; call synchronously.
+    onImport(sets);
+  };
+
+  // Recursively render the node tree, preserving folder nesting from the XML.
+  // forceExpand=true keeps all folders open (used during search).
+  function renderNodes(nodes: ParsedNode[], depth: number, forceExpand = false): React.ReactNode {
+    return nodes.map((node) => {
+      if (node.type === 'set') {
+        return (
+          <TreeNode
+            key={node.guid}
+            id={node.guid}
+            label={node.name}
+            depth={depth}
+            type="leaf"
+            checked={checkedGuids.has(node.guid)}
+            onCheckedChange={toggleSet}
+            hoverBg="#F4F5F6"
+          />
+        );
+      }
+      // node.children are already pruned when renderNodes is called with filteredNodes,
+      // so leafGuids here only covers the visible leaves — correct for check/indeterminate
+      // state and for toggling (no need to search the full tree via toggleFolderCheck).
+      const leafGuids = collectLeafGuids(node.children);
+      const folderAllChecked = leafGuids.length > 0 && leafGuids.every((g) => checkedGuids.has(g));
+      const folderSomeChecked = leafGuids.some((g) => checkedGuids.has(g));
+      const isExpanded = forceExpand || expandedFolders.has(node.guid);
+      const handleFolderCheck = (_guid: string, checked: boolean) => {
+        setCheckedGuids((prev) => {
+          const next = new Set(prev);
+          leafGuids.forEach((g) => (checked ? next.add(g) : next.delete(g)));
+          return next;
+        });
+      };
+      return (
+        <TreeNode
+          key={node.guid}
+          id={node.guid}
+          label={node.name}
+          depth={depth}
+          type="folder"
+          expanded={isExpanded}
+          onToggle={() => toggleFolderExpand(node.guid)}
+          checked={folderAllChecked}
+          indeterminate={folderSomeChecked && !folderAllChecked}
+          onCheckedChange={handleFolderCheck}
+          hoverBg="#F4F5F6"
+        >
+          {renderNodes(node.children, depth + 1, forceExpand)}
+        </TreeNode>
+      );
+    });
+  }
+
+  return (
+    <div className="flex flex-col h-full bg-white">
+      {isImporting ? (
+        /* ── Loading state ─────────────────────────────────────────────── */
+        <div className="flex-1 flex flex-col items-center justify-center px-12">
+          <div className="flex flex-col gap-2 w-full">
+            <span className="text-[12px] leading-[16px] tracking-[0.25px] font-semibold text-black">
+              Importing Search sets
+            </span>
+            {/* Animated progress bar — striped blue, matching Figma */}
+            <div className="w-full h-[6px] rounded-full bg-[#D6DADC] overflow-hidden">
+              <div
+                className="h-full rounded-full bg-[#2066DF] origin-left"
+                style={{ animation: 'ss-progress 1.5s ease-in-out forwards' }}
+              />
+            </div>
+          </div>
+          <style>{`
+            @keyframes ss-progress {
+              from { width: 0%; }
+              to   { width: 100%; }
+            }
+          `}</style>
+        </div>
+      ) : (
+        <>
+          {/* Bulk actions row */}
+          <div className="flex items-center justify-between px-4 h-10 shadow-[0_1px_0_#dcdcdc] shrink-0 bg-white">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={masterState === 'indeterminate' ? 'mixed' : masterState === 'checked'}
+                aria-label="Select all"
+                disabled={allLeafGuids.length === 0}
+                onClick={toggleAll}
+                className={`shrink-0 size-5 rounded-[2px] flex items-center justify-center transition-colors ${
+                  masterState === 'unchecked'
+                    ? 'bg-white border-2 border-[#6A767C]'
+                    : 'bg-[#2066DF]'
+                } ${allLeafGuids.length === 0 ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                {masterState === 'checked' && (
+                  <Check size={14} strokeWidth={3} className="text-white" />
+                )}
+                {masterState === 'indeterminate' && (
+                  <span className="block w-[10px] h-[2px] bg-white" />
+                )}
+              </button>
+              <button
+                type="button"
+                aria-label="Bulk actions"
+                className="w-6 h-6 flex items-center justify-center rounded shrink-0 hover:bg-black/5"
+              >
+                <ChevronDown className="text-[#6A767C]" />
+              </button>
+            </div>
+            <span className="text-[12px] leading-[16px] tracking-[0.25px] text-[#232729]">
+              {totalChecked > 0
+                ? `${totalChecked} of ${allLeafGuids.length} selected`
+                : `${allLeafGuids.length} ${allLeafGuids.length === 1 ? 'Item' : 'Items'}`}
+            </span>
+          </div>
+
+          {/* Tree — pruned to matching branches when searching, full tree otherwise. */}
+          <div className="flex-1 overflow-y-auto bg-white">
+            {filteredNodes !== null ? (
+              filteredNodes.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-[#6A767C] text-center">No sets match "{query}".</p>
+              ) : (
+                renderNodes(filteredNodes, 0, true)
+              )
+            ) : (
+              renderNodes(visibleNodes, 0)
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Footer — always visible; Import button shows spinner while loading */}
+      <div className="flex items-center justify-end gap-2 bg-white px-4 py-2 shrink-0">
+        {!isImporting && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3 h-7 rounded text-sm font-semibold text-[#232729] hover:bg-black/5"
+          >
+            Cancel
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleImport}
+          disabled={totalChecked === 0 || isImporting}
+          className="px-3 h-7 rounded text-sm font-semibold text-white bg-[#FF5100] hover:bg-[#E64900] disabled:bg-[#E3E6E8] disabled:text-[#9DA7AD] disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+        >
+          {isImporting ? (
+            <>
+              <svg
+                className="animate-spin"
+                width={14} height={14}
+                viewBox="0 0 14 14"
+                fill="none"
+              >
+                <circle cx="7" cy="7" r="5.5" stroke="white" strokeOpacity="0.4" strokeWidth="2" />
+                <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="white" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              Import
+            </>
+          ) : 'Import'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Delete confirmation modal ────────────────────────────────────────────────
+
+function DeleteConfirmModal({
+  count,
+  name,
+  isFolder = false,
+  onCancel,
+  onConfirm,
+}: {
+  count: number;
+  /** When deleting a single set, its name — drives the header + singular body copy. */
+  name?: string;
+  /** When deleting a folder, use folder-specific copy (name + nested-group count). */
+  isFolder?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const single = count === 1;
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onCancel]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center"
+      style={{ background: 'rgba(35,39,41,0.5)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div
+        className="bg-white rounded-[4px] w-[480px] flex flex-col overflow-hidden"
+        style={{ boxShadow: '0px 8px 32px -4px rgba(35,39,41,0.8)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center gap-2 px-8 pt-6 pb-5 shrink-0">
+          <h2 className="flex-1 text-[20px] font-semibold leading-7 tracking-[0.15px] text-[#232729]">
+            {isFolder
+              ? count === 0
+                ? `Delete ${name}?`
+                : `Delete ${name} with ${count} Search ${single ? 'Group' : 'Groups'}?`
+              : single && name
+                ? `Delete ${name}?`
+                : `Delete ${count} Search Groups?`}
+          </h2>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onCancel}
+            className="w-9 h-9 flex items-center justify-center rounded hover:bg-[#F4F5F6] text-[#232729] shrink-0"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M1 1L15 15M15 1L1 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-8 pb-6 text-[14px] leading-5 tracking-[0.15px] text-[#232729]">
+          {isFolder
+            ? count === 0
+              ? 'This will remove the folder from the project for all users. The action cannot be undone.'
+              : 'This will remove the folder and any nested folders and search groups within the folder from the project for all users. The action cannot be undone.'
+            : single
+              ? 'This will remove the search group from the project for all users. The action cannot be undone.'
+              : `This will remove ${count} search groups from the project for all users. The action cannot be undone.`}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-8 pt-6 pb-8 shrink-0">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3 py-[5px] rounded text-[14px] font-semibold leading-5 tracking-[0.15px] text-[#232729] hover:bg-[#F4F5F6] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="px-3 py-[5px] rounded text-[14px] font-semibold leading-5 tracking-[0.15px] text-white bg-[#FF5100] hover:bg-[#E64900] transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Duplicate import confirmation modal ─────────────────────────────────────
+
+function DuplicateImportModal({
+  duplicateCount,
+  onCancel,
+  onConfirm,
+}: {
+  duplicateCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onCancel]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center"
+      style={{ background: 'rgba(35,39,41,0.5)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div
+        className="bg-white rounded-[4px] w-[480px] flex flex-col overflow-hidden"
+        style={{ boxShadow: '0px 8px 32px -4px rgba(35,39,41,0.8)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center gap-2 px-8 pt-6 pb-5 shrink-0">
+          <h2 className="flex-1 text-[20px] font-semibold leading-7 tracking-[0.15px] text-[#232729]">
+            Replace Existing Sets?
+          </h2>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onCancel}
+            className="w-9 h-9 flex items-center justify-center rounded hover:bg-[#F4F5F6] text-[#232729] shrink-0"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M1 1L15 15M15 1L1 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-8 pb-6 text-[14px] leading-5 tracking-[0.15px] text-[#232729]">
+          Importing this file will replace{' '}
+          <span className="font-semibold">{duplicateCount} existing {duplicateCount === 1 ? 'search set' : 'search sets'}</span>{' '}
+          in your library that {duplicateCount === 1 ? 'has' : 'have'} matching IDs. New IDs will be added as new sets, and all other library sets will remain untouched.
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-8 pt-6 pb-8 shrink-0">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3 py-[5px] rounded text-[14px] font-semibold leading-5 tracking-[0.15px] text-[#232729] hover:bg-[#F4F5F6] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="px-3 py-[5px] rounded text-[14px] font-semibold leading-5 tracking-[0.15px] text-white bg-[#FF5100] hover:bg-[#E64900] transition-colors"
+          >
+            Import
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+type PendingImport = {
+  setsToImport: Array<{ guid: string; name: string; conditions: ParsedSearchSet['conditions']; folderPath: string[] }>;
+  source: string | undefined;
+  duplicateCount: number;
+};
+
 function SearchSetsContent() {
   const adapter = useViewerAdapter();
+  const toast = useToast();
+  const view = useSearchSetsView();
   const [searchSets, setSearchSets] = useState<SearchSet[]>([]);
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMenuAnchor, setImportMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [addMenuAnchor, setAddMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Clear the search query when navigating away from the list view.
   useEffect(() => {
+    if (view.kind !== 'list') setSearchSetsQuery('');
+  }, [view.kind]);
+
+  // Subscribe to the live list so imports / deletes update without refetching.
+  useEffect(() => {
+    if (adapter.subscribeSearchSets) {
+      const unsub = adapter.subscribeSearchSets(setSearchSets);
+      return () => unsub();
+    }
     setSearchSets(adapter.getSearchSets?.() ?? []);
   }, [adapter]);
 
-  const handleRun = (id: string) => adapter.executeSearchSet?.(id);
+  // Listen for the orange Add button in the panel header
+  useEffect(() => {
+    const handler = () => {
+      const btn = document.querySelector('[data-add="search-sets"]');
+      if (btn) {
+        const rect = btn.getBoundingClientRect();
+        setAddMenuAnchor({ x: rect.left, y: rect.bottom + 6 });
+      }
+    };
+    window.addEventListener('mv:search-sets-create', handler);
+    return () => window.removeEventListener('mv:search-sets-create', handler);
+  }, []);
+
+  const handleRun = (id: string, options?: { additive?: boolean }): number =>
+    adapter.executeSearchSet?.(id, options) ?? 0;
   const handleDelete = (id: string) => {
     adapter.deleteSearchSet?.(id);
-    setSearchSets((prev) => prev.filter((s) => s.id !== id));
   };
+  const handleRename = (id: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    adapter.saveSearchSet?.({ id, name: trimmed });
+  };
+  // Rename a folder by rewriting the matching segment of every descendant set's
+  // source / folderPath. The folder id encodes its path as `source::seg1::seg2`.
+  const handleMoveSet = (setId: string, source: string | undefined, folderPath: string[]) => {
+    const set = searchSets.find((s) => s.id === setId);
+    if (!set) return;
+    adapter.saveSearchSet?.({ id: setId, name: set.name, source, folderPath });
+  };
+
+  // Wrap an entire folder (and everything nested under it) in a new folder by
+  // inserting a "New Folder" segment into every descendant set's folderPath at
+  // the folder's own position. The folder id is path-encoded as `source::seg…`.
+  const handleMoveFolder = (folderId: string) => {
+    const parts = folderId.split('::');
+    const source = parts[0];
+    const pathSegs = parts.slice(1);
+    const depth = pathSegs.length;
+    const insertAt = Math.max(0, depth - 1); // index within folderPath
+    for (const s of searchSets) {
+      if ((s.source ?? 'Search Sets') !== source) continue;
+      const fp = s.folderPath ?? [];
+      if (fp.length < depth) continue;
+      if (!pathSegs.every((seg, i) => fp[i] === seg)) continue;
+      const newFp = [...fp.slice(0, insertAt), 'New Folder', ...fp.slice(insertAt)];
+      adapter.saveSearchSet?.({ id: s.id, name: s.name, source: s.source, folderPath: newFp });
+    }
+  };
+
+  const handleRenameFolder = (folderId: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const parts = folderId.split('::');
+    const source = parts[0];
+    const pathSegs = parts.slice(1); // segments after the source root
+    const depth = pathSegs.length; // 0 → the source grouping itself
+    for (const s of searchSets) {
+      if ((s.source ?? 'Search Sets') !== source) continue;
+      if (depth === 0) {
+        adapter.saveSearchSet?.({ id: s.id, name: s.name, source: trimmed, folderPath: s.folderPath });
+      } else {
+        const fp = s.folderPath ?? [];
+        if (fp.length < depth) continue;
+        const matches = pathSegs.every((seg, i) => fp[i] === seg);
+        if (!matches) continue;
+        const newFp = [...fp];
+        newFp[depth - 1] = trimmed;
+        adapter.saveSearchSet?.({ id: s.id, name: s.name, source: s.source, folderPath: newFp });
+      }
+    }
+  };
+
+  const handleImportClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setImportMenuAnchor({ x: rect.left, y: rect.bottom + 4 });
+  };
+
+  // ── File picker → parse → enter import view ─────────────────────────────
+  const openFilePicker = useCallback(() => {
+    setImportMenuAnchor(null);
+    setAddMenuAnchor(null);
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChosen = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset so the same file can be picked again later
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = parseSearchSetsXml(text, file.name);
+      setSearchSetsView({ kind: 'import', file: parsed });
+    } catch (err) {
+      const message = err instanceof XmlParseError ? err.message : 'Failed to read XML file.';
+      toast.show({ kind: 'error', message });
+    }
+  }, [toast]);
+
+  // ── Navisworks shortcut → fetch the bundled sample file ─────────────────
+  //
+  // For the prototype, "Import from Navisworks" skips the picker entirely
+  // and loads `public/sample-search-sets.xml` (representative of what a
+  // Navisworks Search Sets XML export would look like).
+  const importFromNavisworks = useCallback(async () => {
+    setImportMenuAnchor(null);
+    setAddMenuAnchor(null);
+    try {
+      const res = await fetch('/sample-search-sets.xml', { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      const parsed = parseSearchSetsXml(text, 'Navisworks Export');
+      setSearchSetsView({ kind: 'import', file: parsed });
+    } catch (err) {
+      const message = err instanceof XmlParseError
+        ? err.message
+        : 'Failed to load Navisworks sample. Try "Import using .xml" instead.';
+      toast.show({ kind: 'error', message });
+    }
+  }, [toast]);
+
+  // ── Shared import executor (used both directly and after modal confirm) ───
+  // Starts the 1.5 s progress animation, then commits on completion.
+  const executeImport = useCallback((
+    setsToImport: PendingImport['setsToImport'],
+    source: string | undefined,
+  ) => {
+    const save = adapter.saveSearchSet;
+    if (!save) {
+      toast.show({ kind: 'error', message: 'Import is unavailable: viewer not ready.' });
+      return;
+    }
+    setPendingImport(null);
+    setIsImporting(true);
+    setTimeout(() => {
+      // Build a name→id map of existing sets from the same source so duplicates
+      // can be deleted before saving the replacement.
+      const existingByName = new Map(
+        searchSets.filter((s) => s.source === source).map((s) => [s.name, s.id]),
+      );
+      for (const s of setsToImport) {
+        const duplicateId = existingByName.get(s.name);
+        if (duplicateId) adapter.deleteSearchSet?.(duplicateId);
+        save({ name: s.name, source, folderPath: s.folderPath, conditions: s.conditions });
+      }
+      toast.show({
+        kind: 'success',
+        message: setsToImport.length === 1
+          ? `Imported "${setsToImport[0].name}".`
+          : `Imported ${setsToImport.length} search sets.`,
+      });
+      setIsImporting(false);
+      resetSearchSetsView();
+    }, 1500);
+  }, [adapter, searchSets, toast]);
+
+  // ── Import view rendering ───────────────────────────────────────────────
+  if (view.kind === 'import') {
+    return (
+      <>
+        <ImportSearchSetsView
+          file={view.file}
+          isImporting={isImporting}
+          onCancel={() => { setPendingImport(null); resetSearchSetsView(); }}
+          onImport={(setsToImport) => {
+            const source = view.file.fileName;
+            // Count how many selected sets would overwrite an existing set by name.
+            const existingNames = new Set(
+              searchSets.filter((s) => s.source === source).map((s) => s.name),
+            );
+            const duplicateCount = setsToImport.filter((s) => existingNames.has(s.name)).length;
+            if (duplicateCount > 0) {
+              setPendingImport({ setsToImport, source, duplicateCount });
+            } else {
+              executeImport(setsToImport, source);
+            }
+          }}
+        />
+        {pendingImport && (
+          <DuplicateImportModal
+            duplicateCount={pendingImport.duplicateCount}
+            onCancel={() => setPendingImport(null)}
+            onConfirm={() => executeImport(pendingImport.setsToImport, pendingImport.source)}
+          />
+        )}
+      </>
+    );
+  }
 
   if (searchSets.length === 0) {
     return (
-      <p className="px-3 py-6 text-sm text-gray-400 text-center">No saved searches</p>
+      <div className="flex flex-col items-center w-full h-full pt-12 gap-4 bg-[#F4F5F6]">
+        {/* Illustration */}
+        <img
+          src={searchSetsEmptyIllustration}
+          alt=""
+          width={96}
+          height={96}
+          className="shrink-0"
+        />
+
+        {/* Text */}
+        <div className="flex flex-col items-center gap-4 w-full text-center tracking-[0.15px]">
+          <p className="font-semibold text-[16px] leading-[24px] text-[#232729] w-full">
+            Import Search Sets to Get Started
+          </p>
+          <p className="font-normal text-[14px] leading-[20px] text-[#5E696E] w-full">
+            Import search sets to easily group, track, and manage model elements.
+          </p>
+        </div>
+
+        {/* Import button — secondary dropdown (#E3E6E8), matches Figma padding exactly */}
+        <div className="flex items-center justify-center w-full">
+          <button
+            type="button"
+            onClick={handleImportClick}
+            className="flex items-center justify-center rounded bg-[#E3E6E8] hover:bg-[#D0D3D5] transition-colors overflow-clip p-1.5"
+          >
+            <span className="flex items-start px-1.5 py-0.5">
+              <span className="font-semibold text-sm leading-5 tracking-[0.15px] text-[#232729] whitespace-nowrap">
+                Import
+              </span>
+            </span>
+            {/* 24×24 caret container, caret SVG already centered inside */}
+            <span className="relative shrink-0 size-6">
+              <img src={caretDownIcon} alt="" className="absolute inset-0 size-full" />
+            </span>
+          </button>
+        </div>
+
+        {importMenuAnchor && (
+          <DropdownMenu position={importMenuAnchor} align="left" onClose={() => setImportMenuAnchor(null)}>
+            <DropdownMenuItem onClick={openFilePicker}>
+              Import using .xml
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={importFromNavisworks}>
+              Import from Navisworks
+            </DropdownMenuItem>
+          </DropdownMenu>
+        )}
+
+        {addMenuAnchor && (
+          <DropdownMenu position={addMenuAnchor} align="left" onClose={() => setAddMenuAnchor(null)}>
+            <DropdownMenuItem onClick={() => setAddMenuAnchor(null)}>Create Folder</DropdownMenuItem>
+            <DropdownMenuItem onClick={openFilePicker}>
+              Import using .xml
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={importFromNavisworks}>
+              Import from Navisworks
+            </DropdownMenuItem>
+          </DropdownMenu>
+        )}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".xml,application/xml,text/xml"
+          className="hidden"
+          onChange={handleFileChosen}
+        />
+      </div>
     );
   }
 
   return (
-    <ul className="bg-white rounded-md overflow-hidden">
-      {searchSets.map((set) => (
-        <li
-          key={set.id}
-          className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-0"
+    <SearchSetsListView
+      searchSets={searchSets}
+      onRun={handleRun}
+      onDelete={handleDelete}
+      onRename={handleRename}
+      onRenameFolder={handleRenameFolder}
+      onMoveSet={handleMoveSet}
+      onMoveFolder={handleMoveFolder}
+      loadFolders={() => adapter.getSearchSetFolders?.() ?? []}
+      onSaveFolder={(folder) => adapter.saveSearchSetFolder?.(folder)}
+      onDeleteFolder={(id) => adapter.deleteSearchSetFolder?.(id)}
+      loadOrder={() => adapter.getSearchSetOrder?.() ?? {}}
+      onSaveOrder={(orderMap) => adapter.saveSearchSetOrder?.(orderMap)}
+      addMenuAnchor={addMenuAnchor}
+      setAddMenuAnchor={setAddMenuAnchor}
+      openFilePicker={openFilePicker}
+      importFromNavisworks={importFromNavisworks}
+      fileInputRef={fileInputRef}
+      onFileChosen={handleFileChosen}
+    />
+  );
+}
+
+// ─── Search Sets — populated list view ───────────────────────────────────────
+//
+// ── Drag-and-drop ─────────────────────────────────────────────────────────────
+//
+// Uses TreeNode's built-in native HTML5 drag-and-drop (draggable + onDragOver/
+// onDrop). TreeNode computes before/after/inside from the pointer position
+// within the row and renders a blue drop indicator on the row itself, so the
+// whole row is a single, easy-to-hit target. See renderListNodes below for the
+// wiring and `performMove` for the persistence/membership updates.
+
+/** Sentinel key for items at the top level of the tree (no parent folder). */
+const ROOT_KEY = '__root__';
+
+/** Where, relative to a target row, a dragged item will land. */
+type DropPosition = 'before' | 'after' | 'inside';
+
+/** Sort `nodes` at one level of the tree according to the persisted order map. */
+function applyOrder(
+  nodes: ListNode[],
+  parentKey: string,
+  orderMap: Record<string, string[]>,
+): ListNode[] {
+  const order = orderMap[parentKey];
+  if (!order || order.length === 0) return nodes;
+  return [...nodes].sort((a, b) => {
+    const aId = a.kind === 'leaf' ? a.set.id : a.id;
+    const bId = b.kind === 'leaf' ? b.set.id : b.id;
+    const aIdx = order.indexOf(aId);
+    const bIdx = order.indexOf(bId);
+    if (aIdx === -1 && bIdx === -1) return 0;
+    if (aIdx === -1) return 1;
+    if (bIdx === -1) return -1;
+    return aIdx - bIdx;
+  });
+}
+
+// ── List-view tree helpers ───────────────────────────────────────────────────
+
+type ListLeaf = { kind: 'leaf'; set: SearchSet };
+type ListFolder = { kind: 'folder'; id: string; name: string; children: ListNode[] };
+type ListNode = ListLeaf | ListFolder;
+
+// Prefix for ids of empty folders the user created manually (not derived from sets).
+const EXTRA_FOLDER_PREFIX = '__newfolder__';
+
+/** Recursively collect all SearchSet ids reachable from a list of nodes. */
+function collectListLeafIds(nodes: ListNode[]): string[] {
+  return nodes.flatMap((n) => (n.kind === 'leaf' ? [n.set.id] : collectListLeafIds(n.children)));
+}
+
+/** Build a folder node whose children are derived from the sets' remaining folderPath. */
+function buildListFolder(id: string, name: string, sets: SearchSet[]): ListFolder {
+  const noFolder: SearchSet[] = [];
+  const subMap = new Map<string, SearchSet[]>();
+  for (const s of sets) {
+    if (!s.folderPath || s.folderPath.length === 0) {
+      noFolder.push(s);
+    } else {
+      const [head, ...tail] = s.folderPath;
+      if (!subMap.has(head)) subMap.set(head, []);
+      // Pass a modified copy so the recursion sees only the remaining path.
+      subMap.get(head)!.push({ ...s, folderPath: tail });
+    }
+  }
+  const children: ListNode[] = [
+    ...Array.from(subMap.entries()).map(([fname, fsets]) =>
+      buildListFolder(`${id}::${fname}`, fname, fsets),
+    ),
+    ...noFolder.map((s): ListLeaf => ({ kind: 'leaf', set: s })),
+  ];
+  return { kind: 'folder', id, name, children };
+}
+
+/** Group sets by source file, then recursively nest by folderPath.
+ *  For every source whose direct children contain at least one subfolder the
+ *  source label is just a filename wrapper — surface its children directly
+ *  (same logic as the import-preview `visibleNodes` stripping).
+ *  Sources with only flat leaf sets keep their source folder as a grouping. */
+function buildListTree(sets: SearchSet[]): ListNode[] {
+  const bySource = new Map<string, SearchSet[]>();
+  for (const s of sets) {
+    const key = s.source ?? 'Search Sets';
+    if (!bySource.has(key)) bySource.set(key, []);
+    bySource.get(key)!.push(s);
+  }
+  const result: ListNode[] = [];
+  for (const [src, srcSets] of bySource.entries()) {
+    const folder = buildListFolder(src, src, srcSets);
+    if (folder.children.some((n) => n.kind === 'folder')) {
+      // Source is a meaningless filename wrapper — lift its children up.
+      result.push(...folder.children);
+    } else {
+      // Flat list of sets — keep the source folder so the grouping is visible.
+      result.push(folder);
+    }
+  }
+  return result;
+}
+
+/** Prune tree to only branches containing a matching leaf (for search). */
+function pruneListTree(nodes: ListNode[], q: string): ListNode[] {
+  const result: ListNode[] = [];
+  for (const n of nodes) {
+    if (n.kind === 'leaf') {
+      if (n.set.name.toLowerCase().includes(q)) result.push(n);
+    } else {
+      const prunedChildren = pruneListTree(n.children, q);
+      if (prunedChildren.length > 0) result.push({ ...n, children: prunedChildren });
+    }
+  }
+  return result;
+}
+
+// ── Move-to-Existing-Folder modal helpers ────────────────────────────────────
+
+/** Locate a folder node by id anywhere in the tree (depth-first). */
+function findFolderNode(nodes: ListNode[], id: string): ListFolder | null {
+  for (const node of nodes) {
+    if (node.kind !== 'folder') continue;
+    if (node.id === id) return node;
+    const found = findFolderNode(node.children, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+type FolderPickerItem = {
+  id: string;
+  name: string;
+  depth: number;
+  hasChildren: boolean;
+  disabled: boolean;
+};
+
+/**
+ * Flatten the combined folder tree (derived + extra) into a renderable list,
+ * respecting the current `expanded` set. Items whose id equals `excludeId`
+ * or starts with `excludeId + '::'` are marked disabled (can't move a folder
+ * into itself or one of its descendants).
+ */
+function buildFolderPickerList(
+  fullTree: ListNode[],
+  extraFolders: { id: string; name: string; parentId?: string }[],
+  expanded: Set<string>,
+  excludeId?: string,
+): FolderPickerItem[] {
+  const result: FolderPickerItem[] = [];
+
+  const isExcluded = (id: string) =>
+    !!excludeId && (id === excludeId || id.startsWith(`${excludeId}::`));
+
+  const visit = (nodes: ListNode[], depth: number) => {
+    for (const node of nodes) {
+      if (node.kind !== 'folder') continue;
+      const childDerived = node.children.filter((n): n is ListFolder => n.kind === 'folder');
+      const childExtra = extraFolders
+        .filter((f) => f.parentId === node.id)
+        .map((f): ListFolder => ({ kind: 'folder', id: f.id, name: f.name, children: [] }));
+      const allChildren: ListNode[] = [...childDerived, ...childExtra];
+      const hasChildren = allChildren.length > 0;
+      const disabled = isExcluded(node.id);
+      result.push({ id: node.id, name: node.name, depth, hasChildren, disabled });
+      if (hasChildren && expanded.has(node.id)) {
+        visit(allChildren, depth + 1);
+      }
+    }
+  };
+
+  const rootExtra = extraFolders
+    .filter((f) => !f.parentId)
+    .map((f): ListFolder => ({ kind: 'folder', id: f.id, name: f.name, children: [] }));
+
+  visit([...fullTree, ...rootExtra], 0);
+  return result;
+}
+
+/** Modal that lets the user pick an existing folder as a move destination.
+ *  Matches the Figma design (node 759-278928): header with folder icon,
+ *  scrollable folder tree with expand/collapse, Cancel + Move footer. */
+function MoveToFolderModal({
+  fullTree,
+  extraFolders,
+  excludeId,
+  onClose,
+  onConfirm,
+}: {
+  fullTree: ListNode[];
+  extraFolders: { id: string; name: string; parentId?: string }[];
+  excludeId?: string;
+  onClose: () => void;
+  onConfirm: (destId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(() =>
+    new Set(fullTree.filter((n): n is ListFolder => n.kind === 'folder').map((n) => n.id)),
+  );
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const items = buildFolderPickerList(fullTree, extraFolders, expanded, excludeId);
+
+  const toggle = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 flex items-center justify-center z-[10000]"
+      style={{ background: 'rgba(0,0,0,0.4)' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-[16px] shadow-[0_4px_28px_rgba(0,0,0,0.28)] w-[560px] max-h-[600px] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center gap-2 px-8 py-6 border-b border-[#D6DADC] shrink-0">
+          <img src={folderIconSrc} alt="" width={32} height={32} className="shrink-0" />
+          <span className="flex-1 text-[20px] font-semibold leading-[28px] tracking-[0.15px] text-[#232729]">
+            Move to Existing Folder
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded hover:bg-black/5 transition-colors"
+            aria-label="Close"
+          >
+            <X size={20} className="text-[#232729]" />
+          </button>
+        </div>
+
+        {/* Folder list */}
+        <div className="flex-1 overflow-y-auto min-h-0 py-1">
+          {items.length === 0 ? (
+            <p className="px-8 py-6 text-sm text-[#6A767C] text-center">No folders available.</p>
+          ) : (
+            items.map((item) => (
+              <div
+                key={item.id}
+                role="option"
+                aria-selected={selected === item.id}
+                onClick={() => !item.disabled && setSelected((prev) => (prev === item.id ? null : item.id))}
+                className={[
+                  'flex items-center gap-2 py-2 pr-3 rounded-lg select-none transition-colors',
+                  item.disabled ? 'opacity-40 pointer-events-none' : 'cursor-pointer',
+                  selected === item.id ? 'bg-[#EDF2FC]' : 'hover:bg-[#F4F5F6]',
+                ].join(' ')}
+                style={{ paddingLeft: 16 + item.depth * 24 }}
+              >
+                {/* Expand / collapse chevron */}
+                <button
+                  type="button"
+                  aria-label={expanded.has(item.id) ? 'Collapse' : 'Expand'}
+                  className={[
+                    'shrink-0 size-6 flex items-center justify-center rounded hover:bg-black/5',
+                    item.hasChildren ? '' : 'invisible',
+                  ].join(' ')}
+                  onClick={(e) => toggle(item.id, e)}
+                >
+                  {expanded.has(item.id)
+                    ? <ChevronDown size={16} className="text-[#232729]" />
+                    : <ChevronRight size={16} className="text-[#232729]" />}
+                </button>
+
+                {/* Folder icon */}
+                <img src={folderIconSrc} alt="" width={24} height={24} className="shrink-0" />
+
+                {/* Label */}
+                <span className="flex-1 text-[14px] leading-5 tracking-[0.15px] text-[#232729] truncate min-w-0">
+                  {item.name}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-8 pb-8 pt-6 border-t border-[#D6DADC] shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 h-9 rounded text-sm font-semibold text-[#232729] hover:bg-black/5 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!selected}
+            onClick={() => selected && onConfirm(selected)}
+            className="px-4 h-9 rounded text-sm font-semibold text-white bg-[#FF5100] hover:bg-[#E64900] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Move
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Groups imported sets by their source file (folder) and renders a tree using
+// the same TreeNode primitive as the Object Tree and Viewpoints panels.
+
+function SearchSetsListView({
+  searchSets,
+  onRun,
+  onDelete,
+  onRename,
+  onRenameFolder,
+  onMoveSet,
+  onMoveFolder,
+  loadFolders,
+  onSaveFolder,
+  onDeleteFolder,
+  loadOrder,
+  onSaveOrder,
+  addMenuAnchor,
+  setAddMenuAnchor,
+  openFilePicker,
+  importFromNavisworks,
+  fileInputRef,
+  onFileChosen,
+}: {
+  searchSets: SearchSet[];
+  onRun: (id: string, options?: { additive?: boolean }) => number;
+  onDelete: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onRenameFolder: (folderId: string, name: string) => void;
+  onMoveSet: (setId: string, source: string | undefined, folderPath: string[]) => void;
+  onMoveFolder: (folderId: string) => void;
+  loadFolders: () => { id: string; name: string }[];
+  onSaveFolder: (folder: { id: string; name: string }) => void;
+  onDeleteFolder: (id: string) => void;
+  loadOrder: () => Record<string, string[]>;
+  onSaveOrder: (orderMap: Record<string, string[]>) => void;
+  addMenuAnchor: { x: number; y: number } | null;
+  setAddMenuAnchor: (v: { x: number; y: number } | null) => void;
+  openFilePicker: () => void;
+  importFromNavisworks: () => void;
+  fileInputRef: React.RefObject<HTMLInputElement>;
+  onFileChosen: (e: React.ChangeEvent<HTMLInputElement>) => void;
+}) {
+  const query = useSearchSetsQuery();
+
+  // Build the full nested tree from source + folderPath, then optionally prune for search.
+  const fullTree = useMemo(() => buildListTree(searchSets), [searchSets]);
+  const visibleTree = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? pruneListTree(fullTree, q) : fullTree;
+  }, [fullTree, query]);
+
+  // Expand all source-level folders by default; track deeper folders by their path-based id.
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    () => new Set(fullTree.map((f) => f.id)),
+  );
+
+  // Auto-expand every folder while a query is active.
+  useEffect(() => {
+    if (!query.trim()) return;
+    function collectIds(nodes: ListNode[]): string[] {
+      return nodes.flatMap((n) => (n.kind === 'folder' ? [n.id, ...collectIds(n.children)] : []));
+    }
+    setExpandedFolders(new Set(collectIds(visibleTree)));
+  }, [query, visibleTree]);
+
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Empty folders the user created manually (folders are otherwise derived from
+  // sets, so an empty one has nowhere to live until a set is moved into it).
+  // Seeded from persistence so they survive panel close/reopen.
+  const [extraFolders, setExtraFolders] = useState<{ id: string; name: string; parentId?: string }[]>(() => loadFolders());
+
+  // ── Drag-and-drop state ────────────────────────────────────────────────────
+  // draggingId — the row currently being dragged (null when idle).
+  // dropTarget — the row under the pointer + where the drop will land.
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; position: DropPosition } | null>(null);
+  const [orderMap, setOrderMap] = useState<Record<string, string[]>>(() => loadOrder());
+
+  /** Returns the parentKey that owns `id` in the current tree. */
+  const getItemParentKey = useCallback((id: string): string => {
+    if (id.startsWith(EXTRA_FOLDER_PREFIX)) {
+      const f = extraFolders.find((ef) => ef.id === id);
+      return f?.parentId ?? ROOT_KEY;
+    }
+    const set = searchSets.find((s) => s.id === id);
+    if (set) {
+      const src = set.source ?? 'Search Sets';
+      const fp = set.folderPath ?? [];
+      return fp.length === 0 ? src : `${src}::${fp.join('::')}`;
+    }
+    // Derived folder — parent is everything before the last segment.
+    const parts = id.split('::');
+    return parts.length === 1 ? ROOT_KEY : parts.slice(0, -1).join('::');
+  }, [extraFolders, searchSets]);
+
+  /** Build the ordered list of sibling ids within a parent, falling back to
+   *  the natural tree order when no explicit order has been persisted. */
+  const getSiblingIds = useCallback((parentKey: string): string[] => {
+    if (orderMap[parentKey]) return [...orderMap[parentKey]];
+    // Fall back to natural order from the current tree.
+    const flatSiblings: string[] = [];
+    const collectAtParent = (nodes: ListNode[], pk: string) => {
+      if (pk !== parentKey) return;
+      nodes.forEach((n) => {
+        if (n.kind === 'leaf') flatSiblings.push(n.set.id);
+        else flatSiblings.push(n.id);
+      });
+    };
+    const walk = (nodes: ListNode[], pk: string) => {
+      collectAtParent(nodes, pk);
+      nodes.forEach((n) => {
+        if (n.kind === 'folder') {
+          const childExFolders = extraFolders
+            .filter((f) => f.parentId === n.id)
+            .map((f): ListNode => ({ kind: 'folder', id: f.id, name: f.name, children: [] }));
+          walk([...n.children, ...childExFolders], n.id);
+        }
+      });
+    };
+    const rootNodes: ListNode[] = [
+      ...fullTree,
+      ...extraFolders
+        .filter((f) => !f.parentId)
+        .map((f): ListNode => ({ kind: 'folder', id: f.id, name: f.name, children: [] })),
+    ];
+    walk(rootNodes, ROOT_KEY);
+    return flatSiblings;
+  }, [orderMap, fullTree, extraFolders]);
+
+  /** Resolve a (target row, drop position) into the destination parent key and
+   *  the index at which the dragged item should be inserted among its siblings. */
+  const resolveDrop = useCallback((targetId: string, position: DropPosition): { newParentKey: string; insertIndex: number } => {
+    if (position === 'inside') {
+      return { newParentKey: targetId, insertIndex: getSiblingIds(targetId).length };
+    }
+    const newParentKey = getItemParentKey(targetId);
+    const siblings = getSiblingIds(newParentKey);
+    const targetIdx = siblings.indexOf(targetId);
+    const insertIndex = position === 'before' ? Math.max(0, targetIdx) : targetIdx + 1;
+    return { newParentKey, insertIndex };
+  }, [getItemParentKey, getSiblingIds]);
+
+  /** Is moving `draggedId` into `newParentKey` allowed? Guards against dropping
+   *  a folder into itself/its descendants, sets into manually-created folders,
+   *  and cross-parent moves of derived folders (those may only be reordered). */
+  const validateMove = useCallback((draggedId: string, newParentKey: string): boolean => {
+    if (!draggedId) return false;
+    // No dropping a derived folder into itself or its own descendants.
+    if (newParentKey === draggedId || newParentKey.startsWith(`${draggedId}::`)) return false;
+    // No dropping an extra folder into itself or any descendant extra folder.
+    if (newParentKey.startsWith(EXTRA_FOLDER_PREFIX)) {
+      let ancestor: string | undefined = newParentKey;
+      while (ancestor?.startsWith(EXTRA_FOLDER_PREFIX)) {
+        if (ancestor === draggedId) return false;
+        ancestor = extraFolders.find((f) => f.id === ancestor)?.parentId;
+      }
+    }
+    const isLeaf = searchSets.some((s) => s.id === draggedId);
+    // Sets live in derived-folder hierarchies, not in manually-created folders.
+    if (isLeaf && newParentKey.startsWith(EXTRA_FOLDER_PREFIX)) return false;
+    // Derived folders may only be reordered within their own parent.
+    const isDerivedFolder = !draggedId.startsWith(EXTRA_FOLDER_PREFIX) && !isLeaf;
+    if (isDerivedFolder && newParentKey !== getItemParentKey(draggedId)) return false;
+    return true;
+  }, [extraFolders, searchSets, getItemParentKey]);
+
+  /** Would dropping `draggedId` relative to `targetId` at `position` be valid?
+   *  Used to decide whether to show the drop indicator while hovering. */
+  const isValidDrop = useCallback((draggedId: string, targetId: string, position: DropPosition): boolean => {
+    if (!draggedId || draggedId === targetId) return false;
+    const { newParentKey } = resolveDrop(targetId, position);
+    return validateMove(draggedId, newParentKey);
+  }, [resolveDrop, validateMove]);
+
+  /** Commit a drop: update the persisted order map and, when the parent changed,
+   *  the dragged item's membership (set folderPath/source or extra-folder parentId). */
+  const performMove = useCallback((draggedId: string, targetId: string, position: DropPosition) => {
+    const { newParentKey, insertIndex } = resolveDrop(targetId, position);
+    if (!validateMove(draggedId, newParentKey)) return;
+
+    const isLeaf = searchSets.some((s) => s.id === draggedId);
+    const currentParentKey = getItemParentKey(draggedId);
+
+    // ── Update order map ───────────────────────────────────────────
+    const newOrderMap = { ...orderMap };
+
+    // Remove from current parent's order list.
+    const currentOrder = [...getSiblingIds(currentParentKey)];
+    const removeIdx = currentOrder.indexOf(draggedId);
+    if (removeIdx !== -1) currentOrder.splice(removeIdx, 1);
+    newOrderMap[currentParentKey] = currentOrder;
+
+    // Removal shifts indices when reordering within the same parent.
+    const adjustedIndex =
+      currentParentKey === newParentKey && removeIdx !== -1 && removeIdx < insertIndex
+        ? insertIndex - 1
+        : insertIndex;
+
+    if (currentParentKey === newParentKey) {
+      const fresh = [...(newOrderMap[newParentKey] ?? [])];
+      fresh.splice(adjustedIndex, 0, draggedId);
+      newOrderMap[newParentKey] = fresh;
+    } else {
+      const newOrder = [...getSiblingIds(newParentKey)];
+      newOrder.splice(adjustedIndex, 0, draggedId);
+      newOrderMap[newParentKey] = newOrder;
+    }
+
+    setOrderMap(newOrderMap);
+    onSaveOrder(newOrderMap);
+
+    // ── Update membership if parent changed ────────────────────────
+    if (currentParentKey !== newParentKey) {
+      if (draggedId.startsWith(EXTRA_FOLDER_PREFIX)) {
+        const newParentId = newParentKey === ROOT_KEY ? undefined : newParentKey;
+        setExtraFolders((prev) =>
+          prev.map((f) => (f.id === draggedId ? { ...f, parentId: newParentId } : f)),
+        );
+        const folder = extraFolders.find((f) => f.id === draggedId);
+        if (folder) {
+          const updated = { ...folder, name: folder.name };
+          if (newParentId) updated.parentId = newParentId;
+          else delete (updated as { parentId?: string }).parentId;
+          onSaveFolder(updated);
+        }
+      } else if (isLeaf) {
+        const parts = newParentKey.split('::');
+        const newSource = newParentKey === ROOT_KEY ? undefined : parts[0];
+        const newFolderPath = newParentKey === ROOT_KEY ? [] : parts.slice(1);
+        onMoveSet(draggedId, newSource, newFolderPath);
+      }
+    }
+
+    // Auto-expand the destination folder so the moved item is visible.
+    if (position === 'inside') {
+      setExpandedFolders((prev) => new Set([...prev, targetId]));
+    }
+  }, [
+    orderMap, extraFolders, searchSets, resolveDrop, validateMove,
+    getItemParentKey, getSiblingIds, onSaveOrder, onSaveFolder, onMoveSet,
+  ]);
+
+  // ── Per-row native-DnD handlers (passed to TreeNode) ────────────────────────
+  // draggingIdRef mirrors draggingId so the dragover/drop handlers always read
+  // the latest dragged id without stale closures or nested-setState hacks.
+  const draggingIdRef = useRef<string | null>(null);
+  const dropTargetRef = useRef<{ id: string; position: DropPosition } | null>(null);
+
+  const handleNodeDragStart = useCallback((id: string) => {
+    draggingIdRef.current = id;
+    setDraggingId(id);
+  }, []);
+
+  const handleNodeDragEnd = useCallback(() => {
+    draggingIdRef.current = null;
+    dropTargetRef.current = null;
+    setDraggingId(null);
+    setDropTarget(null);
+  }, []);
+
+  const handleNodeDragOver = useCallback((id: string, position: DropPosition) => {
+    const dragging = draggingIdRef.current;
+    const next = dragging && isValidDrop(dragging, id, position) ? { id, position } : null;
+    dropTargetRef.current = next;
+    setDropTarget((prev) => {
+      if (prev?.id === next?.id && prev?.position === next?.position) return prev;
+      return next;
+    });
+  }, [isValidDrop]);
+
+  const handleNodeDragLeave = useCallback((id: string) => {
+    if (dropTargetRef.current?.id === id) {
+      dropTargetRef.current = null;
+      setDropTarget((prev) => (prev?.id === id ? null : prev));
+    }
+  }, []);
+
+  const handleNodeDrop = useCallback((id: string) => {
+    const dragging = draggingIdRef.current;
+    const target = dropTargetRef.current;
+    if (dragging && target && target.id === id) {
+      performMove(dragging, id, target.position);
+    }
+    draggingIdRef.current = null;
+    dropTargetRef.current = null;
+    setDraggingId(null);
+    setDropTarget(null);
+  }, [performMove]);
+
+  // Every selectable unit: search-set ids plus empty-folder ids.
+  const allSelectableIds = [...searchSets.map((s) => s.id), ...extraFolders.map((f) => f.id)];
+  const totalItems = allSelectableIds.length;
+  const checkedCount = checkedIds.size;
+  const masterState: 'unchecked' | 'checked' | 'indeterminate' =
+    totalItems > 0 && checkedCount === totalItems
+      ? 'checked'
+      : checkedCount > 0
+        ? 'indeterminate'
+        : 'unchecked';
+
+  const toggleAll = () => {
+    if (checkedCount > 0) setCheckedIds(new Set());
+    else setCheckedIds(new Set(allSelectableIds));
+  };
+
+  const toggleItem = (id: string, checked: boolean) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      checked ? next.add(id) : next.delete(id);
+      return next;
+    });
+  };
+
+  const toast = useToast();
+
+  const handleRunSelected = () => {
+    const checked = [...checkedIds];
+    // Empty folders have no sets to run — exclude them.
+    const ids = checked.filter((id) => !id.startsWith(EXTRA_FOLDER_PREFIX));
+    if (ids.length === 0) {
+      // If only empty folders are selected, be specific about why nothing runs.
+      const onlyEmptyFolders = checked.some((id) => id.startsWith(EXTRA_FOLDER_PREFIX));
+      toast.show({
+        kind: 'error',
+        message: onlyEmptyFolders
+          ? 'This folder has no search sets to run.'
+          : 'Select one or more search sets to run a search.',
+      });
+      return;
+    }
+    // First set replaces the current selection; the rest accumulate so running
+    // several sets at once highlights the union of all their elements.
+    const total = ids.reduce((sum, id, i) => sum + onRun(id, { additive: i > 0 }), 0);
+    if (total > 0) {
+      toast.show({
+        kind: 'success',
+        message: `${total} object${total === 1 ? '' : 's'} found.`,
+      });
+    } else {
+      toast.show({
+        kind: 'error',
+        message: 'No elements in this model match the selected search set(s).',
+      });
+    }
+  };
+
+  const [bulkMenuAnchor, setBulkMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [actionMenuAnchor, setActionMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [moveFolderAnchor, setMoveFolderAnchor] = useState<{ x: number; y: number } | null>(null);
+  const moveFolderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
+  const [deleteTargetName, setDeleteTargetName] = useState<string | null>(null);
+  const [deleteTargetIsFolder, setDeleteTargetIsFolder] = useState(false);
+  const [deleteTargetFolderId, setDeleteTargetFolderId] = useState<string | null>(null);
+  const [moveToFolderModal, setMoveToFolderModal] = useState<{
+    mode: 'single';
+    id: string;
+    isFolder: boolean;
+  } | { mode: 'bulk' } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [rowOverflowAnchor, setRowOverflowAnchor] = useState<
+    { id: string; ids: string[]; name: string; isFolder: boolean; x: number; y: number; anchorTop: number } | null
+  >(null);
+  const [rowMoveFolderAnchor, setRowMoveFolderAnchor] = useState<{ x: number; y: number } | null>(null);
+  const rowMoveFolderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Captures the move target (set or folder) when the Move-to-folder submenu
+  // opens so clicking "New Folder" still works even after DropdownMenu's
+  // outside-click handler has cleared rowOverflowAnchor.
+  const pendingMoveTargetRef = useRef<{ id: string; isFolder: boolean } | null>(null);
+
+  const handleRunSingle = (id: string) => {
+    const total = onRun(id, { additive: false });
+    if (total > 0) {
+      toast.show({ kind: 'success', message: `${total} object${total === 1 ? '' : 's'} found.` });
+    } else {
+      toast.show({ kind: 'error', message: 'No elements in this model match this search set.' });
+    }
+  };
+
+  // Run one or more sets at once (used by row + folder double-click). The first
+  // set replaces the current selection; the rest accumulate so the highlight is
+  // the union of every set's elements.
+  const runSets = (ids: string[]) => {
+    if (ids.length === 0) {
+      // Empty folder — nothing to run. Guide the user toward a fix.
+      toast.show({ kind: 'error', message: 'This folder has no search sets to run.' });
+      return;
+    }
+    const total = ids.reduce((sum, id, i) => sum + onRun(id, { additive: i > 0 }), 0);
+    if (total > 0) {
+      toast.show({ kind: 'success', message: `${total} object${total === 1 ? '' : 's'} found.` });
+    } else {
+      toast.show({ kind: 'error', message: 'No elements in this model match the selected search set(s).' });
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    setActionMenuAnchor(null);
+    setDeleteTargetIds([...checkedIds]);
+    setDeleteTargetName(null);
+    setDeleteTargetIsFolder(false);
+    setDeleteTargetFolderId(null);
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDelete = () => {
+    const ids = deleteTargetIds;
+    // Partition into real search sets vs manually-created empty folders.
+    const setIds = ids.filter((id) => !id.startsWith(EXTRA_FOLDER_PREFIX));
+    const extraIds = new Set(ids.filter((id) => id.startsWith(EXTRA_FOLDER_PREFIX)));
+    if (deleteTargetFolderId?.startsWith(EXTRA_FOLDER_PREFIX)) extraIds.add(deleteTargetFolderId);
+
+    setIds.forEach((id) => onDelete(id));
+    if (extraIds.size > 0) {
+      setExtraFolders((prev) => prev.filter((f) => !extraIds.has(f.id)));
+      extraIds.forEach((id) => onDeleteFolder(id));
+    }
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.delete(id));
+      extraIds.forEach((id) => next.delete(id));
+      return next;
+    });
+
+    setShowDeleteConfirm(false);
+    setDeleteTargetIds([]);
+    setDeleteTargetName(null);
+    setDeleteTargetIsFolder(false);
+    setDeleteTargetFolderId(null);
+
+    const groups = setIds.length;
+    const folders = extraIds.size;
+    let message: string;
+    if (groups > 0 && folders === 0) {
+      message = groups === 1 ? '1 search group deleted.' : `${groups} search groups deleted.`;
+    } else if (folders > 0 && groups === 0) {
+      message = folders === 1 ? 'Folder deleted.' : `${folders} folders deleted.`;
+    } else {
+      message = `${groups + folders} items deleted.`;
+    }
+    toast.show({ kind: 'success', message });
+  };
+
+  const handleCreateFolder = () => {
+    setAddMenuAnchor(null);
+    const id = `${EXTRA_FOLDER_PREFIX}${crypto.randomUUID()}`;
+    setExtraFolders((prev) => [...prev, { id, name: 'New Folder' }]);
+    onSaveFolder({ id, name: 'New Folder' });
+    // Drop straight into rename mode and scroll the new row into view.
+    setRenamingId(id);
+    setRenameValue('New Folder');
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  };
+
+  // Action menu → Move to folder → New Folder creates a destination folder and
+  // moves the currently selected items under it.
+  const handleActionMoveToNewFolder = () => {
+    setMoveFolderAnchor(null);
+    setActionMenuAnchor(null);
+
+    const selectedIds = [...checkedIds];
+    const selectedSetIds = selectedIds.filter((id) => !id.startsWith(EXTRA_FOLDER_PREFIX));
+    const selectedExtraFolderIds = selectedIds.filter((id) => id.startsWith(EXTRA_FOLDER_PREFIX));
+    const selectedSetIdSet = new Set(selectedSetIds);
+
+    // Build a full tree (derived folders + nested extra folders) and detect
+    // fully-selected derived folders so we can move whole subtrees first.
+    const rootNodes: ListNode[] = [
+      ...fullTree,
+      ...extraFolders
+        .filter((f) => !f.parentId)
+        .map((f): ListNode => ({ kind: 'folder', id: f.id, name: f.name, children: [] })),
+    ];
+
+    const fullySelectedDerivedFolders: string[] = [];
+    const coveredLeafIds = new Set<string>();
+    const visit = (nodes: ListNode[]) => {
+      for (const node of nodes) {
+        if (node.kind !== 'folder') continue;
+        const childExtraFolders = extraFolders
+          .filter((f) => f.parentId === node.id)
+          .map((f): ListNode => ({ kind: 'folder', id: f.id, name: f.name, children: [] }));
+        const allChildren: ListNode[] = [...node.children, ...childExtraFolders];
+        const leafIds = collectListLeafIds(allChildren);
+        const isDerivedFolder = !node.id.startsWith(EXTRA_FOLDER_PREFIX);
+        const fullySelected = leafIds.length > 0 && leafIds.every((id) => selectedSetIdSet.has(id));
+        if (isDerivedFolder && fullySelected) {
+          fullySelectedDerivedFolders.push(node.id);
+          leafIds.forEach((id) => coveredLeafIds.add(id));
+          // Parent folder move already carries descendants; don't recurse.
+          continue;
+        }
+        visit(allChildren);
+      }
+    };
+    visit(rootNodes);
+
+    // Move fully-selected derived folders as folders (preserves subtree shape).
+    fullySelectedDerivedFolders.forEach((folderId) => {
+      onMoveFolder(folderId);
+      const parts = folderId.split('::');
+      const pathSegs = parts.slice(1);
+      const insertAt = Math.max(0, pathSegs.length - 1);
+      const newFolderId = [parts[0], ...pathSegs.slice(0, insertAt), 'New Folder'].join('::');
+      setExpandedFolders((prev) => new Set([...prev, parts[0], newFolderId]));
+    });
+
+    // Move any remaining selected sets (those not already carried by a moved folder).
+    const selectedSets = selectedSetIds
+      .filter((id) => !coveredLeafIds.has(id))
+      .map((id) => searchSets.find((s) => s.id === id))
+      .filter((s): s is SearchSet => !!s);
+
+    const setsBySource = new Map<string, SearchSet[]>();
+    selectedSets.forEach((set) => {
+      const source = set.source ?? 'Search Sets';
+      const arr = setsBySource.get(source) ?? [];
+      arr.push(set);
+      setsBySource.set(source, arr);
+    });
+
+    setsBySource.forEach((sets, source) => {
+      sets.forEach((set) => {
+        const newFolderPath = [...(set.folderPath ?? []), 'New Folder'];
+        onMoveSet(set.id, source, newFolderPath);
+        setExpandedFolders((prev) => new Set([...prev, source, `${source}::${newFolderPath.join('::')}`]));
+      });
+    });
+
+    // Selected empty/manual folders are moved under a newly-created manual folder.
+    if (selectedExtraFolderIds.length > 0) {
+      const id = `${EXTRA_FOLDER_PREFIX}${crypto.randomUUID()}`;
+      const folder = { id, name: 'New Folder' };
+      setExtraFolders((prev) =>
+        [...prev, folder].map((f) =>
+          selectedExtraFolderIds.includes(f.id) ? { ...f, parentId: id } : f,
+        ),
+      );
+      onSaveFolder(folder);
+      selectedExtraFolderIds.forEach((folderId) => {
+        const existing = extraFolders.find((f) => f.id === folderId);
+        if (!existing) return;
+        onSaveFolder({ ...existing, parentId: id });
+      });
+      setRenamingId(id);
+      setRenameValue('New Folder');
+      requestAnimationFrame(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+      // If we also moved derived folders/sets, keep this folder expanded but
+      // let rename target prefer the derived destination below.
+      setExpandedFolders((prev) => new Set([...prev, id]));
+      if (selectedSets.length === 0 && fullySelectedDerivedFolders.length === 0) return;
+    }
+
+    // Start rename on the first derived destination so users can quickly rename it.
+    const firstFolderMove = fullySelectedDerivedFolders[0];
+    if (firstFolderMove) {
+      const parts = firstFolderMove.split('::');
+      const pathSegs = parts.slice(1);
+      const insertAt = Math.max(0, pathSegs.length - 1);
+      setRenamingId([parts[0], ...pathSegs.slice(0, insertAt), 'New Folder'].join('::'));
+      setRenameValue('New Folder');
+      return;
+    }
+    if (selectedSets.length > 0) {
+      const firstSet = selectedSets[0];
+      setRenamingId([firstSet.source ?? 'Search Sets', ...(firstSet.folderPath ?? []), 'New Folder'].join('::'));
+      setRenameValue('New Folder');
+    }
+  };
+
+  const handleMoveToExistingFolder = (destId: string) => {
+    const state = moveToFolderModal;
+    setMoveToFolderModal(null);
+    if (!state) return;
+
+    const isExtraDest = destId.startsWith(EXTRA_FOLDER_PREFIX);
+    const destParts = destId.split('::');
+    const destSource = isExtraDest ? undefined : destParts[0];
+    const destFolderPath = isExtraDest ? [] : destParts.slice(1);
+
+    const performSetMove = (setId: string) => {
+      if (isExtraDest) {
+        toast.show({ kind: 'info', message: 'Search sets cannot be moved into manual folders.' });
+        return;
+      }
+      onMoveSet(setId, destSource, destFolderPath);
+    };
+
+    const performExtraFolderMove = (folderId: string) => {
+      setExtraFolders((prev) =>
+        prev.map((f) => (f.id === folderId ? { ...f, parentId: destId } : f)),
+      );
+      const folder = extraFolders.find((f) => f.id === folderId);
+      if (folder) onSaveFolder({ ...folder, parentId: destId });
+    };
+
+    if (state.mode === 'single') {
+      const { id, isFolder } = state;
+      if (id.startsWith(EXTRA_FOLDER_PREFIX)) {
+        performExtraFolderMove(id);
+      } else if (isFolder) {
+        // Derived folder — move all contained sets to the destination.
+        if (!isExtraDest) {
+          const folderNode = findFolderNode(fullTree, id);
+          if (folderNode) {
+            const leafIds = collectListLeafIds([folderNode]);
+            searchSets
+              .filter((s) => leafIds.includes(s.id))
+              .forEach((s) => onMoveSet(s.id, destSource, destFolderPath));
+          }
+        } else {
+          toast.show({ kind: 'info', message: 'Derived folders cannot be moved into manual folders.' });
+          return;
+        }
+      } else {
+        performSetMove(id);
+      }
+    } else {
+      // Bulk mode.
+      const allSelected = [...checkedIds];
+      const setIds = allSelected.filter((id) => !id.startsWith(EXTRA_FOLDER_PREFIX) && searchSets.some((s) => s.id === id));
+      const extraIds = allSelected.filter((id) => id.startsWith(EXTRA_FOLDER_PREFIX));
+      setIds.forEach((id) => performSetMove(id));
+      extraIds.forEach((id) => performExtraFolderMove(id));
+    }
+
+    // Auto-expand the destination so the moved items are visible.
+    setExpandedFolders((prev) => new Set([...prev, destId]));
+  };
+
+  const handleCreateNestedFolder = (parentId: string) => {
+    setRowOverflowAnchor(null);
+    const id = `${EXTRA_FOLDER_PREFIX}${crypto.randomUUID()}`;
+    const folder = { id, name: 'New Folder', parentId };
+    setExtraFolders((prev) => [...prev, folder]);
+    onSaveFolder(folder);
+    // Ensure the parent is expanded so the new child is visible.
+    setExpandedFolders((prev) => new Set([...prev, parentId]));
+    setRenamingId(id);
+    setRenameValue('New Folder');
+  };
+
+  const commitRename = () => {
+    const id = renamingId;
+    setRenamingId(null);
+    if (!id) return;
+    // Manually-created empty folder — update its name in local state + storage.
+    if (id.startsWith(EXTRA_FOLDER_PREFIX)) {
+      const trimmed = renameValue.trim();
+      if (trimmed) {
+        setExtraFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name: trimmed } : f)));
+        const existing = extraFolders.find((f) => f.id === id);
+        onSaveFolder({ id, name: trimmed, ...(existing?.parentId ? { parentId: existing.parentId } : {}) });
+      }
+      // The id is stable across the rename, so the spinner lands on the same row.
+      setSavingId(id);
+      setTimeout(() => setSavingId((cur) => (cur === id ? null : cur)), 600);
+      return;
+    }
+    // Show a spinner on the row while the save settles. Storage writes are
+    // synchronous, so hold the spinner briefly to give visible feedback.
+    if (searchSets.some((s) => s.id === id)) {
+      // Leaf: the set id is stable across the rename.
+      setSavingId(id);
+      onRename(id, renameValue);
+      setTimeout(() => setSavingId((cur) => (cur === id ? null : cur)), 600);
+    } else {
+      // Folder: its id is path-encoded, so renaming the last segment changes
+      // the id. Point the spinner at the NEW id so it lands on the renamed row.
+      const trimmed = renameValue.trim();
+      const parts = id.split('::');
+      const newId = trimmed ? [...parts.slice(0, -1), trimmed].join('::') : id;
+      onRenameFolder(id, renameValue);
+      setSavingId(newId);
+      setTimeout(() => setSavingId((cur) => (cur === newId ? null : cur)), 600);
+      // Keep the renamed folder expanded (its id changed, so update the set).
+      setExpandedFolders((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        next.add(newId);
+        return next;
+      });
+    }
+  };
+
+  const handleMoveToNewFolder = () => {
+    const target = pendingMoveTargetRef.current;
+    if (!target) return;
+    pendingMoveTargetRef.current = null;
+    setRowMoveFolderAnchor(null);
+    setRowOverflowAnchor(null);
+
+    let newFolderId: string;
+    if (target.isFolder) {
+      // Wrap the whole folder (and its contents) in a new sibling folder.
+      onMoveFolder(target.id);
+      const parts = target.id.split('::');
+      const pathSegs = parts.slice(1);
+      const insertAt = Math.max(0, pathSegs.length - 1);
+      newFolderId = [parts[0], ...pathSegs.slice(0, insertAt), 'New Folder'].join('::');
+    } else {
+      const set = searchSets.find((s) => s.id === target.id);
+      if (!set) return;
+      const newFolderPath = [...(set.folderPath ?? []), 'New Folder'];
+      onMoveSet(target.id, set.source, newFolderPath);
+      newFolderId = [set.source ?? 'Search Sets', ...newFolderPath].join('::');
+    }
+
+    // The tree re-derives the folder from the updated set data; drop straight
+    // into rename mode on it and keep it expanded so its contents stay visible.
+    setRenamingId(newFolderId);
+    setRenameValue('New Folder');
+    setExpandedFolders((prev) => new Set([...prev, newFolderId]));
+  };
+
+  // Drop indicator for the row currently under the pointer. TreeNode renders a
+  // blue line for 'before'/'after' (via dropIndicator) and a blue row highlight
+  // for 'inside' (via isDropTarget).
+  const indicatorFor = (id: string): 'before' | 'after' | undefined =>
+    dropTarget?.id === id && dropTarget.position !== 'inside' ? dropTarget.position : undefined;
+  const isInsideTarget = (id: string): boolean =>
+    dropTarget?.id === id && dropTarget.position === 'inside';
+
+  // Recursively render the nested list tree.
+  function renderListNodes(nodes: ListNode[], depth: number, parentKey: string): React.ReactNode {
+    const orderedNodes = applyOrder(nodes, parentKey, orderMap);
+
+    return orderedNodes.map((n) => {
+      if (n.kind === 'leaf') {
+        const set = n.set;
+        return (
+          <TreeNode
+            key={set.id}
+            id={set.id}
+            label={set.name}
+            depth={depth}
+            type="leaf"
+            checked={checkedIds.has(set.id)}
+            onCheckedChange={(id, checked) => { toggleItem(id, checked); }}
+            selected={checkedIds.has(set.id)}
+            onClick={(id) => { toggleItem(id, !checkedIds.has(id)); }}
+            onDoubleClick={(id) => {
+              toggleItem(id, true);
+              handleRunSingle(id);
+            }}
+            isRenaming={renamingId === set.id}
+            renameValue={renameValue}
+            onRenameChange={setRenameValue}
+            onRenameCommit={commitRename}
+            onRenameCancel={() => setRenamingId(null)}
+            spinner={savingId === set.id}
+            hoverBg="#F4F5F6"
+            showActionsOnHover
+            hideActionsOnSelect
+            draggable={renamingId !== set.id}
+            onDragStart={handleNodeDragStart}
+            onDragEnd={handleNodeDragEnd}
+            onDragOver={handleNodeDragOver}
+            onDragLeave={handleNodeDragLeave}
+            onDrop={handleNodeDrop}
+            dropIndicator={indicatorFor(set.id)}
+            isDragging={draggingId === set.id}
+            actions={
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label="Run search"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // Keep row-action search single-focus, not additive.
+                    setCheckedIds(new Set([set.id]));
+                    handleRunSingle(set.id);
+                  }}
+                  className="w-6 h-6 flex items-center justify-center rounded-[4px] bg-[#E3E6E8] hover:bg-[#D6DADC] text-[#3D454B] transition-colors"
+                >
+                  <div className="relative shrink-0 size-4">
+                    <div className="absolute inset-[10.41%_9.55%_9.55%_10.41%]">
+                      <img src={searchFieldFigmaIcon} alt="" className="absolute block inset-0 max-w-none size-full" />
+                    </div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  aria-label="More actions"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setRowOverflowAnchor({ id: set.id, ids: [set.id], name: set.name, isFolder: false, x: rect.right, y: rect.bottom + 4, anchorTop: rect.top });
+                  }}
+                  className="w-6 h-6 flex items-center justify-center rounded-[4px] bg-[#E3E6E8] hover:bg-[#D6DADC] text-[#3D454B] transition-colors"
+                >
+                  <MoreVertical size={16} strokeWidth={2} />
+                </button>
+              </div>
+            }
+          />
+        );
+      }
+
+      // Folder node
+      const childExtraFolders = extraFolders
+        .filter((f) => f.parentId === n.id)
+        .map((f): ListNode => ({ kind: 'folder', id: f.id, name: f.name, children: [] }));
+      const allChildren: ListNode[] = [...n.children, ...childExtraFolders];
+      const leafIds = collectListLeafIds(allChildren);
+      const selectionIds = leafIds.length === 0 ? [n.id] : leafIds;
+      const folderAllChecked = selectionIds.length > 0 && selectionIds.every((id) => checkedIds.has(id));
+      const folderSomeChecked = selectionIds.some((id) => checkedIds.has(id));
+      const handleFolderCheck = (_id: string, checked: boolean) => {
+        setCheckedIds((prev) => {
+          const next = new Set(prev);
+          selectionIds.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+          return next;
+        });
+      };
+      return (
+        <TreeNode
+          key={n.id}
+          id={n.id}
+          label={n.name}
+          depth={depth}
+          type="folder"
+          hideChevron={allChildren.length === 0}
+          expanded={expandedFolders.has(n.id)}
+          onToggle={(id) => {
+            setExpandedFolders((prev) => {
+              const next = new Set(prev);
+              next.has(id) ? next.delete(id) : next.add(id);
+              return next;
+            });
+          }}
+          checked={folderAllChecked}
+          indeterminate={folderSomeChecked && !folderAllChecked}
+          selected={folderAllChecked}
+          onCheckedChange={handleFolderCheck}
+          onClick={() => {
+            const nowChecked = !folderAllChecked;
+            setCheckedIds((prev) => {
+              const next = new Set(prev);
+              selectionIds.forEach((id) => (nowChecked ? next.add(id) : next.delete(id)));
+              return next;
+            });
+          }}
+          onDoubleClick={() => {
+            setCheckedIds((prev) => {
+              const next = new Set(prev);
+              leafIds.forEach((id) => next.add(id));
+              return next;
+            });
+            runSets(leafIds);
+          }}
+          isRenaming={renamingId === n.id}
+          renameValue={renameValue}
+          onRenameChange={setRenameValue}
+          onRenameCommit={commitRename}
+          onRenameCancel={() => setRenamingId(null)}
+          spinner={savingId === n.id}
+          hoverBg="#F4F5F6"
+          showActionsOnHover
+          hideActionsOnSelect
+          draggable={renamingId !== n.id}
+          onDragStart={handleNodeDragStart}
+          onDragEnd={handleNodeDragEnd}
+          onDragOver={handleNodeDragOver}
+          onDragLeave={handleNodeDragLeave}
+          onDrop={handleNodeDrop}
+          dropIndicator={indicatorFor(n.id)}
+          isDropTarget={isInsideTarget(n.id)}
+          isDragging={draggingId === n.id}
+          actions={
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label="Run search"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Running from a folder row should focus selection on this
+                  // folder's result set (not accumulate prior folder selection).
+                  setCheckedIds(new Set(leafIds));
+                  runSets(leafIds);
+                }}
+                className="w-6 h-6 flex items-center justify-center rounded-[4px] bg-[#E3E6E8] hover:bg-[#D6DADC] text-[#3D454B] transition-colors"
+              >
+                <div className="relative shrink-0 size-4">
+                  <div className="absolute inset-[10.41%_9.55%_9.55%_10.41%]">
+                    <img src={searchFieldFigmaIcon} alt="" className="absolute block inset-0 max-w-none size-full" />
+                  </div>
+                </div>
+              </button>
+              <button
+                type="button"
+                aria-label="More actions"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setRowOverflowAnchor({ id: n.id, ids: leafIds, name: n.name, isFolder: true, x: rect.right, y: rect.bottom + 4, anchorTop: rect.top });
+                }}
+                className="w-6 h-6 flex items-center justify-center rounded-[4px] bg-[#E3E6E8] hover:bg-[#D6DADC] text-[#3D454B] transition-colors"
+              >
+                <MoreVertical size={16} strokeWidth={2} />
+              </button>
+            </div>
+          }
         >
-          <span className="text-sm text-gray-700 truncate flex-1 mr-2">{set.name}</span>
-          <div className="flex gap-1 shrink-0">
+          {renderListNodes(allChildren, depth + 1, n.id)}
+        </TreeNode>
+      );
+    });
+  }
+
+  return (
+    <div className="flex flex-col h-full bg-white">
+      {/* Bulk-actions row */}
+      <div
+        className="flex items-center justify-between px-4 h-10 shrink-0 transition-colors"
+        style={{
+          background: checkedCount > 0 ? '#EDF2FC' : '#FFFFFF',
+        }}
+      >
+        <div className="flex items-center gap-2">
+          {/* Master checkbox */}
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={masterState === 'indeterminate' ? 'mixed' : masterState === 'checked'}
+            aria-label="Select all"
+            onClick={toggleAll}
+            className={`shrink-0 size-5 rounded-[2px] flex items-center justify-center transition-colors cursor-pointer ${
+              masterState === 'unchecked' ? 'bg-white border-2 border-[#6A767C]' : 'bg-[#2066DF]'
+            }`}
+          >
+            {masterState === 'checked' && <Check size={14} strokeWidth={3} className="text-white" />}
+            {masterState === 'indeterminate' && <span className="block w-[10px] h-[2px] bg-white" />}
+          </button>
+
+          {/* Chevron — decorative, no action */}
+          <span className="w-6 h-6 flex items-center justify-center rounded shrink-0">
+            <ChevronDown className="text-[#6A767C]" />
+          </span>
+
+          {/* Action dropdown — only visible when items are checked */}
+          {checkedCount > 0 && (
             <button
-              onClick={() => handleRun(set.id)}
-              className="px-2 py-0.5 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded"
+              type="button"
+              aria-label="Actions"
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setActionMenuAnchor({ x: rect.left, y: rect.bottom + 4 });
+              }}
+              className="flex items-center gap-1 px-2 h-6 rounded text-[12px] font-semibold leading-4 tracking-[0.25px] text-[#232729] hover:bg-black/5 shrink-0"
             >
-              Run
+              Action
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <path d="M2 3.5L5 6.5L8 3.5" stroke="#232729" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
             </button>
-            <button
-              onClick={() => handleDelete(set.id)}
-              className="px-2 py-0.5 text-xs bg-gray-100 hover:bg-red-100 hover:text-red-600 text-gray-500 rounded"
-            >
-              Del
-            </button>
-          </div>
-        </li>
-      ))}
-    </ul>
+          )}
+        </div>
+
+        <span className="text-[12px] leading-4 tracking-[0.25px] text-[#232729]">
+          {checkedCount > 0
+            ? `${checkedCount} of ${totalItems} Selected`
+            : `${totalItems} ${totalItems === 1 ? 'Item' : 'Items'}`}
+        </span>
+      </div>
+
+      {/* Select / deselect dropdown */}
+      {bulkMenuAnchor && (
+        <DropdownMenu position={bulkMenuAnchor} align="left" onClose={() => setBulkMenuAnchor(null)}>
+          <DropdownMenuItem onClick={() => { setCheckedIds(new Set(allSelectableIds)); setBulkMenuAnchor(null); }}>
+            Select all
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => { setCheckedIds(new Set()); setBulkMenuAnchor(null); }}>
+            Deselect all
+          </DropdownMenuItem>
+        </DropdownMenu>
+      )}
+
+      {/* Per-row overflow dropdown */}
+      {rowOverflowAnchor && (
+        <DropdownMenu
+          position={{ x: rowOverflowAnchor.x, y: rowOverflowAnchor.y, anchorTop: rowOverflowAnchor.anchorTop }}
+          onClose={() => { setRowOverflowAnchor(null); setRowMoveFolderAnchor(null); }}
+        >
+          <DropdownMenuItem onClick={() => { setRenamingId(rowOverflowAnchor.id); setRenameValue(rowOverflowAnchor.name); setRowOverflowAnchor(null); }}>
+            Rename
+          </DropdownMenuItem>
+          {rowOverflowAnchor.isFolder && (
+            <DropdownMenuItem onClick={() => handleCreateNestedFolder(rowOverflowAnchor.id)}>
+              Create new folder
+            </DropdownMenuItem>
+          )}
+          {/* Move to folder — hover opens submenu */}
+          <DropdownMenuItem
+            onMouseEnter={(e) => {
+              if (rowMoveFolderTimerRef.current) clearTimeout(rowMoveFolderTimerRef.current);
+              // Snapshot the target now — rowOverflowAnchor may be cleared by the
+              // time the user clicks inside the portalled submenu.
+              pendingMoveTargetRef.current = rowOverflowAnchor
+                ? { id: rowOverflowAnchor.id, isFolder: rowOverflowAnchor.isFolder }
+                : null;
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setRowMoveFolderAnchor({ x: rect.right, y: rect.top });
+            }}
+            onMouseLeave={() => {
+              rowMoveFolderTimerRef.current = setTimeout(() => setRowMoveFolderAnchor(null), 150);
+            }}
+            onClick={() => {/* stub */}}
+          >
+            <span className="flex items-center justify-between w-full gap-4">
+              Move to folder
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M6 4l4 4-4 4" stroke="#232729" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => { setDeleteTargetIds(rowOverflowAnchor.ids); setDeleteTargetName(rowOverflowAnchor.name); setDeleteTargetIsFolder(rowOverflowAnchor.isFolder); setDeleteTargetFolderId(rowOverflowAnchor.isFolder ? rowOverflowAnchor.id : null); setShowDeleteConfirm(true); setRowOverflowAnchor(null); }}>
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenu>
+      )}
+
+      {/* Per-row Move to folder submenu. Rendered as its own portal for correct
+          fixed positioning (the parent menu has a transform). It is tagged
+          data-dropdown-keep-open so DropdownMenu's outside-click handler does not
+          close the parent on mousedown — otherwise the button unmounts before its
+          click can fire. */}
+      {rowOverflowAnchor && rowMoveFolderAnchor && createPortal(
+        <div
+          data-dropdown-keep-open
+          className="fixed bg-white rounded shadow-[0_4px_12px_0_rgba(0,0,0,0.2)] py-1 z-[9999] w-[168px]"
+          style={{ left: rowMoveFolderAnchor.x, top: rowMoveFolderAnchor.y }}
+          onMouseEnter={() => {
+            if (rowMoveFolderTimerRef.current) clearTimeout(rowMoveFolderTimerRef.current);
+          }}
+          onMouseLeave={() => {
+            rowMoveFolderTimerRef.current = setTimeout(() => setRowMoveFolderAnchor(null), 150);
+          }}
+        >
+          <button
+            type="button"
+            onClick={handleMoveToNewFolder}
+            className="w-full flex items-center px-4 h-[28px] text-[14px] text-left text-[#232729] hover:bg-[#F4F5F6]"
+          >
+            New Folder
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const target = pendingMoveTargetRef.current;
+              pendingMoveTargetRef.current = null;
+              setRowMoveFolderAnchor(null);
+              setRowOverflowAnchor(null);
+              if (!target) return;
+              setMoveToFolderModal({ mode: 'single', id: target.id, isFolder: target.isFolder });
+            }}
+            className="w-full flex items-center px-4 h-[28px] text-[14px] text-left text-[#232729] hover:bg-[#F4F5F6]"
+          >
+            Existing Folder
+          </button>
+        </div>,
+        document.body,
+      )}
+
+      {/* Action dropdown */}
+      {actionMenuAnchor && (
+        <DropdownMenu position={actionMenuAnchor} align="left" onClose={() => { setActionMenuAnchor(null); setMoveFolderAnchor(null); }}>
+          {/* Move to folder — hover opens submenu */}
+          <DropdownMenuItem
+            onMouseEnter={(e) => {
+              if (moveFolderTimerRef.current) clearTimeout(moveFolderTimerRef.current);
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setMoveFolderAnchor({ x: rect.right, y: rect.top });
+            }}
+            onMouseLeave={() => {
+              moveFolderTimerRef.current = setTimeout(() => setMoveFolderAnchor(null), 150);
+            }}
+            onClick={() => {/* stub */}}
+          >
+            <span className="flex items-center justify-between w-full gap-4">
+              Move to folder
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M6 4l4 4-4 4" stroke="#232729" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleDeleteSelected}>
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenu>
+      )}
+
+      {/* Move to folder submenu */}
+      {moveFolderAnchor && createPortal(
+        <div
+          data-dropdown-keep-open
+          className="fixed bg-white rounded shadow-[0_4px_12px_0_rgba(0,0,0,0.2)] py-1 z-[9999] w-[168px]"
+          style={{ left: moveFolderAnchor.x, top: moveFolderAnchor.y }}
+          onMouseEnter={() => {
+            if (moveFolderTimerRef.current) clearTimeout(moveFolderTimerRef.current);
+          }}
+          onMouseLeave={() => {
+            moveFolderTimerRef.current = setTimeout(() => setMoveFolderAnchor(null), 150);
+          }}
+        >
+          <button
+            type="button"
+            onClick={handleActionMoveToNewFolder}
+            className="w-full flex items-center px-4 h-[28px] text-[14px] text-left text-[#232729] hover:bg-[#F4F5F6]"
+          >
+            New Folder
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMoveFolderAnchor(null);
+              setActionMenuAnchor(null);
+              setMoveToFolderModal({ mode: 'bulk' });
+            }}
+            className="w-full flex items-center px-4 h-[28px] text-[14px] text-left text-[#232729] hover:bg-[#F4F5F6]"
+          >
+            Existing Folder
+          </button>
+        </div>,
+        document.body,
+      )}
+
+      {/* Tree */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        {visibleTree.length === 0 && extraFolders.length === 0 && query.trim() && (
+          <p className="px-4 py-6 text-sm text-[#6A767C] text-center">No search sets match "{query}".</p>
+        )}
+        {renderListNodes(
+          query.trim()
+            ? visibleTree
+            : [
+                ...visibleTree,
+                ...extraFolders
+                  .filter((f) => !f.parentId)
+                  .map((f): ListNode => ({ kind: 'folder', id: f.id, name: f.name, children: [] })),
+              ],
+          0,
+          ROOT_KEY,
+        )}
+      </div>
+
+      {/* Footer — Run selected (always visible, always enabled) */}
+      <div className="flex items-center justify-end px-4 py-2 bg-white shrink-0">
+        <button
+          type="button"
+          onClick={handleRunSelected}
+          className="px-3 h-7 rounded text-sm font-semibold text-white bg-[#FF5100] hover:bg-[#E64900] transition-colors"
+        >
+          Search
+        </button>
+      </div>
+
+      {addMenuAnchor && (
+        <DropdownMenu position={addMenuAnchor} align="left" onClose={() => setAddMenuAnchor(null)}>
+          <DropdownMenuItem onClick={handleCreateFolder}>Create Folder</DropdownMenuItem>
+          <DropdownMenuItem onClick={openFilePicker}>Import using .xml</DropdownMenuItem>
+          <DropdownMenuItem onClick={importFromNavisworks}>Import from Navisworks</DropdownMenuItem>
+        </DropdownMenu>
+      )}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xml,application/xml,text/xml"
+        className="hidden"
+        onChange={onFileChosen}
+      />
+
+      {showDeleteConfirm && (
+        <DeleteConfirmModal
+          count={deleteTargetIds.length}
+          name={deleteTargetName ?? (deleteTargetIds.length === 1 ? searchSets.find((s) => s.id === deleteTargetIds[0])?.name : undefined)}
+          isFolder={deleteTargetIsFolder}
+          onCancel={() => { setShowDeleteConfirm(false); setDeleteTargetIds([]); setDeleteTargetName(null); setDeleteTargetIsFolder(false); setDeleteTargetFolderId(null); }}
+          onConfirm={confirmDelete}
+        />
+      )}
+
+      {moveToFolderModal && (
+        <MoveToFolderModal
+          fullTree={fullTree}
+          extraFolders={extraFolders}
+          excludeId={moveToFolderModal.mode === 'single' ? moveToFolderModal.id : undefined}
+          onClose={() => setMoveToFolderModal(null)}
+          onConfirm={handleMoveToExistingFolder}
+        />
+      )}
+    </div>
   );
 }
 
@@ -753,7 +3099,7 @@ function ObjectTreeContent() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="py-1">
+      <div className="py-1 bg-white">
           {objectTreeNodes.map((node) => (
             <ObjTreeNode
               key={node.id}
@@ -2103,12 +4449,12 @@ function SheetsContent() {
   return (
     <div className="flex flex-col h-full">
       {/* Search bar */}
-      <div className="px-4 py-2 border-b border-[#d6dadc]">
+      <div className="px-4 py-2 border-b border-[#d6dadc] bg-white">
         <PanelSearchBar value={query} onChange={setQuery} placeholder="Search sheets" />
       </div>
 
       {/* Tree */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto bg-white">
         {filtered.length === 0 ? (
           <p className="px-3 py-6 text-sm text-gray-400 text-center">No sheets found.</p>
         ) : (
@@ -2182,6 +4528,6 @@ export const PANEL_REGISTRY: Record<PanelId, { Content: () => ReactElement | nul
   'sheets':      { Content: SheetsContent, Toolbar: SheetsToolbar },
   'object-tree': { Content: ObjectTreeContent, Toolbar: ObjectTreeToolbar },
   'properties':  { Content: PropertiesContent, Toolbar: PropertiesToolbar },
-  'search-sets': { Content: SearchSetsContent },
+  'search-sets': { Content: SearchSetsContent, Toolbar: SearchSetsToolbar },
   'deviation':   { Content: DeviationContent },
 };

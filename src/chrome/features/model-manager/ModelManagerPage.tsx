@@ -1,90 +1,150 @@
-import { ChevronDown, HelpCircle, MessageSquare, Bell, Menu } from 'lucide-react';
 import cogIcon from '../../assets/icons/model-manager/cog.svg';
+import procoreLogoText from '../../assets/icons/model-manager/nav/procore-logo-text.svg';
+import procoreLogoHex from '../../assets/icons/model-manager/nav/procore-logo-hex.svg';
+import menuIcon from '../../assets/icons/model-manager/nav/menu.svg';
+import caretDownIcon from '../../assets/icons/model-manager/nav/caret-down.svg';
+import copilotIcon from '../../assets/icons/model-manager/nav/copilot.svg';
+import helpIcon from '../../assets/icons/model-manager/nav/help.svg';
+import commentsIcon from '../../assets/icons/model-manager/nav/comments.svg';
+import bellIcon from '../../assets/icons/model-manager/nav/bell.svg';
+import projectThumb from '../../assets/icons/model-manager/nav/project-thumb.png';
+import avatarImg from '../../assets/icons/model-manager/nav/avatar.png';
+import companyLogo from '../../assets/icons/model-manager/nav/company-logo.png';
+
+// Procore design tokens (dark / "reversed" global nav surface)
+const COLOR_INPUT_REVERSED = '#464F53';
+const COLOR_TEXT_REVERSED_TERTIARY = '#D6DADC';
+const COLOR_TEXT_SECONDARY = '#6A767C';
+const COLOR_BG_TERTIARY = '#EEF0F1';
+const COLOR_TEXT_PRIMARY = '#232729';
+
+// Icons are authored at their natural glyph size, centered inside a 24px frame
+// (preserveAspectRatio="none"), so render each at intrinsic dimensions to avoid stretching.
+function NavIcon({ src, w, h, alt = '' }: { src: string; w: number; h: number; alt?: string }) {
+  return (
+    <span className="flex items-center justify-center size-6 shrink-0">
+      <img src={src} alt={alt} style={{ width: w, height: h }} className="block max-w-none" />
+    </span>
+  );
+}
 
 function SiteHeader() {
   return (
-    <div
-      className="flex items-center shrink-0 px-4 gap-4"
-      style={{ backgroundColor: '#1A1F2C', height: 52 }}
-    >
-      {/* Left: Menu + Procore logo + project switcher */}
-      <div className="flex items-center gap-4">
-        <button type="button" className="flex items-center gap-1.5 text-white opacity-80 hover:opacity-100">
-          <Menu size={18} />
-          <span className="text-sm font-medium">Menu</span>
-        </button>
+    <div className="flex flex-col items-start shrink-0 w-full bg-black p-2">
+      <div className="flex items-center justify-between w-full">
+        {/* Left: Menu + Procore logo + project switcher */}
+        <div className="flex items-center gap-3 pr-1">
+          <div className="flex items-center gap-1 pr-1">
+            <button
+              type="button"
+              className="flex h-10 items-center justify-center p-1.5 rounded-md hover:bg-white/10 transition-colors"
+            >
+              <NavIcon src={menuIcon} w={18} h={14} alt="Menu" />
+              <span className="flex px-1.5 py-0.5">
+                <span className="font-semibold text-sm leading-5 tracking-[0.15px] text-white whitespace-nowrap">Menu</span>
+              </span>
+            </button>
 
-        <span className="text-white font-black text-base tracking-wider select-none">PROCORE</span>
-
-        <button
-          type="button"
-          className="flex items-center gap-2 rounded px-2 py-1 hover:bg-white/10 transition-colors"
-        >
-          {/* Project thumbnail */}
-          <div className="w-8 h-8 rounded overflow-hidden shrink-0 bg-[#2E3A4E] flex items-center justify-center">
-            <div className="w-full h-full bg-gradient-to-br from-slate-600 to-slate-800" />
+            <div className="flex h-10 flex-col items-center justify-center p-2 rounded-md">
+              <div className="relative" style={{ width: 106, height: 14 }}>
+                <img src={procoreLogoText} alt="Procore" className="absolute inset-0 size-full" />
+                <img
+                  src={procoreLogoHex}
+                  alt=""
+                  className="absolute"
+                  style={{ left: 50.68, top: 4.69, width: 5.11, height: 4.61 }}
+                />
+              </div>
+            </div>
           </div>
-          <div className="flex flex-col items-start leading-tight">
-            <span className="text-[10px] text-white/60">Vertigo Construction</span>
-            <span className="text-sm font-semibold text-white">Seattle Corridor Railway</span>
-          </div>
-          <ChevronDown size={14} className="text-white/60 ml-1" />
-        </button>
-      </div>
 
-      {/* Center: Search */}
-      <div className="flex-1 flex justify-center">
-        <button
-          type="button"
-          className="flex items-center gap-2 rounded px-3 h-8 w-full max-w-md hover:bg-white/10 transition-colors"
-          style={{ backgroundColor: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}
-        >
-          {/* Spark icon */}
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 1L9.5 6.5L15 8L9.5 9.5L8 15L6.5 9.5L1 8L6.5 6.5L8 1Z" fill="#F59E0B" />
-          </svg>
-          <span className="text-sm text-white/50 flex-1 text-left">Search or Ask a Question</span>
-          <div className="flex items-center gap-0.5">
-            <span className="text-[10px] text-white/40 bg-white/10 rounded px-1 py-0.5">Ctrl</span>
-            <span className="text-[10px] text-white/40 bg-white/10 rounded px-1 py-0.5">K</span>
-          </div>
-        </button>
-      </div>
-
-      {/* Right: Apps + icons + avatar + company */}
-      <div className="flex items-center gap-3">
-        <button type="button" className="flex flex-col items-start hover:bg-white/10 rounded px-2 py-0.5 transition-colors">
-          <span className="text-[10px] text-white/50 leading-none">Apps</span>
-          <div className="flex items-center gap-1">
-            <span className="text-sm text-white font-medium">Select an App</span>
-            <ChevronDown size={12} className="text-white/60" />
-          </div>
-        </button>
-
-        <div className="flex items-center gap-1">
-          <button type="button" className="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 transition-colors text-white/70">
-            <HelpCircle size={18} />
-          </button>
-          <button type="button" className="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 transition-colors text-white/70">
-            <MessageSquare size={18} />
-          </button>
-          <button type="button" className="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 transition-colors text-white/70">
-            <Bell size={18} />
+          <button type="button" className="flex items-start hover:opacity-90 transition-opacity">
+            <div
+              className="flex items-center gap-1 p-0.5 rounded-md"
+              style={{ backgroundColor: COLOR_INPUT_REVERSED }}
+            >
+              <div className="size-9 rounded overflow-hidden shrink-0">
+                <img src={projectThumb} alt="" className="size-full object-cover" />
+              </div>
+              <div className="flex flex-col items-start pl-0.5 text-left whitespace-nowrap">
+                <span className="font-normal text-xs leading-4 tracking-[0.25px]" style={{ color: COLOR_TEXT_REVERSED_TERTIARY }}>
+                  Vertigo Construction
+                </span>
+                <span className="font-semibold text-sm leading-5 tracking-[0.15px] text-white">
+                  Seattle Corridor Railway
+                </span>
+              </div>
+              <NavIcon src={caretDownIcon} w={10} h={5} />
+            </div>
           </button>
         </div>
 
-        {/* Avatar */}
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 shrink-0" />
-
-        {/* Company badge */}
-        <div
-          className="flex items-center gap-1.5 rounded px-2 py-1"
-          style={{ backgroundColor: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }}
+        {/* Center: Helix search */}
+        <button
+          type="button"
+          className="flex items-center gap-5 min-w-[325px] max-w-[374px] w-[325px] p-2 rounded-md bg-white overflow-hidden"
         >
-          <div className="w-5 h-5 rounded bg-orange-500 flex items-center justify-center shrink-0">
-            <span className="text-[8px] text-white font-bold">V</span>
+          <div className="flex flex-1 items-center gap-0.5 min-w-0">
+            <NavIcon src={copilotIcon} w={20} h={20} />
+            <span
+              className="flex-1 min-w-0 text-left truncate font-normal text-sm leading-5 tracking-[0.15px]"
+              style={{ color: COLOR_TEXT_SECONDARY }}
+            >
+              Search or Ask a Question
+            </span>
           </div>
-          <span className="text-xs text-white font-medium">Vertigo</span>
+          <div className="flex items-center justify-end gap-0.5 shrink-0">
+            <span className="flex items-center px-1.5 rounded-sm" style={{ backgroundColor: COLOR_BG_TERTIARY }}>
+              <span className="text-[10px] leading-4 tracking-[0.4px]" style={{ color: COLOR_TEXT_PRIMARY }}>Ctrl</span>
+            </span>
+            <span className="flex items-center px-1.5 rounded-sm" style={{ backgroundColor: COLOR_BG_TERTIARY }}>
+              <span className="text-[10px] leading-4 tracking-[0.4px]" style={{ color: COLOR_TEXT_PRIMARY }}>K</span>
+            </span>
+          </div>
+        </button>
+
+        {/* Right: Apps + icons + avatar + company */}
+        <div className="flex items-center gap-2">
+          <button type="button" className="flex items-start hover:opacity-90 transition-opacity">
+            <div
+              className="flex items-center gap-1 pl-1.5 pr-0.5 py-0.5 rounded-md"
+              style={{ backgroundColor: COLOR_INPUT_REVERSED }}
+            >
+              <div className="flex flex-col items-start pl-0.5 text-left whitespace-nowrap">
+                <span className="font-normal text-xs leading-4 tracking-[0.25px]" style={{ color: COLOR_TEXT_REVERSED_TERTIARY }}>
+                  Apps
+                </span>
+                <span className="font-semibold text-sm leading-5 tracking-[0.15px] text-white">
+                  Select an App
+                </span>
+              </div>
+              <NavIcon src={caretDownIcon} w={10} h={5} />
+            </div>
+          </button>
+
+          <button type="button" className="flex items-center justify-center p-1.5 rounded size-10 hover:bg-white/10 transition-colors">
+            <NavIcon src={helpIcon} w={21} h={21} alt="Help" />
+          </button>
+          <button type="button" className="flex items-center justify-center p-1.5 rounded size-10 hover:bg-white/10 transition-colors">
+            <NavIcon src={commentsIcon} w={20} h={20} alt="Comments" />
+          </button>
+          <button type="button" className="flex items-center justify-center p-1.5 rounded size-10 hover:bg-white/10 transition-colors">
+            <NavIcon src={bellIcon} w={17} h={20} alt="Notifications" />
+          </button>
+
+          <div className="flex items-center gap-2 max-w-[250px] max-h-10">
+            <button type="button" className="flex shrink-0">
+              <span className="block size-10 rounded-full overflow-hidden">
+                <img src={avatarImg} alt="" className="size-full object-cover" />
+              </span>
+            </button>
+            <button
+              type="button"
+              className="flex h-10 w-[92px] max-w-[108px] items-center justify-center rounded-md bg-white overflow-hidden"
+            >
+              <img src={companyLogo} alt="Vertigo" className="object-contain" style={{ width: 81.524, height: 23.012 }} />
+            </button>
+          </div>
         </div>
       </div>
     </div>

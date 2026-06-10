@@ -21,6 +21,7 @@ const MODELS: readonly ModelEntry[] = [
   { id: 'data-center', label: 'Data Center', url: '/models/data-center.frag.gz' },
   { id: 'tower',       label: 'Tower',       url: '/models/tower.frag.gz' },
   { id: 'vortex',      label: 'Vortex Architectural', url: '/models/vortex-architectural.frag.gz' },
+  { id: 'duplex',      label: 'Duplex',      url: '/models/duplex.frag.gz' },
 ] as const;
 
 const DEFAULT_MODEL = MODELS[0];

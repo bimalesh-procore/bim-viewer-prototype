@@ -219,6 +219,121 @@ export class IFCLoader {
     return out;
   }
 
+  /**
+   * Restore IFC properties saved alongside a .frag.gz model.
+   * The converter writes `<name>.props.json.gz`; we fetch it and call
+   * model.setLocalProperties so getLocalProperties() works after load.
+   */
+  async _restoreProperties(model, url) {
+    if (!url || typeof model.setLocalProperties !== 'function') return;
+    try {
+      const base = url.split('?')[0];
+      const propsUrl = base.replace(/\.frag(\.gz)?$/i, '.props.json.gz');
+      if (propsUrl === base) return; // not a frag URL
+
+      const res = await fetch(propsUrl, { cache: 'no-cache' });
+      if (!res.ok) {
+        console.warn(`[IFCLoader] No properties file at ${propsUrl} (status ${res.status}). Element types will be unavailable — re-run \`npm run convert\` on the source IFC.`);
+        return;
+      }
+
+      // Vite serves .gz with Content-Encoding: gzip (browser auto-decompresses),
+      // so .json() usually works. Fall back to manual gunzip if a server hands
+      // back the raw gzip bytes.
+      let props;
+      try {
+        props = await res.clone().json();
+      } catch {
+        const raw = new Uint8Array(await res.arrayBuffer());
+        const isGzip = raw.length >= 2 && raw[0] === 0x1f && raw[1] === 0x8b;
+        const bytes = isGzip ? await this._decompressGzip(raw) : raw;
+        props = JSON.parse(new TextDecoder().decode(bytes));
+      }
+
+      if (props && typeof props === 'object') {
+        model.setLocalProperties(props);
+        console.log(`[IFCLoader] Restored ${Object.keys(props).length} property entities from ${propsUrl}`);
+      }
+    } catch (err) {
+      console.warn('[IFCLoader] Property restore failed:', err);
+    }
+  }
+
+  /**
+   * Resolve a numeric web-ifc type code (e.g. IfcWall's code) to a readable
+   * name (e.g. "IfcWall"). Lazily builds the code→name map from web-ifc.
+   */
+  _ifcTypeName(code) {
+    if (!this._ifcTypeMap) {
+      this._ifcTypeMap = new Map();
+      try {
+        for (const [key, val] of Object.entries(WEBIFC)) {
+          if (typeof val === 'number' && key.startsWith('IFC') && key === key.toUpperCase()) {
+            const pretty = 'Ifc' + key.slice(3).toLowerCase()
+              .replace(/(^|[^a-z])([a-z])/g, (_, pre, c) => pre + c.toUpperCase())
+              .replace(/standardcase/i, 'StandardCase')
+              .replace(/elementedcase/i, 'ElementedCase');
+            this._ifcTypeMap.set(val, pretty);
+          }
+        }
+      } catch {
+        // web-ifc unavailable — names will fall back to IFC_<code>
+      }
+    }
+    if (typeof code === 'number') {
+      return this._ifcTypeMap.get(code) || `IFC_${code}`;
+    }
+    return code ? String(code) : 'Unknown';
+  }
+
+  /**
+   * Stamp type/name/expressID onto each fragment mesh's userData from the
+   * model's local properties, so all mesh-userData-based consumers (Object
+   * Tree, Selection, Search engine) can read element identity.
+   *
+   * In the FragmentsGroup model, a Fragment groups instances of one geometry;
+   * its `ids` are the elements it contains. We stamp the first id as the
+   * representative for the mesh (single-element meshes are the common case;
+   * instanced groups share a type), matching how Selection already treats a
+   * mesh as one selectable unit.
+   */
+  _stampMeshUserData(model) {
+    const props = typeof model.getLocalProperties === 'function'
+      ? model.getLocalProperties()
+      : null;
+    if (!props) return;
+
+    const fragments = model.items || [];
+    let stamped = 0;
+    for (const fragment of fragments) {
+      const mesh = fragment?.mesh;
+      if (!mesh || !fragment.ids || fragment.ids.size === 0) continue;
+
+      const firstId = fragment.ids.values().next().value;
+      const p = props[firstId];
+      if (!p) continue;
+
+      const typeName = this._ifcTypeName(p.type);
+      const rawName = p.Name?.value ?? p.LongName?.value ?? null;
+      // NOTE: do NOT stamp expressID here. Selection.getElementId() falls back
+      // to mesh.uuid when expressID is absent, and the search engine's
+      // fragments-properties path maps matched expressIDs → mesh.uuid for
+      // selection. Stamping a numeric expressID would make getElementId return
+      // a number that no longer matches that uuid mapping. We only need
+      // type/name on userData so the Object Tree can group elements.
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        type: typeName,
+        ifcType: typeName,
+        name: rawName || typeName,
+      };
+      stamped++;
+    }
+    if (stamped > 0) {
+      console.log(`[IFCLoader] Stamped userData (type/name) on ${stamped} fragment meshes.`);
+    }
+  }
+
   async loadModelFromFile(file, name) {
     // Ensure init() has completed before loading
     await this._initPromise;
@@ -259,6 +374,18 @@ export class IFCLoader {
       const model = format === 'frag'
         ? this.fragmentsManager.load(buffer)
         : await this.ifcLoader.load(buffer);
+
+      // .frag export carries geometry only — restore the IFC properties from
+      // the sibling .props.json.gz so element types/names are available.
+      // (IFC path already has properties from the web-ifc parse.)
+      if (format === 'frag') {
+        await this._restoreProperties(model, url);
+      }
+      // Stamp per-element type/name/expressID onto the fragment meshes so the
+      // Object Tree, Selection, and Search engine (all mesh-userData based)
+      // can read them. See CONTEXT/CLAUDE notes on fragments-v3 instancing.
+      this._stampMeshUserData(model);
+
       this.sceneManager.add(model);
 
       this.loadedModels.set(modelId, {

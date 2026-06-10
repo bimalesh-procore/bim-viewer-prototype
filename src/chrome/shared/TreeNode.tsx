@@ -18,6 +18,8 @@ export interface TreeNodeProps {
   checked?: boolean;
   onCheckedChange?: (id: string, checked: boolean) => void;
   loading?: boolean;
+  /** Replace the checkbox with a spinner (e.g. while a row-level save is in flight). */
+  spinner?: boolean;
   selected?: boolean;
   onClick?: (id: string) => void;
   // leaf
@@ -27,12 +29,16 @@ export interface TreeNodeProps {
   actions?: React.ReactNode;
   /** When true, actions are hidden until the row is hovered or selected. Default false. */
   showActionsOnHover?: boolean;
+  /** When true (and showActionsOnHover is true), selection alone does not reveal actions — hover is required. Default false. */
+  hideActionsOnSelect?: boolean;
   /** Custom hover background color. When omitted, falls back to a subtle gray. */
   hoverBg?: string;
   /** Optional subtitle rendered below the label (switches row to top-align). */
   subtitle?: string;
   /** Hide the folder icon (folder rows only). Default false. */
   hideFolderIcon?: boolean;
+  /** Hide the expand/collapse chevron (e.g. empty folders with no children). Default false. */
+  hideChevron?: boolean;
   /** Render the label at base size and bold, regardless of selection state. */
   labelBold?: boolean;
   // inline rename — all three props required together to enable rename mode
@@ -68,15 +74,18 @@ export function TreeNode({
   checked = false,
   onCheckedChange,
   loading = false,
+  spinner = false,
   selected = false,
   onClick,
   onDoubleClick,
   onContextMenu,
   actions,
   showActionsOnHover = false,
+  hideActionsOnSelect = false,
   hoverBg,
   subtitle,
   hideFolderIcon = false,
+  hideChevron = false,
   labelBold = false,
   isRenaming = false,
   renameValue = '',
@@ -131,7 +140,7 @@ export function TreeNode({
     );
   }
 
-  const actionsVisible = !showActionsOnHover || hovered || selected || isDirty;
+  const actionsVisible = !showActionsOnHover || hovered || (!hideActionsOnSelect && selected) || isDirty;
 
   return (
     <>
@@ -149,7 +158,7 @@ export function TreeNode({
           style={{
             paddingLeft, paddingRight: 12, paddingTop: 8, paddingBottom: 8,
             backgroundColor: selected || isDropTarget
-              ? '#EDF2FC'
+              ? '#F6F9FE'
               : isDirty
                 ? hovered ? '#DCDDE0' : '#E8E9EB'
                 : hovered
@@ -158,13 +167,22 @@ export function TreeNode({
           }}
           draggable={draggable}
           onClick={() => onClick?.(id)}
-          onDoubleClick={() => !isFolder && onDoubleClick?.(id, label)}
+          onDoubleClick={() => onDoubleClick?.(id, label)}
           onContextMenu={(e) => !isFolder && onContextMenu?.(e, id)}
-          onDragStart={onDragStart ? (e) => { e.stopPropagation(); onDragStart(id); } : undefined}
+          onDragStart={onDragStart ? (e) => {
+            e.stopPropagation();
+            // Required for Firefox to initiate a native drag; also sets the move cursor.
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = 'move';
+              try { e.dataTransfer.setData('text/plain', id); } catch { /* some browsers disallow during synthetic events */ }
+            }
+            onDragStart(id);
+          } : undefined}
           onDragEnd={onDragEnd ? () => onDragEnd(id) : undefined}
           onDragOver={onDragOver ? (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
             const rect = e.currentTarget.getBoundingClientRect();
             const ratio = (e.clientY - rect.top) / rect.height;
             let pos: 'before' | 'after' | 'inside';
@@ -181,22 +199,35 @@ export function TreeNode({
           onDrop={onDrop ? (e) => { e.preventDefault(); e.stopPropagation(); onDrop(id); } : undefined}
         >
           {showCheckbox && (
-            <button
-              type="button"
-              role="checkbox"
-              aria-checked={checkboxState === 'indeterminate' ? 'mixed' : checkboxState === 'checked'}
-              disabled={loading}
-              onClick={(e) => { e.stopPropagation(); onCheckedChange?.(id, !checked); }}
-              className={`shrink-0 size-5 rounded-[2px] flex items-center justify-center transition-colors ${subtitle ? 'mt-0.5' : ''} ${
-                checkboxState === 'unchecked' ? 'bg-white border-2 border-[#6A767C]' : 'bg-[#2066DF]'
-              } ${loading ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
-            >
-              {checkboxState === 'checked' && <Check size={10} strokeWidth={3} className="text-white" />}
-              {checkboxState === 'indeterminate' && <span className="block w-[6px] h-[1.5px] bg-white" />}
-            </button>
+            spinner ? (
+              <span
+                className={`shrink-0 size-5 flex items-center justify-center ${subtitle ? 'mt-0.5' : ''}`}
+                role="status"
+                aria-label="Saving"
+              >
+                <svg className="animate-spin size-4 text-[#2066DF]" viewBox="0 0 16 16" fill="none">
+                  <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
+                  <path d="M8 1.5a6.5 6.5 0 0 1 6.5 6.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </span>
+            ) : (
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={checkboxState === 'indeterminate' ? 'mixed' : checkboxState === 'checked'}
+                disabled={loading}
+                onClick={(e) => { e.stopPropagation(); onCheckedChange?.(id, !checked); }}
+                className={`shrink-0 size-5 rounded-[2px] flex items-center justify-center transition-colors ${subtitle ? 'mt-0.5' : ''} ${
+                  checkboxState === 'unchecked' ? 'bg-white border-2 border-[#6A767C]' : 'bg-[#2066DF]'
+                } ${loading ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                {checkboxState === 'checked' && <Check size={14} strokeWidth={3} className="text-white" />}
+                {checkboxState === 'indeterminate' && <span className="block w-[10px] h-[2px] bg-white" />}
+              </button>
+            )
           )}
 
-          {isFolder && (
+          {isFolder && !hideChevron && (
             <button
               type="button"
               className="w-6 h-6 flex items-center justify-center shrink-0"
@@ -213,18 +244,18 @@ export function TreeNode({
             <span className="flex-1 ml-1 h-3.5 rounded bg-gray-200 mv-skeleton-pulse" style={{ maxWidth: 120 }} />
           ) : subtitle ? (
             <div className="flex-1 min-w-0 ml-1">
-              <p className={`text-sm truncate ${selected || labelBold || isDirty ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : isDirty ? '#111827' : '#374151' }}>
+              <p className={`text-sm truncate ${selected ? 'font-bold' : labelBold || isDirty ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : isDirty ? '#111827' : '#374151' }}>
                 {label}
               </p>
               <p className="text-xs truncate" style={{ color: '#6A767C' }}>{subtitle}</p>
             </div>
           ) : (
-            <span className={`truncate flex-1 ml-1 ${labelBold ? 'text-base' : 'text-sm'} ${selected || labelBold || isDirty ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : isDirty ? '#111827' : '#374151' }}>
+            <span className={`truncate flex-1 ml-1 ${labelBold ? 'text-base' : 'text-sm'} ${selected ? 'font-bold' : labelBold || isDirty ? 'font-semibold' : ''}`} style={{ color: selected ? '#1D5CC9' : isDirty ? '#111827' : '#374151' }}>
               {label}
             </span>
           )}
 
-          {!loading && !isFolder && actions && (
+          {!loading && actions && (
             <div className={`flex items-center gap-0.5 shrink-0 ${actionsVisible ? '' : 'invisible'}`}>
               {actions}
             </div>

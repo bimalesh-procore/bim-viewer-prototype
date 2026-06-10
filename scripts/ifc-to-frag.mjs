@@ -52,4 +52,25 @@ console.log(`Uncompressed: ${(fragData.length / 1024 / 1024).toFixed(1)} MB`);
 console.log(`Compressed:   ${(compressed.length / 1024 / 1024).toFixed(1)} MB  →  ${outputPath}`);
 
 writeFileSync(outputPath, compressed);
+
+// FragmentsManager.export() serializes ONLY geometry — the IFC properties
+// (element types, names, psets) are dropped. Without them, getLocalProperties()
+// returns nothing on load, so the Object Tree shows "Unknown" and search sets
+// can't match by type. Export the properties as a sibling gzipped JSON so the
+// loader can restore them (model.setLocalProperties) after load.
+const props = model.getLocalProperties?.();
+if (props && Object.keys(props).length > 0) {
+  const propsName = basename(absInput, '.ifc') + '.props.json.gz';
+  const propsPath = resolve(projectRoot, 'public/models', propsName);
+  const propsJson = JSON.stringify(props);
+  const propsCompressed = gzipSync(Buffer.from(propsJson, 'utf-8'));
+  writeFileSync(propsPath, propsCompressed);
+  console.log(
+    `Properties:   ${Object.keys(props).length} entities, ` +
+    `${(propsCompressed.length / 1024 / 1024).toFixed(2)} MB  →  ${propsPath}`,
+  );
+} else {
+  console.warn('Properties:   none found on model — Object Tree/Search will be type-less.');
+}
+
 console.log('Done.');

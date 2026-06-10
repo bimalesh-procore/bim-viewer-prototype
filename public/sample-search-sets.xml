@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Sample Navisworks-format Search Sets export.
+
+  Use this file to exercise the "Import using .xml" flow in the
+  Search Sets panel. Each <selectionset> defines one saved search;
+  conditions evaluate against IFC element properties (IfcEntityType,
+  Name, predefined type, etc.).
+
+  Schema follows the Autodesk Navisworks "exchange" XML format so
+  files round-trip with NW/Naviate exports.
+
+  NOTE: Folder nesting is preserved — <selectionset> nodes without a
+  <findspec> child are treated as folders; those with a <findspec>
+  are leaf search sets. The import tree mirrors this structure exactly.
+-->
+<exchange xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" units="m" filename="sample-search-sets.xml">
+  <selectionsets>
+
+    <!-- ─── Architectural ──────────────────────────────────────────────── -->
+    <selectionset name="Architectural" guid="aaaa0000-0000-0000-0000-000000000000">
+      <selectionset name="All Walls" guid="11111111-1111-1111-1111-000000000001">
+        <findspec mode="all" disjoint="0">
+          <conditions>
+            <condition test="equals" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseClassUserName">Type</name>
+              </property>
+              <value>
+                <data type="wstring">IfcWall</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+
+      <selectionset name="All Doors" guid="11111111-1111-1111-1111-000000000002">
+        <findspec mode="all" disjoint="0">
+          <conditions>
+            <condition test="equals" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseClassUserName">Type</name>
+              </property>
+              <value>
+                <data type="wstring">IfcDoor</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+
+      <selectionset name="All Windows" guid="11111111-1111-1111-1111-000000000003">
+        <findspec mode="all" disjoint="0">
+          <conditions>
+            <condition test="equals" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseClassUserName">Type</name>
+              </property>
+              <value>
+                <data type="wstring">IfcWindow</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+    </selectionset>
+
+    <!-- ─── Structural ─────────────────────────────────────────────────── -->
+    <selectionset name="Structural" guid="bbbb0000-0000-0000-0000-000000000000">
+      <selectionset name="Structural Beams" guid="22222222-2222-2222-2222-000000000001">
+        <findspec mode="all" disjoint="0">
+          <conditions>
+            <condition test="equals" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseClassUserName">Type</name>
+              </property>
+              <value>
+                <data type="wstring">IfcBeam</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+
+      <selectionset name="Structural Columns" guid="22222222-2222-2222-2222-000000000002">
+        <findspec mode="all" disjoint="0">
+          <conditions>
+            <condition test="equals" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseClassUserName">Type</name>
+              </property>
+              <value>
+                <data type="wstring">IfcColumn</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+
+      <selectionset name="Floor Slabs" guid="22222222-2222-2222-2222-000000000003">
+        <findspec mode="all" disjoint="0">
+          <conditions>
+            <condition test="equals" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseClassUserName">Type</name>
+              </property>
+              <value>
+                <data type="wstring">IfcSlab</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+    </selectionset>
+
+    <!-- ─── MEP ────────────────────────────────────────────────────────── -->
+    <selectionset name="MEP" guid="cccc0000-0000-0000-0000-000000000000">
+      <selectionset name="HVAC Ducts &amp; Pipes" guid="33333333-3333-3333-3333-000000000001">
+        <findspec mode="any" disjoint="0">
+          <conditions>
+            <condition test="equals" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseClassUserName">Type</name>
+              </property>
+              <value>
+                <data type="wstring">IfcFlowSegment</data>
+              </value>
+            </condition>
+            <condition test="equals" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseClassUserName">Type</name>
+              </property>
+              <value>
+                <data type="wstring">IfcFlowTerminal</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+
+      <selectionset name="Plumbing Fixtures" guid="33333333-3333-3333-3333-000000000002">
+        <findspec mode="all" disjoint="0">
+          <conditions>
+            <condition test="equals" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseClassUserName">Type</name>
+              </property>
+              <value>
+                <data type="wstring">IfcFlowController</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+    </selectionset>
+
+    <!-- ─── Level / Storey scoped ──────────────────────────────────────── -->
+    <selectionset name="By Level" guid="dddd0000-0000-0000-0000-000000000000">
+      <selectionset name="Level 1 — All Elements" guid="44444444-4444-4444-4444-000000000001">
+        <findspec mode="all" disjoint="0">
+          <conditions>
+            <condition test="contains" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseUserName">Name</name>
+              </property>
+              <value>
+                <data type="wstring">Level 1</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+
+      <selectionset name="Level 2 — All Elements" guid="44444444-4444-4444-4444-000000000002">
+        <findspec mode="all" disjoint="0">
+          <conditions>
+            <condition test="contains" flags="0">
+              <category>
+                <name internal="LcOaSceneBaseUserName">Element</name>
+              </category>
+              <property>
+                <name internal="LcOaSceneBaseUserName">Name</name>
+              </property>
+              <value>
+                <data type="wstring">Level 2</data>
+              </value>
+            </condition>
+          </conditions>
+          <locator>/</locator>
+        </findspec>
+      </selectionset>
+    </selectionset>
+
+    <!-- ─── Site / Civil ───────────────────────────────────────────────── -->
+    <selectionset name="Site Elements" guid="55555555-5555-5555-5555-000000000001">
+      <findspec mode="all" disjoint="0">
+        <conditions>
+          <condition test="equals" flags="0">
+            <category>
+              <name internal="LcOaSceneBaseUserName">Element</name>
+            </category>
+            <property>
+              <name internal="LcOaSceneBaseClassUserName">Type</name>
+            </property>
+            <value>
+              <data type="wstring">IfcSite</data>
+            </value>
+          </condition>
+        </conditions>
+        <locator>/</locator>
+      </findspec>
+    </selectionset>
+
+  </selectionsets>
+</exchange>

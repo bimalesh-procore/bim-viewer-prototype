@@ -2,6 +2,22 @@ export interface SearchSet {
   id: string;
   name: string;
   createdAt: string;
+  /** Display name of the file/group the set was imported from. */
+  source?: string;
+  /** Folder hierarchy from the import tree (e.g. ["By Level", "Floor 1"]). */
+  folderPath?: string[];
+  /** Parsed condition tree evaluated by SearchQueryEngine. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  conditions?: any;
+}
+
+/** A user-created folder that holds no sets yet. Persisted separately from sets
+ *  because regular folders are derived from each set's source/folderPath. */
+export interface SearchSetFolder {
+  id: string;
+  name: string;
+  /** Id of the parent extra-folder, if this folder was created nested inside one. */
+  parentId?: string;
 }
 
 export type InteractionMode = 'select' | 'orbit' | 'fly';
@@ -189,8 +205,23 @@ export interface ViewerAdapter {
   toggleIsolationMode?(): void;
   toggleSearchSetsPanel?(): void;
   getSearchSets?(): SearchSet[];
-  executeSearchSet?(id: string): void;
+  /** Execute a saved search set and select its matches. Returns the match count. */
+  executeSearchSet?(id: string, options?: { additive?: boolean }): number;
   deleteSearchSet?(id: string): void;
+  /** Save (create or update) a search set; returns the persisted record with id + timestamps. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  saveSearchSet?(set: { id?: string; name: string; source?: string; folderPath?: string[]; conditions?: any }): SearchSet;
+  /** Subscribe to search-set list changes. Listener is invoked immediately with the current list. */
+  subscribeSearchSets?(listener: (sets: SearchSet[]) => void): () => void;
+  /** Empty folders the user created that hold no sets yet (folders are otherwise
+   *  derived from a set's source/folderPath, so an empty one needs its own store). */
+  getSearchSetFolders?(): SearchSetFolder[];
+  saveSearchSetFolder?(folder: SearchSetFolder): void;
+  deleteSearchSetFolder?(id: string): void;
+  /** Explicit item ordering for drag-and-drop. Shape: { [parentKey: string]: string[] }
+   *  where parentKey is '' for the root level or the folder id. */
+  getSearchSetOrder?(): Record<string, string[]>;
+  saveSearchSetOrder?(orderMap: Record<string, string[]>): void;
   getObjectStreamingState?(): ObjectStreamingState;
   subscribeObjectStreamingState?(
     listener: (state: ObjectStreamingState) => void,

@@ -199,7 +199,7 @@ export function DockedPanel({
       {/* Header — grabbing here triggers the drag */}
       <div
         className={`flex items-start justify-between px-4 pt-4 pb-4 bg-white ${isDetached ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} shrink-0 ${
-          minimized ? '' : 'border-b border-[#d6dadc]'
+          minimized || toolbar ? '' : 'border-b border-[#d6dadc]'
         }`}
         onPointerDown={isDetached ? undefined : onDragStart}
       >
@@ -383,7 +383,7 @@ export function DockedPanel({
       {!minimized && (
         <div
           className={`flex-1 overflow-y-auto min-h-0 ${
-            contentVariant === 'padded' ? 'bg-[#F4F5F6] p-4' : 'bg-white'
+            contentVariant === 'padded' ? 'bg-white p-4' : 'bg-white'
           }`}
         >
           {children}

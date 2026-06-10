@@ -57,6 +57,34 @@ export class SearchSets {
     return this.save(existing);
   }
 
+  // ── Empty folders ─────────────────────────────────────────────
+
+  getFolders() {
+    return this.storage.getFolders();
+  }
+
+  saveFolder(folder) {
+    const saved = this.storage.saveFolder(folder);
+    this.emit('folder-saved', saved);
+    return saved;
+  }
+
+  deleteFolder(id) {
+    this.storage.deleteFolder(id);
+    this.emit('folder-deleted', { id });
+  }
+
+  // ── Ordering (drag-and-drop) ──────────────────────────────────
+
+  getOrder() {
+    return this.storage.getOrder();
+  }
+
+  saveOrder(orderMap) {
+    this.storage.saveOrder(orderMap);
+    this.emit('order-saved', orderMap);
+  }
+
   // ── Execution ─────────────────────────────────────────────────
 
   execute(searchSetOrId) {
@@ -77,11 +105,14 @@ export class SearchSets {
     return results;
   }
 
-  executeAndSelect(searchSetOrId) {
+  executeAndSelect(searchSetOrId, options = {}) {
+    const additive = options.additive === true;
     const results = this.execute(searchSetOrId);
 
     if (this.selection) {
-      this.selection.deselect();
+      // Only clear the existing selection on a fresh (non-additive) run so
+      // running multiple sets in sequence accumulates their elements.
+      if (!additive) this.selection.deselect();
       if (results.length > 0) {
         // Convert expressIDs to mesh UUIDs that Selection can resolve
         const selectableIds = this.engine.toSelectableIds(results);

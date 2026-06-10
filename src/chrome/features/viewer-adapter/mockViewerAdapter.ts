@@ -67,11 +67,39 @@ export const mockViewerAdapter: ViewerAdapter = {
     log('getSearchSets');
     return [];
   },
-  executeSearchSet(id: string) {
-    log('executeSearchSet', id);
+  executeSearchSet(id: string, options?: { additive?: boolean }) {
+    log('executeSearchSet', id, options);
+    return 0;
   },
   deleteSearchSet(id: string) {
     log('deleteSearchSet', id);
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  saveSearchSet(set: { id?: string; name: string; source?: string; conditions?: any }) {
+    log('saveSearchSet', set);
+    return { id: set.id ?? `mock-${Date.now()}`, name: set.name, createdAt: new Date().toISOString(), source: set.source, conditions: set.conditions };
+  },
+  subscribeSearchSets(listener: (sets: import('./types').SearchSet[]) => void) {
+    log('subscribeSearchSets');
+    listener([]);
+    return () => {};
+  },
+  getSearchSetFolders() {
+    log('getSearchSetFolders');
+    return [];
+  },
+  saveSearchSetFolder(folder: { id: string; name: string }) {
+    log('saveSearchSetFolder', folder);
+  },
+  deleteSearchSetFolder(id: string) {
+    log('deleteSearchSetFolder', id);
+  },
+  getSearchSetOrder() {
+    log('getSearchSetOrder');
+    return {};
+  },
+  saveSearchSetOrder(orderMap: Record<string, string[]>) {
+    log('saveSearchSetOrder', orderMap);
   },
   togglePropertiesPanel() {
     log('togglePropertiesPanel');

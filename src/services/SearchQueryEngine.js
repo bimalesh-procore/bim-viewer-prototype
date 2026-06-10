@@ -41,22 +41,41 @@ export class SearchQueryEngine {
     // Maps numeric expressID → mesh UUID(s) that contain the element
     this._expressIdToMeshUuids = new Map();
 
-    // Path 1 — IFC models from @thatopen/components
+    // Path 1 (primary) — fragments local properties. The loader restores the
+    // full IFC properties (setLocalProperties) for .frag models, so this gives
+    // complete type/name/property-set data for searching, and builds an
+    // expressID → mesh-uuid map so matches resolve to selectable meshes
+    // (Selection.getElementId falls back to mesh.uuid). Preferred whenever a
+    // model actually exposes properties.
     if (this.ifcLoader) {
       const models = this.ifcLoader.getLoadedModels();
       for (const modelInfo of models) {
         const modelData = this.ifcLoader.getModel(modelInfo.id);
-        if (!modelData?.model) continue;
-        this._indexFragmentsGroup(modelData.model);
+        const model = modelData?.model;
+        if (!model) continue;
+        const props = model.getLocalProperties?.();
+        if (props && Object.keys(props).length > 0) {
+          this._indexFragmentsGroup(model);
+        }
       }
     }
 
-    // Path 2 — fallback: plain meshes with userData (mock scenes)
+    // Path 2 (fallback) — scan scene meshes for stamped userData (type/name).
+    // Used for mock scenes, or models whose properties weren't restored (older
+    // .frag.gz files without a .props.json.gz sidecar).
     if (this._index.size === 0) {
       this._indexMeshUserData();
     }
 
     console.log(`[SearchQueryEngine] Index built — ${this._index.size} elements`);
+    // Log distinct element types so search-set conditions can be verified
+    const typeSample = new Set();
+    for (const [, rec] of this._index) {
+      const t = rec.props.Element?.type;
+      if (t) typeSample.add(t);
+      if (typeSample.size >= 20) break;
+    }
+    console.log('[SearchQueryEngine] Sample element types in model:', [...typeSample]);
   }
 
   /**
@@ -66,6 +85,14 @@ export class SearchQueryEngine {
     if (!this._index || this._index.size === 0) {
       this.buildIndex();
     }
+
+    const conditions = searchSet.conditions;
+    if (!conditions || !Array.isArray(conditions.rules) || conditions.rules.length === 0) {
+      console.warn('[SearchQueryEngine] Search set has no conditions — returning 0 matches.', searchSet.name);
+      return [];
+    }
+
+    console.log('[SearchQueryEngine] Executing set:', searchSet.name, 'conditions:', JSON.stringify(conditions));
 
     let entries = [...this._index.entries()];
 
@@ -78,7 +105,7 @@ export class SearchQueryEngine {
 
     const matchingIds = [];
     for (const [id, record] of entries) {
-      const matches = this._evaluateGroup(searchSet.conditions, record.props);
+      const matches = this._evaluateGroup(conditions, record.props);
       const invert = searchSet.mode === 'excluding';
       if (invert ? !matches : matches) {
         matchingIds.push(id);
@@ -270,12 +297,18 @@ export class SearchQueryEngine {
 
   _indexMeshUserData() {
     this.scene.traverse(obj => {
-      if (!obj.isMesh || !obj.visible) return;
-
+      if (!obj.isMesh) return;
+      // Skip selection-highlight / helper meshes (no IFC identity)
       const ud = obj.userData || {};
+      if (ud.isHighlight || ud.__helper) return;
+
       const id = ud.expressID ?? obj.uuid;
 
       let resolvedType = ud.type || ud.ifcType || '';
+      // Some loaders store the raw numeric IFC type code — resolve to a name.
+      if (typeof resolvedType === 'number') {
+        resolvedType = IFC_TYPE_MAP.get(resolvedType) || `IFC_${resolvedType}`;
+      }
       if (!resolvedType && obj.name) resolvedType = obj.name;
 
       let resolvedName = ud.name || obj.name || '';
@@ -337,14 +370,25 @@ export class SearchQueryEngine {
     const rawValue = catData[cond.property];
     const isDefined = rawValue !== undefined && rawValue !== null && rawValue !== '';
 
+    // For IFC type names, strip well-known suffix variants and compare
+    // case-insensitively so "IfcDoor" matches "IfcDoor", "IfcDoorStandardCase",
+    // "IFCDOOR", etc.
+    const normalize = (v) => String(v).replace(/(StandardCase|ElementedCase)$/i, '').trim().toLowerCase();
+
     switch (cond.operator) {
       case 'defined':
         return isDefined;
       case 'undefined':
         return !isDefined;
       case 'equals':
+        if (cond.property === 'type') {
+          return normalize(rawValue) === normalize(cond.value);
+        }
         return String(rawValue) === String(cond.value);
       case 'notEquals':
+        if (cond.property === 'type') {
+          return normalize(rawValue) !== normalize(cond.value);
+        }
         return String(rawValue) !== String(cond.value);
       case 'contains':
         return isDefined && String(rawValue).toLowerCase().includes(String(cond.value).toLowerCase());

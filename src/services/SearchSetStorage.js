@@ -5,6 +5,7 @@
 export class SearchSetStorage {
   constructor(storageKey = 'mv-search-sets') {
     this.storageKey = storageKey;
+    this.foldersKey = `${storageKey}-folders`;
     this._ensureDefaults();
   }
 
@@ -21,14 +22,78 @@ export class SearchSetStorage {
     localStorage.setItem(this.storageKey, JSON.stringify(sets));
   }
 
+  // ── Empty folders (folders that hold no sets yet) ──────────────
+  _readFolders() {
+    try {
+      const raw = localStorage.getItem(this.foldersKey);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  _writeFolders(folders) {
+    localStorage.setItem(this.foldersKey, JSON.stringify(folders));
+  }
+
+  getFolders() {
+    return this._readFolders();
+  }
+
+  saveFolder(folder) {
+    if (!folder?.id) return null;
+    const folders = this._readFolders();
+    const idx = folders.findIndex((f) => f.id === folder.id);
+    const stored = { id: folder.id, name: folder.name };
+    if (folder.parentId) stored.parentId = folder.parentId;
+    if (idx !== -1) folders[idx] = { ...folders[idx], ...stored };
+    else folders.push(stored);
+    this._writeFolders(folders);
+    return folder;
+  }
+
+  deleteFolder(id) {
+    this._writeFolders(this._readFolders().filter((f) => f.id !== id));
+  }
+
+  // ── Explicit item ordering (drag-and-drop order per folder level) ──
+  _orderKey() {
+    return `${this.storageKey}-order`;
+  }
+
+  getOrder() {
+    try {
+      const raw = localStorage.getItem(this._orderKey());
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Persist the complete order map. Shape: { [parentKey: string]: string[] }
+   *  where parentKey is '' for the root level or the folder id. */
+  saveOrder(orderMap) {
+    localStorage.setItem(this._orderKey(), JSON.stringify(orderMap));
+  }
+
   _ensureDefaults() {
     const existing = this._read();
-    // Always replace seed-* entries with latest SEED_DATA so schema changes propagate
-    const userSets = existing.filter(s => !s.id?.startsWith('seed-'));
-    if (existing.length === 0 || existing.some(s => s.id?.startsWith('seed-'))) {
-      this._write([...SearchSetStorage.SEED_DATA, ...userSets]);
-    } else if (existing.length === 0) {
-      this._write([...SearchSetStorage.SEED_DATA]);
+    // Strip seed entries and legacy imported sets that have no condition tree
+    // (imported before the XML condition parser was wired up). These would
+    // silently select the entire model on execute(), so we remove them so the
+    // user gets a clean prompt to re-import.
+    const userSets = existing.filter(s => {
+      if (s.id?.startsWith('seed-')) return false;
+      // Keep manually-created sets (no conditions expected) and sets with conditions.
+      // Remove sets that have a source (= imported from XML) but no conditions.
+      if (s.source && (!s.conditions || !Array.isArray(s.conditions?.rules) || s.conditions.rules.length === 0)) {
+        return false;
+      }
+      return true;
+    });
+    if (userSets.length !== existing.length) {
+      console.log(`[SearchSetStorage] Purged ${existing.length - userSets.length} legacy search set(s) with no conditions.`);
+      this._write(userSets);
     }
   }
 
@@ -74,50 +139,6 @@ export class SearchSetStorage {
   }
 
   static get SEED_DATA() {
-    return [
-      {
-        id: 'seed-walls',
-        name: 'All Walls',
-        createdAt: '2025-06-01T08:00:00Z',
-        updatedAt: '2025-06-01T08:00:00Z',
-        scope: { type: 'entireModel' },
-        mode: 'within',
-        conditions: {
-          logic: 'and',
-          rules: [
-            { type: 'condition', category: 'Element', property: 'type', operator: 'contains', value: 'Wall' }
-          ]
-        }
-      },
-      {
-        id: 'seed-slabs',
-        name: 'All Slabs',
-        createdAt: '2025-06-01T09:00:00Z',
-        updatedAt: '2025-06-01T09:00:00Z',
-        scope: { type: 'entireModel' },
-        mode: 'within',
-        conditions: {
-          logic: 'and',
-          rules: [
-            { type: 'condition', category: 'Element', property: 'type', operator: 'contains', value: 'Slab' }
-          ]
-        }
-      },
-      {
-        id: 'seed-doors-windows',
-        name: 'Doors & Windows',
-        createdAt: '2025-06-01T10:00:00Z',
-        updatedAt: '2025-06-01T10:00:00Z',
-        scope: { type: 'entireModel' },
-        mode: 'within',
-        conditions: {
-          logic: 'or',
-          rules: [
-            { type: 'condition', category: 'Element', property: 'type', operator: 'contains', value: 'Door' },
-            { type: 'condition', category: 'Element', property: 'type', operator: 'contains', value: 'Window' }
-          ]
-        }
-      }
-    ];
+    return [];
   }
 }

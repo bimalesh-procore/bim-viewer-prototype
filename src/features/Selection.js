@@ -357,10 +357,14 @@ export class Selection {
   selectByIds(elementIds) {
     const meshes = [];
 
+    // Compare as strings: ids from the search engine are stringified index
+    // keys, while getElementId may return a numeric expressID. Strict
+    // Array.includes would miss number↔string pairs, so normalize both sides.
+    const idSet = new Set((elementIds || []).map((id) => String(id)));
+
     this.scene.traverse((object) => {
       if (object.isMesh) {
-        const id = this.getElementId(object);
-        if (elementIds.includes(id)) {
+        if (idSet.has(String(this.getElementId(object)))) {
           meshes.push(object);
         }
       }

@@ -36,11 +36,12 @@ import { useViewerAdapter } from '../viewer-adapter/ViewerAdapterContext';
 import type { GlobalSearchObjectEntry } from '../viewer-adapter/types';
 import type { DockStore, PanelId, PanelState } from './useDockStore';
 import { useItemsView, goBackItemsView, resetItemsView } from '../../shared/useItemsView';
+import { useSearchSetsView, resetSearchSetsView } from '../../shared/useSearchSetsView';
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 const TOOLBAR_RIGHT_EDGE = 52;
 const DOCK_GAP           = 8;
-const DOCK_PANEL_WIDTH   = 320;
+const DOCK_PANEL_WIDTH   = 352;
 const EDGE_MARGIN        = 8;
 const DOCK_PAD           = 4;
 const DOCK_LEFT          = TOOLBAR_RIGHT_EDGE + DOCK_GAP;
@@ -99,6 +100,7 @@ interface DockManagerProps {
 export function DockManager({ store, deemphasized = false }: DockManagerProps) {
   const adapter = useViewerAdapter();
   const itemsView = useItemsView();
+  const searchSetsView = useSearchSetsView();
   const {
     openPanels,
     undockPanel,
@@ -122,12 +124,19 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
       // Reset internal view stack so reopening lands on the hub.
       resetItemsView();
     }
+    if (panelId === 'search-sets') {
+      // Cancel any in-progress import so reopening lands on the empty / list state.
+      resetSearchSetsView();
+    }
     closePanel(panelId);
   }, [adapter, closePanel]);
 
   const handleAddForPanel = useCallback((panelId: PanelId) => {
     if (panelId === 'views') {
       window.dispatchEvent(new CustomEvent('mv:views-open-create'));
+    }
+    if (panelId === 'search-sets') {
+      window.dispatchEvent(new CustomEvent('mv:search-sets-create'));
     }
   }, []);
 
@@ -173,11 +182,17 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
     return OBJECT_TREE_BREADCRUMBS;
   }, []);
 
-  // Panels with card-like sectioned content (e.g. Properties) sit on a gray inset.
+  // Panels with card-like sectioned content sit on a gray inset.
   // All other panels bleed to the panel's white chrome edge-to-edge.
+  // Search Sets uses padded for its list/empty state, but the import view
+  // paints its own full-bleed white surface and needs bleed.
   const getPanelContentVariant = useCallback(
-    (panelId: PanelId): 'bleed' | 'padded' => (panelId === 'properties' ? 'padded' : 'bleed'),
-    [],
+    (panelId: PanelId): 'bleed' | 'padded' => {
+      if (panelId === 'properties') return 'padded';
+      if (panelId === 'search-sets') return 'bleed';
+      return 'bleed';
+    },
+    [searchSetsView],
   );
 
   useEffect(() => {
@@ -203,13 +218,16 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
       if (itemsView.kind === 'category-placeholder') return itemsView.label;
       return panel.label;
     }
+    if (panel.id === 'search-sets' && searchSetsView.kind === 'import') {
+      return 'Import Search Sets';
+    }
     if (panel.id !== 'properties') return panel.label;
     if (panel.minimized) return 'Properties';
     const selectedId = selectedObjectIds[0];
     if (!selectedId) return 'Properties';
     const selectedEntry = objectEntries.find((entry) => String(entry.expressID) === selectedId);
     return selectedEntry?.name?.trim() || selectedId;
-  }, [objectEntries, selectedObjectIds, itemsView]);
+  }, [objectEntries, selectedObjectIds, itemsView, searchSetsView]);
 
   const getPanelSubheader = useCallback((panelId: PanelId): string | undefined => {
     if (panelId !== 'properties') return undefined;
@@ -666,8 +684,19 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
                   onTabChange={panel.id === 'properties'
                     ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
                     : undefined}
-                  onAdd={panel.id === 'views' || panel.id === 'sheets' ? () => handleAddForPanel(panel.id) : undefined}
-                  onBack={panel.id === 'items' && itemsView.kind !== 'hub' ? goBackItemsView : undefined}
+                  onAdd={
+                    (panel.id === 'views' || panel.id === 'sheets'
+                      || (panel.id === 'search-sets' && searchSetsView.kind === 'list'))
+                      ? () => handleAddForPanel(panel.id)
+                      : undefined
+                  }
+                  onBack={
+                    panel.id === 'items' && itemsView.kind !== 'hub'
+                      ? goBackItemsView
+                      : panel.id === 'search-sets' && searchSetsView.kind === 'import'
+                        ? resetSearchSetsView
+                        : undefined
+                  }
                   onClose={()         => handleClosePanel(panel.id)}
                   onToggleMinimize={()  => toggleMinimized(panel.id)}
                   onDragStart={(ev)   => handleDragStart(panel.id, ev)}
@@ -675,7 +704,7 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
                     const zr = dockZoneRef.current?.getBoundingClientRect();
                     undockPanel(panel.id, { x: (zr?.right ?? 80) + 16, y: zr?.top ?? 80 });
                   }}
-                  onDetach={panel.id !== 'sheets' ? () => detachPanel(panel.id) : undefined}
+                  onDetach={panel.id !== 'sheets' && panel.id !== 'search-sets' ? () => detachPanel(panel.id) : undefined}
                   onResizeHeight={(h) => setDockedHeight(panel.id, h)}
                   onResizeStart={()   => setIsResizingDocked(true)}
                   onResizeEnd={()     => setIsResizingDocked(false)}
@@ -795,8 +824,19 @@ export function DockManager({ store, deemphasized = false }: DockManagerProps) {
             onTabChange={panel.id === 'properties'
               ? ((tabId) => setPropertiesTab(tabId as PropertiesTabId))
               : undefined}
-            onAdd={panel.id === 'views' ? () => handleAddForPanel(panel.id) : undefined}
-            onBack={panel.id === 'items' && itemsView.kind !== 'hub' ? goBackItemsView : undefined}
+            onAdd={
+              (panel.id === 'views'
+                || (panel.id === 'search-sets' && searchSetsView.kind === 'list'))
+                ? () => handleAddForPanel(panel.id)
+                : undefined
+            }
+            onBack={
+              panel.id === 'items' && itemsView.kind !== 'hub'
+                ? goBackItemsView
+                : panel.id === 'search-sets' && searchSetsView.kind === 'import'
+                  ? resetSearchSetsView
+                  : undefined
+            }
             onClose={()        => handleClosePanel(panel.id)}
             onToggleMinimize={() => toggleMinimized(panel.id)}
             onDragStart={(ev)  => handleDragStart(panel.id, ev)}

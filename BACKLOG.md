@@ -151,6 +151,24 @@ For joystick behavior, either:
 
 ---
 
+## Search Sets panel — remaining stubs
+
+**Why:** The core Search Sets panel is fully wired but several secondary actions are stubbed.
+
+**Items still to build:**
+
+1. **Create Folder in header** (`+ → Create Folder`) — the button is wired but calls the same `handleCreateFolder` that creates a root-level extra folder. The design calls for it to open a location picker so the user can choose where the folder lands.
+
+2. **Import from Navisworks** — the `importFromNavisworks` option in the add menu is wired to open the file picker. The XML parser (`xmlParser.ts`) is fully implemented. Any remaining work is edge-case handling (very large files, unusual encoding, nested selection node shapes).
+
+3. **Per-row "Share" button** — visual stub, no action. Requires knowing the share destination (link, user, etc.) — design decision needed.
+
+4. **Move to Folder → Existing Folder for derived folders (bulk)** — when the bulk selection contains derived folders (not just sets), the "Existing Folder" path currently moves the contained sets only. A cleaner approach would move the entire sub-tree by re-parenting all contained sets' `source + folderPath` prefix to the destination folder's path. Complex because `folderPath` segments are path-encoded in the set records.
+
+**Touchpoints:** `src/chrome/features/dock-manager/panelContent.tsx` (all four), `src/chrome/features/search-sets/xmlParser.ts` (Navisworks edge cases).
+
+---
+
 ## Undo/Redo — measurement mode
 
 **Why:** When the Measure tool is actually implemented, undo/redo should work within measurement mode just like markup and sectioning. Currently measurements are not implemented so there is nothing to track.
